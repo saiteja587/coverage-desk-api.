@@ -70,6 +70,10 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 .tab-btn .n{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
 .tab-btn.active .n{color:var(--teal);}
 
+/* LOGIN */
+.login-wrap{min-height:80vh;display:flex;align-items:center;justify-content:center;}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:100%;max-width:340px;}
+
 /* SEARCH */
 .search-row{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:16px;}
 .search-icon{font-size:13px;opacity:.6;}
@@ -233,6 +237,8 @@ let state = {
   showNotesImport: false,
   showNotifications: false,
   showDbSettings: false,
+  needsLogin: false,
+  loginError: '',
   notifications: null
 };
 let saveTimer = null;
@@ -291,13 +297,21 @@ try{
   if(saved !== null) API_BASE_URL = saved; // respects an explicit disconnect (empty string)
 }catch(e){}
 
+let ADMIN_PASSWORD = '';
+try{ ADMIN_PASSWORD = localStorage.getItem('coverage-desk-admin-pw') || ''; }catch(e){}
+let AUTH_FAILED = false; // set true when the backend rejects the current password
+
 async function apiCall(resource, opts){
   const url = `${API_BASE_URL.replace(/\/$/,'')}/api/data?resource=${resource}${opts.qs?'&'+opts.qs:''}`;
+  const headers = opts.body ? {'Content-Type':'application/json'} : {};
+  if(ADMIN_PASSWORD) headers['x-admin-password'] = ADMIN_PASSWORD;
   const res = await fetch(url, {
     method: opts.method || 'GET',
-    headers: opts.body ? {'Content-Type':'application/json'} : undefined,
+    headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
+  if(res.status === 401){ AUTH_FAILED = true; throw new Error('Unauthorized — wrong or missing password'); }
+  AUTH_FAILED = false;
   if(!res.ok) throw new Error(`API ${resource} failed: ${res.status}`);
   return res.json();
 }
@@ -315,8 +329,11 @@ async function loadRoster(){
     try{
       const data = await apiCall('roster', {});
       state.roster = (data.rows && data.rows.length) ? data.rows : DEFAULT_ROSTER.slice();
+      state.needsLogin = false;
       return;
-    }catch(e){ /* fall through to local storage below on network failure */ }
+    }catch(e){
+      if(AUTH_FAILED){ state.needsLogin = true; return; } // don't silently fall back to stale local data
+    }
   }
   try{
     const r = await storageAdapter.get('roster', false);
@@ -345,8 +362,11 @@ async function loadDay(dateStr){
       state.rows = callsData.rows || [];
       state.notes = notesData.rows || [];
       state.finalized = !!finalData.finalized;
+      state.needsLogin = false;
       return;
-    }catch(e){ /* fall through to local storage below on network failure */ }
+    }catch(e){
+      if(AUTH_FAILED){ state.needsLogin = true; return; } // don't silently fall back to stale local data
+    }
   }
   try{
     const r = await storageAdapter.get('day:'+dateStr, false);
@@ -888,11 +908,49 @@ function renderFinalizeControls(){
 }
 
 // ---------- render ----------
+function renderLoginScreen(app){
+  app.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-card">
+        <h1 style="font-family:var(--display);font-size:22px;margin-bottom:4px">Coverage Desk</h1>
+        <div style="color:var(--text-muted);font-size:13px;margin-bottom:20px">Enter the admin password to continue</div>
+        <input type="password" id="loginPwInput" placeholder="Password" class="cell-input" style="background:var(--surface-2);border:1px solid var(--border);padding:10px 12px;border-radius:8px;width:100%;font-size:14px;margin-bottom:10px">
+        ${state.loginError ? `<div style="color:var(--coral);font-size:12.5px;margin-bottom:10px">${escapeHtml(state.loginError)}</div>` : ''}
+        <button class="btn primary" id="loginSubmit" style="width:100%;justify-content:center">Log in</button>
+      </div>
+    </div>
+  `;
+  const submitBtn = document.getElementById('loginSubmit');
+  const pwInput = document.getElementById('loginPwInput');
+  pwInput.focus();
+  const doLogin = async ()=>{
+    const val = pwInput.value;
+    ADMIN_PASSWORD = val;
+    try{ localStorage.setItem('coverage-desk-admin-pw', val); }catch(e){}
+    submitBtn.textContent = 'Checking…';
+    await loadRoster();
+    await loadDay(state.date);
+    if(state.needsLogin){
+      state.loginError = 'Incorrect password — try again.';
+    } else {
+      state.loginError = '';
+    }
+    render();
+  };
+  submitBtn.onclick = doLogin;
+  pwInput.onkeydown = (e)=>{ if(e.key==='Enter') doLogin(); };
+}
+
 function render(){
   const app = document.getElementById('app');
   const active = document.activeElement;
   const activeId = active && active.id;
   const activeSelStart = (active && typeof active.selectionStart === 'number') ? active.selectionStart : null;
+
+  if(state.needsLogin){
+    renderLoginScreen(app);
+    return;
+  }
 
   const conflictIds = computeConflicts(state.rows);
   const sortedAll = state.rows.slice().sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time));
@@ -942,6 +1000,8 @@ function render(){
 
     ${state.showNotifications ? renderNotificationsPanel() : ''}
 
+    ${state.view!=='notes' ? renderStrip(sortedAll, conflictIds) : ''}
+
     ${state.view==='notes' ? renderNotesView() : renderCallsView(sum, sortedRows, filtered, conflictIds)}
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
@@ -976,8 +1036,6 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds){
       <div class="cell woi"><div class="num">${sum.woi}</div><div class="lbl">WOI</div></div>
       <div class="cell conflict"><div class="num">${sum.conflicts}</div><div class="lbl">Conflicts</div></div>
     </div>
-
-    ${renderStrip(sortedRows, conflictIds)}
 
     <div class="toolbar">
       <button class="btn primary" id="toggleImport">＋ Import from WhatsApp text</button>
@@ -1057,6 +1115,9 @@ function renderDbSettingsPanel(){
       <button class="btn" id="testApiUrl">Test connection</button>
     </div>
     <div id="apiTestResult" style="margin-top:10px;font-size:12.5px;"></div>
+    ${ADMIN_PASSWORD ? `<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn ghost" id="logoutBtn" style="color:var(--coral)">Log out (clear saved password)</button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -1108,10 +1169,17 @@ function renderStrip(rows, conflictIds){
   rows.forEach(r=>{
     const m = timeToMinutes(r.time);
     const h = m===9999 ? '?' : Math.floor(m/60);
-    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, mins:m, hyd:0, pa:0};
-    if(r.woi) buckets[h].woi++;
-    else if(r.assignee) buckets[h].assigned++;
-    else buckets[h].unassigned++;
+    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], mins:m, hyd:0, pa:0};
+    const isAdv = isAdvancedRound(r.round);
+    if(isAdv){
+      buckets[h].advanced++;
+      const who = r.assignee ? r.assignee : 'unassigned';
+      buckets[h].advancedNames.push(`${who} (${r.candidate||'candidate'})`);
+    } else {
+      if(r.woi) buckets[h].woi++;
+      else if(r.assignee) buckets[h].assigned++;
+      else buckets[h].unassigned++;
+    }
     if(!r.woi){
       const team = teamOf(r.assignee);
       if(team==='HYD Team') buckets[h].hyd++;
@@ -1122,29 +1190,33 @@ function renderStrip(rows, conflictIds){
     if(a==='?') return 1; if(b==='?') return -1;
     return buckets[a].mins - buckets[b].mins;
   });
-  const maxCount = Math.max(...keys.map(k=>buckets[k].assigned+buckets[k].unassigned+buckets[k].woi));
+  const maxCount = Math.max(...keys.map(k=>buckets[k].assigned+buckets[k].unassigned+buckets[k].woi+buckets[k].advanced));
   const barsHtml = keys.map(k=>{
     const b = buckets[k];
-    const total = b.assigned+b.unassigned+b.woi;
+    const total = b.assigned+b.unassigned+b.woi+b.advanced;
     const unit = 58/maxCount;
     const hydFree = Math.max(hydCount - b.hyd, 0);
     const paFree = Math.max(paCount - b.pa, 0);
     const anyFree = hydFree>0 || paFree>0;
     const label = k==='?' ? 'Unknown time' : hourBucketLabel(k*60);
-    const tooltip = `${label} \u2014 ${total} call${total===1?'':'s'}\n`
+    let tooltip = `${label} \u2014 ${total} call${total===1?'':'s'}\n`
       + `HYD Team: ${b.hyd}/${hydCount} booked (${hydFree} free)\n`
       + `Pradeep Anna Team: ${b.pa}/${paCount} booked (${paFree} free)`;
+    if(b.advanced){
+      tooltip += `\n\n2nd Round & Above (${b.advanced}):\n` + b.advancedNames.join('\n');
+    }
     return `<div class="hour" style="height:${total*unit}px" title="${escapeHtml(tooltip)}">
       ${b.assigned?`<div class="seg" style="background:var(--teal);height:${b.assigned*unit}px"></div>`:''}
       ${b.woi?`<div class="seg" style="background:var(--amber);height:${b.woi*unit}px"></div>`:''}
       ${b.unassigned?`<div class="seg" style="background:var(--coral);height:${b.unassigned*unit}px"></div>`:''}
+      ${b.advanced?`<div class="seg seg-advanced" style="background:var(--violet);height:${b.advanced*unit}px"></div>`:''}
       <div class="hour-free-dot" style="background:${anyFree?'var(--teal)':'var(--coral)'}"></div>
     </div>`;
   }).join('');
   const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':hourBucketLabel(k*60)}</div>`).join('');
   const minW = Math.max(keys.length*30, 260);
   return `<div class="strip-wrap">
-    <div class="strip-title"><span>Coverage by hour (IST)</span><span>● assigned &nbsp; ● WOI &nbsp; ● unassigned &nbsp; | &nbsp; ● team has room &nbsp; ● both teams full</span></div>
+    <div class="strip-title"><span>Coverage by hour (IST) \u2014 all rounds combined</span><span>● 1st assigned &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+ &nbsp; | &nbsp; ● team has room &nbsp; ● both full</span></div>
     <div class="strip-scroll"><div style="min-width:${minW}px">
     <div class="strip">${barsHtml}</div>
     <div class="strip-hours">${lblsHtml}</div>
@@ -1470,6 +1542,14 @@ function attachHandlers(conflictIds){
     resultEl.innerHTML = result.ok
       ? '<span style="color:var(--teal)">✓ Connected successfully.</span>'
       : `<span style="color:var(--coral)">✗ Couldn't connect: ${escapeHtml(result.error)}</span>`;
+  };
+  const logoutBtn = document.getElementById('logoutBtn');
+  if(logoutBtn) logoutBtn.onclick = async ()=>{
+    ADMIN_PASSWORD = '';
+    try{ localStorage.removeItem('coverage-desk-admin-pw'); }catch(e){}
+    state.needsLogin = true;
+    state.loginError = '';
+    render();
   };
 
   const toggleNotesImport = document.getElementById('toggleNotesImport');
