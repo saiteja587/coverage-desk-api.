@@ -42,6 +42,13 @@ function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-password, x-username, x-password');
+  // Explicitly tells Vercel's CDN/edge network (and any proxy in between)
+  // never to cache these responses. Without this, a genuinely fresh save
+  // could still be followed by a read that gets served a cached response
+  // from Vercel's edge layer rather than the actual current database state
+  // — invisible to the browser's own cache settings entirely, since it
+  // happens server-side before the response even reaches the client.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 }
 
 // Checks who's making the request. The ADMIN_PASSWORD env var is a master key
