@@ -42,22 +42,9 @@ function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-password, x-username, x-password');
-  // Explicitly tells Vercel's CDN/edge network (and any proxy in between)
-  // never to cache these responses. Without this, a genuinely fresh save
-  // could still be followed by a read that gets served a cached response
-  // from Vercel's edge layer rather than the actual current database state
-  // — invisible to the browser's own cache settings entirely, since it
-  // happens server-side before the response even reaches the client.
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 }
 
-// Checks who's making the request. The ADMIN_PASSWORD env var is a master key
-// that always grants admin access (also used to create the first real user
-// accounts). Beyond that, individual accounts in the `users` table log in with
-// their own username/password and carry their own role ('admin' or 'user').
-// If ADMIN_PASSWORD isn't set at all, the app stays fully open — unchanged
-// from before per-user accounts existed, so nothing breaks for setups that
-// never opted into any of this.
 async function authenticate(req, db) {
   if (!process.env.ADMIN_PASSWORD) return { ok: true, username: null, role: 'admin' };
   const adminPw = req.headers['x-admin-password'];
@@ -84,19 +71,11 @@ module.exports = async (req, res) => {
 
   const resource = req.query.resource;
 
-  // Keep-alive ping — deliberately placed before the auth gate so a free
-  // external monitor (e.g. UptimeRobot) can hit it with a plain GET, no
-  // custom headers needed. Touches the database with a trivial query so the
-  // connection stays warm and Aiven's free-tier inactivity auto-suspend never
-  // triggers. Reveals nothing about your data.
   if (resource === 'ping') {
     try {
       const db = getPool();
       await db.query('SELECT 1');
-      // Version marker — lets you confirm from a plain browser visit whether
-      // Vercel is actually running this file or a stale deployment. Bump the
-      // string any time you need to re-verify a deploy took effect.
-      return res.status(200).json({ ok: true, ts: Date.now(), version: 'status-columns-v1-2026-08-28' });
+      return res.status(200).json({ ok: true, ts: Date.now(), version: 'callstatus-isolated-v2' });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
@@ -106,8 +85,6 @@ module.exports = async (req, res) => {
   const auth = await authenticate(req, db);
   if (!auth.ok) return res.status(401).json({ error: 'Unauthorized' });
 
-  // Read-only users can GET anything, but any write (POST) — including
-  // managing other users — requires the admin role.
   if (req.method === 'POST' && auth.role !== 'admin') {
     return res.status(403).json({ error: 'Read-only account — admin permission required to save changes.' });
   }
@@ -187,14 +164,6 @@ async function handleCalls(req, res, db) {
       await conn.beginTransaction();
       await conn.query('DELETE FROM calls WHERE call_date = ?', [date]);
       if (rows.length) {
-        // Single batched INSERT for every row instead of one round-trip per row —
-        // with 100+ calls in a day, looping one-at-a-time made every save take
-        // several seconds. One statement covers the whole day at once.
-        // interviewer/importance are included here since they're saved as part
-        // of the normal bulk edit flow. status/statusFields are DELIBERATELY
-        // NOT included — those now live in the separate call_status table via
-        // resource=callstatus, saved immediately and individually, isolated
-        // from this batch delete-and-reinsert path entirely.
         const values = rows.map(r => [
           r.id, date, r.time||'', r.candidate||'', r.company||'', r.round||'', r.duration||'',
           r.woi?1:0, r.assignee||'', r.country||'USA', JSON.stringify(r.doubts||[]), r.raw||'',
@@ -239,18 +208,10 @@ function safeParse(text, fallback) {
 }
 
 // ---------- call_status (isolated reschedule/cancel tracking) ----------
-// Deliberately its own table and its own simple one-row-at-a-time upsert —
-// no batch delete-and-reinsert, no transaction, no dependency on the calls
-// save cycle at all. Every status change (from the reschedule import, or
-// the per-row Mark checkbox) hits this immediately and individually, so a
-// failure here can't be masked by anything else succeeding alongside it.
 async function handleCallStatus(req, res, db) {
   if (req.method === 'GET') {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'date query param required' });
-    // Joins against calls so only statuses for calls that exist on this
-    // date come back — call_status itself isn't date-scoped, call_id is
-    // the only key it needs.
     const [rows] = await db.query(
       `SELECT cs.call_id, cs.status, cs.status_fields_json
        FROM call_status cs
@@ -277,7 +238,6 @@ async function handleCallStatus(req, res, db) {
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
-
 
 // ---------- roster ----------
 async function handleRoster(req, res, db) {
