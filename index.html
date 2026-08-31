@@ -1274,6 +1274,7 @@ function getTabRows(view){
   if(view==='all') return all;
   if(view==='2nd') return all.filter(r=>isAdvancedRound(r.round));
   if(view==='doubts') return all.filter(r=>r.doubts && r.doubts.length>0);
+  if(view==='rescheduled') return all.filter(r=>r.status==='rescheduled' || r.status==='cancelled');
   return all.filter(r=>!isAdvancedRound(r.round));
 }
 
@@ -1713,6 +1714,7 @@ function render(){
   const advancedRows = sortedAll.filter(r=>isAdvancedRound(r.round));
   const doubtRows = sortedAll.filter(r=>r.doubts && r.doubts.length>0);
   const statusRows = sortedAll.filter(r=>r.status);
+  const rescheduledRows = sortedAll.filter(r=>r.status==='rescheduled' || r.status==='cancelled');
   const sortedRows = getTabRows(state.view);
   const sum = summarize(sortedRows, conflictIds);
 
@@ -1787,9 +1789,10 @@ function render(){
         <button class="tab-btn ${state.view==='1st'?'active':''}" data-view="1st" title="Shortcut: 2">1st Round <span class="n">${firstRoundRows.length}</span></button>
         <button class="tab-btn ${state.view==='2nd'?'active':''}" data-view="2nd" title="Shortcut: 3">2nd Round &amp; Above <span class="n">${advancedRows.length}</span></button>
         <button class="tab-btn ${state.view==='doubts'?'active':''}" data-view="doubts" style="${doubtRows.length?'color:var(--amber)':''}" title="Shortcut: 4">Doubts <span class="n">${doubtRows.length}</span></button>
+        <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5">↻ Rescheduled/Cancelled <span class="n">${rescheduledRows.length}</span></button>
       </div>
     </div>
-    <div class="hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20134 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
+    <div class="hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
 
     ${state.showNotifications ? renderNotificationsPanel() : ''}
 
@@ -2590,6 +2593,12 @@ function renderEmpty(){
     return `<div class="empty-state">
       <h3>No doubts right now</h3>
       <p>Everything imported so far had a clear time, company, and round.</p>
+    </div>`;
+  }
+  if(state.view==='rescheduled'){
+    return `<div class="empty-state">
+      <h3>No rescheduled or cancelled calls</h3>
+      <p>Calls tagged ↻ Rescheduled or ✕ Cancelled — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
     </div>`;
   }
   return `<div class="empty-state">
@@ -4167,7 +4176,7 @@ window.addEventListener('keydown', (e)=>{
     return;
   }
   if(isTyping) return;
-  const tabMap = { '1':'all', '2':'1st', '3':'2nd', '4':'doubts' };
+  const tabMap = { '1':'all', '2':'1st', '3':'2nd', '4':'doubts', '5':'rescheduled' };
   if(tabMap[e.key]){
     state.view = tabMap[e.key];
     state.filter = 'all';
