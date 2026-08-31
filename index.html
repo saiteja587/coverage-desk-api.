@@ -1814,6 +1814,70 @@ function renderLoginScreen(app){
   pwInput.onkeydown = (e)=>{ if(e.key==='Enter') doLogin(); };
 }
 
+// Exactly one of these full-screen panels can be open at a time — opening
+// any one of them closes the others and hides the call table entirely,
+// instead of everything stacking onto one long, slow-to-render page.
+function closeAllPanels(){
+  state.showAllDates = false;
+  state.showSummary = false;
+  state.showUsers = false;
+  state.showDbSettings = false;
+  state.showNotifications = false;
+  state.showPortalSync = false;
+  state.showIncentives = false;
+  state.showRoster = false;
+  state.showImport = false;
+  state.showRescheduleImport = false;
+  state.rescheduleReview = null;
+  state.showMoreMenu = false;
+  stopPortalSyncPolling();
+}
+function getActivePanelName(){
+  if(state.showAllDates) return 'allDates';
+  if(state.showSummary) return 'summary';
+  if(state.showUsers) return 'users';
+  if(state.showDbSettings) return 'dbSettings';
+  if(state.showNotifications) return 'notifications';
+  if(state.showPortalSync) return 'portalSync';
+  if(state.showIncentives) return 'incentives';
+  if(state.showRoster) return 'roster';
+  if(state.showImport) return 'import';
+  if(state.showRescheduleImport) return 'rescheduleImport';
+  if(state.rescheduleReview) return 'rescheduleReview';
+  return null;
+}
+// Opens exactly one panel: closes everything else first, then — unless
+// this same panel was already the one open (a second click = close it) —
+// turns this one on.
+function openOnlyPanel(flagName){
+  const wasOpen = !!state[flagName];
+  closeAllPanels();
+  if(!wasOpen){ state[flagName] = true; }
+}
+function renderActivePanel(name){
+  if(name === 'allDates') return renderAllDatesPanel();
+  if(name === 'summary') return renderSummaryPanel();
+  if(name === 'users') return renderUsersPanel();
+  if(name === 'dbSettings') return renderDbSettingsPanel();
+  if(name === 'notifications') return renderNotificationsPanel();
+  if(name === 'portalSync') return renderPortalSyncPanel();
+  if(name === 'incentives') return renderIncentivesPanel();
+  if(name === 'roster') return renderRosterPanel();
+  if(name === 'import') return renderImportPanel();
+  if(name === 'rescheduleImport') return renderRescheduleImportPanel();
+  if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
+  return '';
+}
+function panelTitle(name){
+  const titles = {
+    allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
+    notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives',
+    roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
+    rescheduleReview:'Confirm Reschedule/Cancel'
+  };
+  return titles[name] || '';
+}
+
 function render(){
   const app = document.getElementById('app');
   const active = document.activeElement;
@@ -1861,6 +1925,8 @@ function render(){
     );
   }
 
+  const activePanel = getActivePanelName();
+
   app.innerHTML = `
     <div class="header">
       <div>
@@ -1891,11 +1957,13 @@ function render(){
     ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);margin:-10px 0 16px">Portal sync error: ${escapeHtml(state.portalSyncError)}</div>` : ''}
     ${state.portalSyncedAt ? `<div class="hint" style="margin:-10px 0 16px">Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
     <div id="scrumPrepToast" style="display:none;background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-size:12.5px;padding:10px 14px;border-radius:8px;margin:-14px 0 16px;"></div>
-    ${state.showAllDates ? renderAllDatesPanel() : ''}
-    ${state.showSummary ? renderSummaryPanel() : ''}
-    ${state.showUsers ? renderUsersPanel() : ''}
-    ${state.showDbSettings ? renderDbSettingsPanel() : ''}
-
+    ${activePanel ? `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <button class="btn ghost" id="backToCalls">← Back to calls</button>
+      <div style="font-weight:700;font-size:16px">${escapeHtml(panelTitle(activePanel))}</div>
+    </div>
+    ${renderActivePanel(activePanel)}
+    ` : `
     <div class="shift-note-box">
       <label for="shiftNoteInput">📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></label>
       <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE==='user'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
@@ -1912,11 +1980,10 @@ function render(){
     </div>
     <div class="hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
 
-    ${state.showNotifications ? renderNotificationsPanel() : ''}
-
     ${state.view!=='notes' ? renderStrip(sortedAll, conflictIds) : ''}
 
     ${renderCallsView(sum, sortedRows, filtered, conflictIds, sortedAll, clientConflicts)}
+    `}
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
     ${state.lastDeleted ? `<div class="undo-toast">Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}" <button id="undoDeleteBtn">Undo</button></div>` : ''}
@@ -2006,13 +2073,6 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     </div>
 
     ${(!isReadOnly && state.selectedIds.size) ? renderBulkBar() : ''}
-
-    ${(!isReadOnly && state.showImport) ? renderImportPanel() : ''}
-    ${(!isReadOnly && state.showRescheduleImport) ? renderRescheduleImportPanel() : ''}
-    ${(!isReadOnly && state.rescheduleReview) ? renderRescheduleConfirmPanel() : ''}
-    ${state.showPortalSync ? renderPortalSyncPanel() : ''}
-    ${state.showIncentives ? renderIncentivesPanel() : ''}
-    ${state.showRoster ? renderRosterPanel() : ''}
 
     <div class="${isReadOnly?'read-only-mode':''}">
     ${filtered.length ? renderTable(filtered, conflictIds, clientConflicts) : renderEmpty()}
@@ -2968,40 +3028,34 @@ function attachHandlers(conflictIds){
   const clearSearchBtn = document.getElementById('clearSearch');
   if(clearSearchBtn) clearSearchBtn.onclick = ()=>{ state.search = ''; render(); };
 
+  const backToCallsBtn = document.getElementById('backToCalls');
+  if(backToCallsBtn) backToCallsBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const toggleImportBtn = document.getElementById('toggleImport');
-  if(toggleImportBtn) toggleImportBtn.onclick = ()=>{
-    state.showImport = !state.showImport; state.showRoster = false; state.showRescheduleImport = false; state.rescheduleReview = null; render();
-  };
+  if(toggleImportBtn) toggleImportBtn.onclick = ()=>{ openOnlyPanel('showImport'); render(); };
   const toggleRescheduleImportBtn = document.getElementById('toggleRescheduleImport');
-  if(toggleRescheduleImportBtn) toggleRescheduleImportBtn.onclick = ()=>{
-    state.showRescheduleImport = !state.showRescheduleImport; state.showImport = false; state.showRoster = false; state.rescheduleReview = null; render();
-  };
+  if(toggleRescheduleImportBtn) toggleRescheduleImportBtn.onclick = ()=>{ openOnlyPanel('showRescheduleImport'); render(); };
   const toggleRosterBtn = document.getElementById('toggleRoster');
-  if(toggleRosterBtn) toggleRosterBtn.onclick = ()=>{
-    state.showRoster = !state.showRoster; state.showImport = false; state.showRescheduleImport = false; render();
-  };
+  if(toggleRosterBtn) toggleRosterBtn.onclick = ()=>{ openOnlyPanel('showRoster'); render(); };
   const togglePortalSyncBtn = document.getElementById('togglePortalSync');
   if(togglePortalSyncBtn) togglePortalSyncBtn.onclick = ()=>{
-    state.showPortalSync = !state.showPortalSync;
-    if(state.showPortalSync) startPortalSyncPolling(); else stopPortalSyncPolling();
+    openOnlyPanel('showPortalSync');
+    if(state.showPortalSync) startPortalSyncPolling();
     render();
   };
   const closePortalSyncBtn = document.getElementById('closePortalSync');
-  if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{
-    state.showPortalSync = false; stopPortalSyncPolling(); render();
-  };
+  if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const syncPortalTodayBtn = document.getElementById('syncPortalToday');
   if(syncPortalTodayBtn) syncPortalTodayBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('today'); };
   const syncPortalFullBtn = document.getElementById('syncPortalFull');
   if(syncPortalFullBtn) syncPortalFullBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('full'); };
   const toggleIncentivesBtn = document.getElementById('toggleIncentives');
   if(toggleIncentivesBtn) toggleIncentivesBtn.onclick = ()=>{
-    state.showIncentives = !state.showIncentives;
+    openOnlyPanel('showIncentives');
     if(state.showIncentives && !state.incentivesData){ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); }
     render();
   };
   const closeIncentivesBtn = document.getElementById('closeIncentives');
-  if(closeIncentivesBtn) closeIncentivesBtn.onclick = ()=>{ state.showIncentives = false; render(); };
+  if(closeIncentivesBtn) closeIncentivesBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const incentivesPrevBtn = document.getElementById('incentivesPrevMonth');
   if(incentivesPrevBtn) incentivesPrevBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), -1)); };
   const incentivesNextBtn = document.getElementById('incentivesNextMonth');
@@ -3078,7 +3132,7 @@ function attachHandlers(conflictIds){
   });
 
   const toggleNotif = document.getElementById('toggleNotifications');
-  if(toggleNotif) toggleNotif.onclick = ()=>{ state.showNotifications = !state.showNotifications; render(); };
+  if(toggleNotif) toggleNotif.onclick = ()=>{ openOnlyPanel('showNotifications'); render(); };
   const runScanBtn = document.getElementById('runNotifScan');
   if(runScanBtn) runScanBtn.onclick = async ()=>{
     runScanBtn.textContent = 'Scanning…';
@@ -3186,13 +3240,12 @@ function attachHandlers(conflictIds){
     render();
   };
   const toggleDbBtn = document.getElementById('toggleDbSettings');
-  if(toggleDbBtn) toggleDbBtn.onclick = ()=>{ state.showDbSettings = !state.showDbSettings; state.showSummary=false; state.showUsers=false; render(); };
+  if(toggleDbBtn) toggleDbBtn.onclick = ()=>{ openOnlyPanel('showDbSettings'); render(); };
   const toggleSummaryBtn = document.getElementById('toggleSummary');
-  if(toggleSummaryBtn) toggleSummaryBtn.onclick = ()=>{ state.showSummary = !state.showSummary; state.showDbSettings=false; state.showUsers=false; state.showAllDates=false; render(); };
+  if(toggleSummaryBtn) toggleSummaryBtn.onclick = ()=>{ openOnlyPanel('showSummary'); render(); };
   const toggleAllDatesBtn = document.getElementById('toggleAllDates');
   if(toggleAllDatesBtn) toggleAllDatesBtn.onclick = ()=>{
-    state.showAllDates = !state.showAllDates;
-    state.showDbSettings=false; state.showUsers=false; state.showSummary=false;
+    openOnlyPanel('showAllDates');
     render();
   };
   const loadAllDatesBtn = document.getElementById('loadAllDatesBtn');
@@ -3237,7 +3290,7 @@ function attachHandlers(conflictIds){
     });
   }
   const toggleUsersBtn = document.getElementById('toggleUsers');
-  if(toggleUsersBtn) toggleUsersBtn.onclick = ()=>{ state.showUsers = !state.showUsers; state.showDbSettings=false; state.showSummary=false; render(); };
+  if(toggleUsersBtn) toggleUsersBtn.onclick = ()=>{ openOnlyPanel('showUsers'); render(); };
   const toggleCreateUserBtn = document.getElementById('toggleCreateUserBtn');
   if(toggleCreateUserBtn) toggleCreateUserBtn.onclick = ()=>{ state.showCreateUserForm = !state.showCreateUserForm; render(); };
   const loadUsersBtn = document.getElementById('loadUsersBtn');
@@ -3355,7 +3408,7 @@ function attachHandlers(conflictIds){
   };
 
   const cancelImport = document.getElementById('cancelImport');
-  if(cancelImport) cancelImport.onclick = ()=>{ state.showImport=false; render(); };
+  if(cancelImport) cancelImport.onclick = ()=>{ closeAllPanels(); render(); };
   const runImport = document.getElementById('runImport');
   if(runImport) runImport.onclick = async ()=>{
     const text = document.getElementById('importText').value;
@@ -3413,7 +3466,7 @@ function attachHandlers(conflictIds){
 
   // ---------- dedicated Reschedule/Cancel import (existing calls only) ----------
   const cancelRescheduleImport = document.getElementById('cancelRescheduleImport');
-  if(cancelRescheduleImport) cancelRescheduleImport.onclick = ()=>{ state.showRescheduleImport=false; render(); };
+  if(cancelRescheduleImport) cancelRescheduleImport.onclick = ()=>{ closeAllPanels(); render(); };
 
   const parseRescheduleBtn = document.getElementById('parseRescheduleBtn');
   if(parseRescheduleBtn) parseRescheduleBtn.onclick = ()=>{
