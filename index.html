@@ -592,38 +592,46 @@ async function saveCallStatuses(){
   await apiCall('call_status', {method:'POST', body:{date: state.date, rows: payload}});
 }
 // The "note for next shift" box reuses the existing notes table/resource —
-// stored as one special entry (id: 'shift-note') rather than a whole new
-// backend endpoint, since that infrastructure already exists and works.
+// stored as one special entry per date rather than a whole new backend
+// endpoint, since that infrastructure already exists and works. The id is
+// prefixed with the date (not just the fixed string 'shift-note') because
+// the notes table's primary key is on `id` alone, not (id, note_date) — a
+// bare 'shift-note' id would collide with the row left behind from any
+// other date the moment you tried to save a second day, causing a
+// "Duplicate entry ... for key 'notes.PRIMARY'" error on save.
+function shiftNoteId(){ return state.date + '-shift-note'; }
+function absentIdsNoteId(){ return state.date + '-absent-ids'; }
+function exportedIdsNoteId(){ return state.date + '-exported-ids'; }
 function syncShiftNoteFromNotes(){
-  const entry = (state.notes||[]).find(n => n && n.id === 'shift-note');
+  const entry = (state.notes||[]).find(n => n && n.id === shiftNoteId());
   state.shiftNote = entry ? (entry.text||'') : '';
 }
 function syncNotesFromShiftNote(){
   state.notes = state.notes || [];
-  const idx = state.notes.findIndex(n => n && n.id === 'shift-note');
+  const idx = state.notes.findIndex(n => n && n.id === shiftNoteId());
   if(state.shiftNote && state.shiftNote.trim()){
     if(idx >= 0) state.notes[idx].text = state.shiftNote;
-    else state.notes.push({ id:'shift-note', text: state.shiftNote });
+    else state.notes.push({ id:shiftNoteId(), text: state.shiftNote });
   } else if(idx >= 0){
     state.notes.splice(idx, 1);
   }
 }
 // Absences — same reused-notes trick as the shift note, scoped to THIS date
 // specifically (not the roster globally), since being absent is a today-only
-// thing, not a permanent roster change. Stored as one special entry (id:
-// 'absent-ids') holding a JSON array of roster person IDs marked absent.
+// thing, not a permanent roster change. Stored as one special entry per date
+// holding a JSON array of roster person IDs marked absent.
 function syncAbsentFromNotes(){
-  const entry = (state.notes||[]).find(n => n && n.id === 'absent-ids');
+  const entry = (state.notes||[]).find(n => n && n.id === absentIdsNoteId());
   try{ state.absentIds = entry ? (JSON.parse(entry.text)||[]) : []; }
   catch(e){ state.absentIds = []; }
 }
 function syncNotesFromAbsent(){
   state.notes = state.notes || [];
-  const idx = state.notes.findIndex(n => n && n.id === 'absent-ids');
+  const idx = state.notes.findIndex(n => n && n.id === absentIdsNoteId());
   if(state.absentIds && state.absentIds.length){
     const text = JSON.stringify(state.absentIds);
     if(idx >= 0) state.notes[idx].text = text;
-    else state.notes.push({ id:'absent-ids', text });
+    else state.notes.push({ id:absentIdsNoteId(), text });
   } else if(idx >= 0){
     state.notes.splice(idx, 1);
   }
@@ -633,17 +641,17 @@ function syncNotesFromAbsent(){
 // (added after the last share) apart from ones already sent out, without a
 // new backend field.
 function syncExportedIdsFromNotes(){
-  const entry = (state.notes||[]).find(n => n && n.id === 'exported-ids');
+  const entry = (state.notes||[]).find(n => n && n.id === exportedIdsNoteId());
   try{ state.exportedIds = entry ? (JSON.parse(entry.text)||[]) : []; }
   catch(e){ state.exportedIds = []; }
 }
 function syncNotesFromExportedIds(){
   state.notes = state.notes || [];
-  const idx = state.notes.findIndex(n => n && n.id === 'exported-ids');
+  const idx = state.notes.findIndex(n => n && n.id === exportedIdsNoteId());
   if(state.exportedIds && state.exportedIds.length){
     const text = JSON.stringify(state.exportedIds);
     if(idx >= 0) state.notes[idx].text = text;
-    else state.notes.push({ id:'exported-ids', text });
+    else state.notes.push({ id:exportedIdsNoteId(), text });
   } else if(idx >= 0){
     state.notes.splice(idx, 1);
   }
