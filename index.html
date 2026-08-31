@@ -364,6 +364,8 @@ let state = {
   portalSyncError: '',
   portalSyncLoading: false,
   portalSyncUpdatedAt: null,
+  portalSyncMode: 'today',
+  portalSyncFromCache: false,
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
@@ -496,15 +498,25 @@ async function apiCall(resource, opts){
 // Pulls the combined, read-only Portal snapshot (assignments + per-handler
 // incentives) via Coverage Desk's own backend, which proxies the actual
 // Apps Script bridge call server-side so the portal secret never reaches
-// the browser. Polled on an interval while the Team Sync panel is open —
-// this is "live" in the sense of refreshing automatically, not a push.
-async function fetchPortalSync(){
+// the browser.
+//
+// mode 'today'  -> fast: only this date's calls (few seconds), auto-polled
+// mode 'full'   -> slow: the entire call history (~20s), manual only
+async function fetchPortalSync(mode){
   if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
+  state.portalSyncMode = mode || state.portalSyncMode || 'today';
   state.portalSyncLoading = true;
   render();
   try{
-    const result = await apiCall('portal_sync', {qs:'type=everything'});
-    state.portalSyncData = result.data;
+    const dateQs = state.portalSyncMode === 'today' ? ('&date=' + encodeURIComponent(state.date)) : '';
+    const [assignmentsResult, incentivesResult] = await Promise.all([
+      apiCall('portal_sync', {qs:'type=assignments' + dateQs}),
+      apiCall('portal_sync', {qs:'type=incentives'})
+    ]);
+    state.portalSyncData = {
+      assignments: assignmentsResult.data || [],
+      incentives: incentivesResult.data || null
+    };
     state.portalSyncUpdatedAt = Date.now();
     state.portalSyncError = '';
   }catch(e){
@@ -513,10 +525,34 @@ async function fetchPortalSync(){
   state.portalSyncLoading = false;
   render();
 }
+// Shows whatever was last saved in the database instantly, without
+// waiting on the slow Apps Script bridge — used the moment the panel
+// opens, before the person even asks for a fresh pull.
+async function loadPortalSyncCache(){
+  if(!API_BASE_URL) return;
+  try{
+    const dateQs = '&date=' + encodeURIComponent(state.date);
+    const [assignmentsResult, incentivesResult] = await Promise.all([
+      apiCall('portal_sync', {qs:'type=assignments&cached=1' + dateQs}),
+      apiCall('portal_sync', {qs:'type=incentives&cached=1'})
+    ]);
+    if(assignmentsResult.data || incentivesResult.data){
+      state.portalSyncData = {
+        assignments: assignmentsResult.data || [],
+        incentives: incentivesResult.data || null
+      };
+      state.portalSyncUpdatedAt = assignmentsResult.generatedAt ? new Date(assignmentsResult.generatedAt).getTime() : null;
+      state.portalSyncFromCache = true;
+      render();
+    }
+  }catch(e){ /* cache is best-effort; a manual sync still works without it */ }
+}
 function startPortalSyncPolling(){
   stopPortalSyncPolling();
-  fetchPortalSync();
-  portalSyncTimer = setInterval(fetchPortalSync, 30000);
+  loadPortalSyncCache().then(()=>{ fetchPortalSync('today'); });
+  portalSyncTimer = setInterval(()=>{
+    if(state.portalSyncMode === 'today') fetchPortalSync('today');
+  }, 30000);
 }
 function stopPortalSyncPolling(){
   if(portalSyncTimer){ clearInterval(portalSyncTimer); portalSyncTimer = null; }
@@ -2380,54 +2416,71 @@ function renderPortalSyncPanel(){
   if(state.portalSyncError){
     body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.portalSyncError)}</div>`;
   } else if(!d){
-    body = `<div class="hint">${state.portalSyncLoading ? 'Loading…' : 'No data yet — click Refresh.'}</div>`;
+    body = `<div class="hint">${state.portalSyncLoading ? 'Loading…' : 'No data yet — click one of the sync buttons above.'}</div>`;
   } else {
-    const assignments = (d.assignments || []).slice().sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
-    const incentives = (d.incentives && d.incentives.byHandler) || [];
+    const todaysAssignments = (d.assignments || []).slice().sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
+    const byHandler = (d.incentives && d.incentives.byHandler) || [];
     const byTeam = (d.incentives && d.incentives.byTeam) || {};
-    const teamTotals = Object.keys(byTeam).map(code=>`<span class="prior-badge" style="margin-right:8px">${escapeHtml(byTeam[code].label)}: ₹${Number(byTeam[code].total||0).toLocaleString('en-IN')}</span>`).join('');
 
-    body = `
-      <div style="margin-bottom:14px">${teamTotals}</div>
-      <div style="font-weight:600;margin-bottom:6px;font-size:13px">Incentives by handler ${d.incentives && d.incentives.month && d.incentives.month!=='ALL' ? '('+escapeHtml(d.incentives.month)+')' : '(all time)'}</div>
-      <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-          <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Handler</th><th style="padding:6px 10px">Promotion</th><th style="padding:6px 10px">Selection</th><th style="padding:6px 10px">Total</th></tr></thead>
+    // Group handlers under their team so it's clear at a glance who
+    // earned what and what each team's running total is.
+    const teamGroups = {};
+    byHandler.forEach(row=>{
+      const key = row.teamCode || row.team || 'Other';
+      if(!teamGroups[key]) teamGroups[key] = { label: row.team, rows: [] };
+      teamGroups[key].rows.push(row);
+    });
+
+    const incentiveHtml = Object.keys(teamGroups).length ? Object.keys(teamGroups).map(key=>{
+      const group = teamGroups[key];
+      const teamTotal = byTeam[key] ? byTeam[key].total : group.rows.reduce((s,r)=>s+Number(r.total||0),0);
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--surface-2);border-radius:8px 8px 0 0;font-weight:700;font-size:13px">
+          <span>${escapeHtml(group.label)}</span>
+          <span style="color:var(--teal)">₹${Number(teamTotal||0).toLocaleString('en-IN')}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid var(--border);border-top:none">
+          <thead><tr style="text-align:left;background:var(--surface)"><th style="padding:6px 10px">Handler</th><th style="padding:6px 10px">Promotion</th><th style="padding:6px 10px">Selection</th><th style="padding:6px 10px">Total</th></tr></thead>
           <tbody>
-            ${incentives.length ? incentives.map(r=>`<tr style="border-top:1px solid var(--border-soft)">
-              <td style="padding:6px 10px">${escapeHtml(r.team)}</td>
-              <td style="padding:6px 10px">${escapeHtml(r.handler)}</td>
+            ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>`<tr style="border-top:1px solid var(--border-soft)">
+              <td style="padding:6px 10px;font-weight:600">${escapeHtml(r.handler)}</td>
               <td style="padding:6px 10px">₹${Number(r.promotion||0).toLocaleString('en-IN')}</td>
               <td style="padding:6px 10px">₹${Number(r.selection||0).toLocaleString('en-IN')}</td>
               <td style="padding:6px 10px;font-weight:600">₹${Number(r.total||0).toLocaleString('en-IN')}</td>
-            </tr>`).join('') : `<tr><td colspan="5" style="padding:10px;color:var(--text-faint)">No incentive records found.</td></tr>`}
+            </tr>`).join('')}
           </tbody>
         </table>
-      </div>
-      <div style="font-weight:600;margin-bottom:6px;font-size:13px">Live assignments (${assignments.length})</div>
+      </div>`;
+    }).join('') : `<div class="hint" style="margin-bottom:16px">No incentive records found.</div>`;
+
+    body = `
+      <div style="font-weight:600;margin-bottom:8px;font-size:13px">Incentives by team &amp; handler ${d.incentives && d.incentives.month && d.incentives.month!=='ALL' ? '('+escapeHtml(d.incentives.month)+')' : '(all time)'}</div>
+      <div style="max-height:320px;overflow:auto;margin-bottom:16px">${incentiveHtml}</div>
+      <div style="font-weight:600;margin-bottom:6px;font-size:13px">${state.portalSyncMode==='today' ? `Assignments for ${escapeHtml(state.date)}` : 'Assignments (full history)'} (${todaysAssignments.length})</div>
       <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Time</th><th style="padding:6px 10px">Candidate</th><th style="padding:6px 10px">Client</th><th style="padding:6px 10px">Assignee</th><th style="padding:6px 10px">Status</th></tr></thead>
           <tbody>
-            ${assignments.length ? assignments.map(a=>`<tr style="border-top:1px solid var(--border-soft)">
+            ${todaysAssignments.length ? todaysAssignments.map(a=>`<tr style="border-top:1px solid var(--border-soft)">
               <td style="padding:6px 10px">${escapeHtml(a.team)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.time)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.candidate)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.client)}</td>
-              <td style="padding:6px 10px">${escapeHtml(a.assignee||'—')}</td>
+              <td style="padding:6px 10px;font-weight:600;${a.assignee?'color:var(--teal)':''}">${escapeHtml(a.assignee||'Unassigned')}</td>
               <td style="padding:6px 10px">${escapeHtml(a.status)}</td>
-            </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;color:var(--text-faint)">No assignment records found.</td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;color:var(--text-faint)">No assignment records found${state.portalSyncMode==='today' ? ' for this date' : ''}.</td></tr>`}
           </tbody>
         </table>
       </div>`;
   }
   return `<div class="import-panel">
-    <div class="hint" style="margin-bottom:10px">Live, read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). Auto-refreshes every 30 seconds while this panel is open. This never writes anything back to the Portal.</div>
+    <div class="hint" style="margin-bottom:10px">Read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). "Sync Today" is fast and covers just this date; "Full Sync" pulls the entire call history (~20 seconds) — use it sparingly. Every successful sync is saved to Coverage Desk's database so it's still here after a refresh. This never writes anything back to the Portal.</div>
     <div class="row" style="margin-bottom:12px">
-      <div class="hint">Last updated: ${updatedLabel}</div>
-      <div style="display:flex;gap:8px;">
+      <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn ghost" id="closePortalSync">Close</button>
-        <button class="btn primary" id="refreshPortalSync" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading?'Refreshing…':'Refresh now'}</button>
+        <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='today' ? 'Syncing…' : `📅 Sync Today (${state.date})`}</button>
+        <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? 'Syncing… (~20s)' : '🗂 Full Sync (all data)'}</button>
       </div>
     </div>
     ${body}
@@ -2663,6 +2716,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
           ${buildRosterOptions(r.round, r.assignee)}
         </select>
+        ${(()=>{ const pm = findPortalMatch(r); if(!pm) return ''; const differs = pm.handler && r.assignee && pm.handler.trim().toLowerCase() !== r.assignee.trim().toLowerCase(); return `<div style="margin-top:4px;font-size:10.5px;color:${differs?'var(--amber)':'var(--teal)'};display:flex;align-items:center;gap:4px" title="From the Interview Portal (${escapeHtml(pm.team||'')})"><span>📡</span><span>${pm.handler?escapeHtml(pm.handler):'Unassigned in Portal'}${pm.status?' · '+escapeHtml(pm.status):''}${differs?' (differs from local)':''}</span></div>`; })()}
       </td>
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
@@ -2815,8 +2869,10 @@ function attachHandlers(conflictIds){
   if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{
     state.showPortalSync = false; stopPortalSyncPolling(); render();
   };
-  const refreshPortalSyncBtn = document.getElementById('refreshPortalSync');
-  if(refreshPortalSyncBtn) refreshPortalSyncBtn.onclick = ()=>{ fetchPortalSync(); };
+  const syncPortalTodayBtn = document.getElementById('syncPortalToday');
+  if(syncPortalTodayBtn) syncPortalTodayBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('today'); };
+  const syncPortalFullBtn = document.getElementById('syncPortalFull');
+  if(syncPortalFullBtn) syncPortalFullBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('full'); };
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
     state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', importance:''});
@@ -4241,12 +4297,10 @@ async function syncPortalData(){
   state.portalSyncLoading = true;
   render();
   try{
-    // Reuses the same working bridge as the 📡 Team Sync panel
-    // (?resource=portal_sync on api/data.js), rather than the separate
-    // api/portal.js endpoint this function used to call — that file was
-    // planned but never actually created, which is why this was failing
-    // with a 404 NOT_FOUND from Vercel.
-    const result = await apiCall('portal_sync', {qs:'type=assignments'});
+    // Scoped to the currently open date — fast (a few seconds) rather
+    // than pulling the entire multi-thousand-record history just to
+    // show today's per-row badges.
+    const result = await apiCall('portal_sync', {qs:'type=assignments&date=' + encodeURIComponent(state.date)});
     const rows = (result.data && result.data.length !== undefined) ? result.data : (result.data && result.data.assignments) || [];
     // findPortalMatch() below expects a `handler` field (it predates the
     // newer `assignee` naming used by the Team Sync panel) — map it here
