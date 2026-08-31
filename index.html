@@ -359,6 +359,11 @@ let state = {
   showRescheduleImport: false,
   rescheduleReview: null,
   rescheduleApplying: false,
+  showPortalSync: false,
+  portalSyncData: null,
+  portalSyncError: '',
+  portalSyncLoading: false,
+  portalSyncUpdatedAt: null,
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
@@ -399,6 +404,7 @@ let state = {
   exportedIds: []
 };
 let saveTimer = null;
+let portalSyncTimer = null;
 let undoToastTimer = null;
 
 function todayStr(){
@@ -486,6 +492,34 @@ async function apiCall(resource, opts){
   AUTH_FAILED = false;
   if(!res.ok) throw new Error(`API ${resource} failed: ${res.status}`);
   return res.json();
+}
+// Pulls the combined, read-only Portal snapshot (assignments + per-handler
+// incentives) via Coverage Desk's own backend, which proxies the actual
+// Apps Script bridge call server-side so the portal secret never reaches
+// the browser. Polled on an interval while the Team Sync panel is open —
+// this is "live" in the sense of refreshing automatically, not a push.
+async function fetchPortalSync(){
+  if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
+  state.portalSyncLoading = true;
+  render();
+  try{
+    const result = await apiCall('portal_sync', {qs:'type=everything'});
+    state.portalSyncData = result.data;
+    state.portalSyncUpdatedAt = Date.now();
+    state.portalSyncError = '';
+  }catch(e){
+    state.portalSyncError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
+  }
+  state.portalSyncLoading = false;
+  render();
+}
+function startPortalSyncPolling(){
+  stopPortalSyncPolling();
+  fetchPortalSync();
+  portalSyncTimer = setInterval(fetchPortalSync, 30000);
+}
+function stopPortalSyncPolling(){
+  if(portalSyncTimer){ clearInterval(portalSyncTimer); portalSyncTimer = null; }
 }
 async function refreshRole(){
   if(!API_BASE_URL){ CURRENT_ROLE = 'admin'; return; }
@@ -1881,6 +1915,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="btn ghost" id="clearAll" style="color:var(--coral)">Clear all calls</button>
       ${renderFinalizeControls()}`}
       ${isReadOnly ? `<button class="btn" id="toggleRoster">Team (${state.roster.length})</button>` : ''}
+      <button class="btn" id="togglePortalSync">📡 Team Sync</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${state.roster.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${escapeHtml(p.name)}" ${state.assigneeFilter===p.name?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
@@ -1902,6 +1937,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     ${(!isReadOnly && state.showImport) ? renderImportPanel() : ''}
     ${(!isReadOnly && state.showRescheduleImport) ? renderRescheduleImportPanel() : ''}
     ${(!isReadOnly && state.rescheduleReview) ? renderRescheduleConfirmPanel() : ''}
+    ${state.showPortalSync ? renderPortalSyncPanel() : ''}
     ${state.showRoster ? renderRosterPanel() : ''}
 
     <div class="${isReadOnly?'read-only-mode':''}">
@@ -2335,6 +2371,69 @@ function renderRescheduleConfirmPanel(){
   </div>`;
 }
 
+function renderPortalSyncPanel(){
+  const d = state.portalSyncData;
+  const updatedLabel = state.portalSyncUpdatedAt
+    ? new Date(state.portalSyncUpdatedAt).toLocaleTimeString()
+    : '—';
+  let body = '';
+  if(state.portalSyncError){
+    body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.portalSyncError)}</div>`;
+  } else if(!d){
+    body = `<div class="hint">${state.portalSyncLoading ? 'Loading…' : 'No data yet — click Refresh.'}</div>`;
+  } else {
+    const assignments = (d.assignments || []).slice().sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
+    const incentives = (d.incentives && d.incentives.byHandler) || [];
+    const byTeam = (d.incentives && d.incentives.byTeam) || {};
+    const teamTotals = Object.keys(byTeam).map(code=>`<span class="prior-badge" style="margin-right:8px">${escapeHtml(byTeam[code].label)}: ₹${Number(byTeam[code].total||0).toLocaleString('en-IN')}</span>`).join('');
+
+    body = `
+      <div style="margin-bottom:14px">${teamTotals}</div>
+      <div style="font-weight:600;margin-bottom:6px;font-size:13px">Incentives by handler ${d.incentives && d.incentives.month && d.incentives.month!=='ALL' ? '('+escapeHtml(d.incentives.month)+')' : '(all time)'}</div>
+      <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Handler</th><th style="padding:6px 10px">Promotion</th><th style="padding:6px 10px">Selection</th><th style="padding:6px 10px">Total</th></tr></thead>
+          <tbody>
+            ${incentives.length ? incentives.map(r=>`<tr style="border-top:1px solid var(--border-soft)">
+              <td style="padding:6px 10px">${escapeHtml(r.team)}</td>
+              <td style="padding:6px 10px">${escapeHtml(r.handler)}</td>
+              <td style="padding:6px 10px">₹${Number(r.promotion||0).toLocaleString('en-IN')}</td>
+              <td style="padding:6px 10px">₹${Number(r.selection||0).toLocaleString('en-IN')}</td>
+              <td style="padding:6px 10px;font-weight:600">₹${Number(r.total||0).toLocaleString('en-IN')}</td>
+            </tr>`).join('') : `<tr><td colspan="5" style="padding:10px;color:var(--text-faint)">No incentive records found.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div style="font-weight:600;margin-bottom:6px;font-size:13px">Live assignments (${assignments.length})</div>
+      <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Time</th><th style="padding:6px 10px">Candidate</th><th style="padding:6px 10px">Client</th><th style="padding:6px 10px">Assignee</th><th style="padding:6px 10px">Status</th></tr></thead>
+          <tbody>
+            ${assignments.length ? assignments.map(a=>`<tr style="border-top:1px solid var(--border-soft)">
+              <td style="padding:6px 10px">${escapeHtml(a.team)}</td>
+              <td style="padding:6px 10px">${escapeHtml(a.time)}</td>
+              <td style="padding:6px 10px">${escapeHtml(a.candidate)}</td>
+              <td style="padding:6px 10px">${escapeHtml(a.client)}</td>
+              <td style="padding:6px 10px">${escapeHtml(a.assignee||'—')}</td>
+              <td style="padding:6px 10px">${escapeHtml(a.status)}</td>
+            </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;color:var(--text-faint)">No assignment records found.</td></tr>`}
+          </tbody>
+        </table>
+      </div>`;
+  }
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Live, read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). Auto-refreshes every 30 seconds while this panel is open. This never writes anything back to the Portal.</div>
+    <div class="row" style="margin-bottom:12px">
+      <div class="hint">Last updated: ${updatedLabel}</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="closePortalSync">Close</button>
+        <button class="btn primary" id="refreshPortalSync" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading?'Refreshing…':'Refresh now'}</button>
+      </div>
+    </div>
+    ${body}
+  </div>`;
+}
+
 function renderImportPanel(){
   return `<div class="import-panel">
     <div class="add-row" style="margin-top:0;margin-bottom:10px">
@@ -2706,6 +2805,18 @@ function attachHandlers(conflictIds){
   if(toggleRosterBtn) toggleRosterBtn.onclick = ()=>{
     state.showRoster = !state.showRoster; state.showImport = false; state.showRescheduleImport = false; render();
   };
+  const togglePortalSyncBtn = document.getElementById('togglePortalSync');
+  if(togglePortalSyncBtn) togglePortalSyncBtn.onclick = ()=>{
+    state.showPortalSync = !state.showPortalSync;
+    if(state.showPortalSync) startPortalSyncPolling(); else stopPortalSyncPolling();
+    render();
+  };
+  const closePortalSyncBtn = document.getElementById('closePortalSync');
+  if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{
+    state.showPortalSync = false; stopPortalSyncPolling(); render();
+  };
+  const refreshPortalSyncBtn = document.getElementById('refreshPortalSync');
+  if(refreshPortalSyncBtn) refreshPortalSyncBtn.onclick = ()=>{ fetchPortalSync(); };
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
     state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', importance:''});
