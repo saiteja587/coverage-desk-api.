@@ -366,6 +366,12 @@ let state = {
   portalSyncUpdatedAt: null,
   portalSyncMode: 'today',
   portalSyncFromCache: false,
+  showIncentives: false,
+  incentivesMonth: '',
+  incentivesData: null,
+  incentivesLoading: false,
+  incentivesError: '',
+  incentivesUpdatedAt: null,
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
@@ -556,6 +562,36 @@ function startPortalSyncPolling(){
 }
 function stopPortalSyncPolling(){
   if(portalSyncTimer){ clearInterval(portalSyncTimer); portalSyncTimer = null; }
+}
+// ---------- dedicated monthly Incentives screen ----------
+function currentMonthKey(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function shiftMonthKey(monthKey, delta){
+  const [y,m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function monthKeyLabel(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
+}
+async function fetchIncentivesMonth(monthKey){
+  if(!API_BASE_URL){ state.incentivesError = 'Incentives requires the app to be connected to the database backend.'; render(); return; }
+  state.incentivesMonth = monthKey;
+  state.incentivesLoading = true;
+  render();
+  try{
+    const result = await apiCall('portal_sync', {qs:'type=incentives&month=' + encodeURIComponent(monthKey)});
+    state.incentivesData = result.data;
+    state.incentivesUpdatedAt = Date.now();
+    state.incentivesError = '';
+  }catch(e){
+    state.incentivesError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
+  }
+  state.incentivesLoading = false;
+  render();
 }
 async function refreshRole(){
   if(!API_BASE_URL){ CURRENT_ROLE = 'admin'; return; }
@@ -1952,6 +1988,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       ${renderFinalizeControls()}`}
       ${isReadOnly ? `<button class="btn" id="toggleRoster">Team (${state.roster.length})</button>` : ''}
       <button class="btn" id="togglePortalSync">📡 Team Sync</button>
+      <button class="btn" id="toggleIncentives">💰 Incentives</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${state.roster.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${escapeHtml(p.name)}" ${state.assigneeFilter===p.name?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
@@ -1974,6 +2011,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     ${(!isReadOnly && state.showRescheduleImport) ? renderRescheduleImportPanel() : ''}
     ${(!isReadOnly && state.rescheduleReview) ? renderRescheduleConfirmPanel() : ''}
     ${state.showPortalSync ? renderPortalSyncPanel() : ''}
+    ${state.showIncentives ? renderIncentivesPanel() : ''}
     ${state.showRoster ? renderRosterPanel() : ''}
 
     <div class="${isReadOnly?'read-only-mode':''}">
@@ -2404,6 +2442,89 @@ function renderRescheduleConfirmPanel(){
         <button class="btn primary" id="confirmRescheduleApply" ${state.rescheduleApplying?'disabled':''}>${state.rescheduleApplying?'Saving…':'Confirm & save'}</button>
       </div>
     </div>
+  </div>`;
+}
+
+function renderIncentivesPanel(){
+  const monthKey = state.incentivesMonth || currentMonthKey();
+  const d = state.incentivesData;
+  const updatedLabel = state.incentivesUpdatedAt ? new Date(state.incentivesUpdatedAt).toLocaleTimeString() : '—';
+
+  let body = '';
+  if(state.incentivesError){
+    body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.incentivesError)}</div>`;
+  } else if(!d){
+    body = `<div class="hint">${state.incentivesLoading ? 'Loading…' : 'No data yet — pick a month above.'}</div>`;
+  } else {
+    const byHandler = d.byHandler || [];
+    const byTeam = d.byTeam || {};
+    const grandTotal = Number(d.grandTotal || 0);
+
+    const teamGroups = {};
+    byHandler.forEach(row=>{
+      const key = row.teamCode || row.team || 'Other';
+      if(!teamGroups[key]) teamGroups[key] = { label: row.team, rows: [] };
+      teamGroups[key].rows.push(row);
+    });
+
+    const teamCardsHtml = Object.keys(teamGroups).length ? Object.keys(teamGroups).map(key=>{
+      const group = teamGroups[key];
+      const teamTotal = byTeam[key] ? byTeam[key].total : group.rows.reduce((s,r)=>s+Number(r.total||0),0);
+      const teamPromo = group.rows.reduce((s,r)=>s+Number(r.promotion||0),0);
+      const teamSelection = group.rows.reduce((s,r)=>s+Number(r.selection||0),0);
+      return `<div style="margin-bottom:16px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface-2)">
+          <div style="font-weight:700;font-size:14px">${escapeHtml(group.label)}</div>
+          <div style="text-align:right">
+            <div style="font-weight:800;font-size:16px;color:var(--teal)">₹${teamTotal.toLocaleString('en-IN')}</div>
+            <div style="font-size:10.5px;color:var(--text-faint)">Promo ₹${teamPromo.toLocaleString('en-IN')} · Selection ₹${teamSelection.toLocaleString('en-IN')}</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="text-align:left;background:var(--surface)"><th style="padding:6px 14px">Handler</th><th style="padding:6px 14px">Promotion</th><th style="padding:6px 14px">Selection</th><th style="padding:6px 14px">Total</th><th style="padding:6px 14px">Records</th></tr></thead>
+          <tbody>
+            ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>`<tr style="border-top:1px solid var(--border-soft)">
+              <td style="padding:7px 14px;font-weight:600">${escapeHtml(r.handler)}</td>
+              <td style="padding:7px 14px">₹${Number(r.promotion||0).toLocaleString('en-IN')}</td>
+              <td style="padding:7px 14px">₹${Number(r.selection||0).toLocaleString('en-IN')}</td>
+              <td style="padding:7px 14px;font-weight:700">₹${Number(r.total||0).toLocaleString('en-IN')}</td>
+              <td style="padding:7px 14px;color:var(--text-faint)">${r.records||0}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    }).join('') : `<div class="empty-state"><h3>No incentive records for ${escapeHtml(monthKeyLabel(monthKey))}</h3><p>Nothing has been earned or synced for this month yet.</p></div>`;
+
+    body = `
+      <div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
+          <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em">Grand total</div>
+          <div style="font-size:24px;font-weight:800;color:var(--teal)">₹${grandTotal.toLocaleString('en-IN')}</div>
+        </div>
+        ${Object.keys(byTeam).map(code=>`<div style="flex:1;min-width:160px;padding:14px;border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em">${escapeHtml(byTeam[code].label)}</div>
+          <div style="font-size:20px;font-weight:800">₹${Number(byTeam[code].total||0).toLocaleString('en-IN')}</div>
+          <div style="font-size:10.5px;color:var(--text-faint)">${byTeam[code].records||0} record(s)</div>
+        </div>`).join('')}
+      </div>
+      ${teamCardsHtml}`;
+  }
+
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Monthly incentive totals pulled from the Interview Portal, grouped by team and handler. Read-only — this never writes anything back to the Portal.</div>
+    <div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn ghost" id="incentivesPrevMonth" title="Previous month">◀</button>
+        <div style="font-weight:700;font-size:15px;min-width:150px;text-align:center">${escapeHtml(monthKeyLabel(monthKey))}</div>
+        <button class="btn ghost" id="incentivesNextMonth" title="Next month">▶</button>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <div class="hint" style="align-self:center">Last updated: ${updatedLabel}</div>
+        <button class="btn ghost" id="closeIncentives">Close</button>
+        <button class="btn primary" id="refreshIncentives" ${state.incentivesLoading?'disabled':''}>${state.incentivesLoading?'Loading…':'Refresh'}</button>
+      </div>
+    </div>
+    ${body}
   </div>`;
 }
 
@@ -2873,6 +2994,20 @@ function attachHandlers(conflictIds){
   if(syncPortalTodayBtn) syncPortalTodayBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('today'); };
   const syncPortalFullBtn = document.getElementById('syncPortalFull');
   if(syncPortalFullBtn) syncPortalFullBtn.onclick = ()=>{ state.portalSyncFromCache = false; fetchPortalSync('full'); };
+  const toggleIncentivesBtn = document.getElementById('toggleIncentives');
+  if(toggleIncentivesBtn) toggleIncentivesBtn.onclick = ()=>{
+    state.showIncentives = !state.showIncentives;
+    if(state.showIncentives && !state.incentivesData){ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); }
+    render();
+  };
+  const closeIncentivesBtn = document.getElementById('closeIncentives');
+  if(closeIncentivesBtn) closeIncentivesBtn.onclick = ()=>{ state.showIncentives = false; render(); };
+  const incentivesPrevBtn = document.getElementById('incentivesPrevMonth');
+  if(incentivesPrevBtn) incentivesPrevBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), -1)); };
+  const incentivesNextBtn = document.getElementById('incentivesNextMonth');
+  if(incentivesNextBtn) incentivesNextBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), 1)); };
+  const refreshIncentivesBtn = document.getElementById('refreshIncentives');
+  if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
     state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', importance:''});
