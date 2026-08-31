@@ -4241,15 +4241,19 @@ async function syncPortalData(){
   state.portalSyncLoading = true;
   render();
   try{
-    const url = `${API_BASE_URL.replace(/\/$/,'')}/api/portal?resource=assignments`;
-    const res = await fetch(url);
-    const json = await res.json();
-    if(json.ok){
-      state.portalAssignments = json.data || [];
-      state.portalSyncError = '';
-    } else {
-      state.portalSyncError = json.error || 'Sync failed';
-    }
+    // Reuses the same working bridge as the 📡 Team Sync panel
+    // (?resource=portal_sync on api/data.js), rather than the separate
+    // api/portal.js endpoint this function used to call — that file was
+    // planned but never actually created, which is why this was failing
+    // with a 404 NOT_FOUND from Vercel.
+    const result = await apiCall('portal_sync', {qs:'type=assignments'});
+    const rows = (result.data && result.data.length !== undefined) ? result.data : (result.data && result.data.assignments) || [];
+    // findPortalMatch() below expects a `handler` field (it predates the
+    // newer `assignee` naming used by the Team Sync panel) — map it here
+    // so both features can share one response shape without either needing
+    // to change.
+    state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
+    state.portalSyncError = '';
   }catch(e){
     state.portalSyncError = e.message;
   }
