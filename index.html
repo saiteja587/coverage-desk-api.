@@ -244,6 +244,10 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .doubt-icon{color:var(--amber);}
 .doubt-note-row td{background:var(--amber-dim);color:var(--amber);font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
 .doubt-note-icon{margin-right:5px;}
+.status-note-row td{font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
+.status-note-row.status-note-rescheduled td{background:var(--violet-dim);color:var(--violet);}
+.status-note-row.status-note-cancelled td{background:var(--coral-dim);color:var(--coral);}
+.status-note-icon{margin-right:5px;}
 
 .note-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 6px;flex-shrink:0;}
 .note-del:hover{color:var(--coral);}
@@ -2556,6 +2560,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="10"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
+    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="10"><span class="status-note-icon">${r.status==='cancelled'?'✕':'↻'}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (r.status==='cancelled'?'Cancelled — no reason given':'Rescheduled — no reason given'))}</td></tr>`:''}
     ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="10">
       <div class="pin-detail-fields">
         <div class="pin-field">
