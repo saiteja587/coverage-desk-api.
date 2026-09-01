@@ -4712,6 +4712,19 @@ function assigneeToPortalTeamCode(assignee){
   if(person && person.team) return assigneeToPortalTeamCode(person.team);
   return null;
 }
+// Strips a trailing country tag like "(UK)", "(Ireland)", "(Germany)" and
+// collapses whitespace, so "Mathew kodavalli" and "Mathew kodavalli (UK)"
+// are recognized as the same person — the Portal's raw candidate text
+// often keeps that tag inline, while Coverage Desk stores country
+// separately and keeps the name plain. Without this, an exact-text
+// comparison silently fails for every candidate with a country tag.
+function normalizeCandidateForMatch(name){
+  return (name||'')
+    .replace(/\s*\([^)]*\)\s*$/,'')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
 function findPortalMatch(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
   // Only HYD, Pradeep Anna, and Dev are tracked in the Portal at all —
@@ -4720,8 +4733,8 @@ function findPortalMatch(row){
   // match belongs to a Portal-tracked team, show nothing.
   const expectedTeamCode = assigneeToPortalTeamCode(row.assignee);
   if(!expectedTeamCode) return null;
-  const key = row.candidate.trim().toLowerCase();
-  let matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key && p.teamCode === expectedTeamCode);
+  const key = normalizeCandidateForMatch(row.candidate);
+  let matches = state.portalAssignments.filter(p => normalizeCandidateForMatch(p.candidate) === key && p.teamCode === expectedTeamCode);
   if(!matches.length) return null;
   if(matches.length === 1) return matches[0];
   // Multiple same-name matches — this is the exact scenario that caused a
