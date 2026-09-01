@@ -4698,11 +4698,35 @@ async function syncPortalData(){
 // time, when available, to disambiguate same-name candidates). The exact
 // match fields may need adjusting once the real Portal data shape is
 // confirmed — this assumes candidate/time/handler fields.
+// Maps a local "Assigned to" value to the Portal's team code (PRADEEP/HYD/DEV),
+// either directly (team-level assignment) or by looking up which team a
+// named individual belongs to in the roster. Returns null when the team
+// can't be determined, in which case matching stays unrestricted.
+function assigneeToPortalTeamCode(assignee){
+  if(!assignee) return null;
+  const label = assignee.trim().toLowerCase();
+  if(label === 'hyd team') return 'HYD';
+  if(label === 'pradeep anna team') return 'PRADEEP';
+  if(label.startsWith('development')) return 'DEV';
+  const person = state.roster.find(p => p.name.trim().toLowerCase() === label);
+  if(person && person.team) return assigneeToPortalTeamCode(person.team);
+  return null;
+}
 function findPortalMatch(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
   const key = row.candidate.trim().toLowerCase();
   let matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key);
   if(!matches.length) return null;
+  // Team-restrict first, whenever we know which team this call belongs to —
+  // this is what stops a same-named candidate from a DIFFERENT team (e.g.
+  // Pradeep) being wrongly shown on an HYD call just because HYD's own
+  // data for that date happened to be empty or incomplete at sync time.
+  const expectedTeamCode = assigneeToPortalTeamCode(row.assignee);
+  if(expectedTeamCode){
+    const teamMatches = matches.filter(p => p.teamCode === expectedTeamCode);
+    if(teamMatches.length) matches = teamMatches;
+    else return null; // known team, but nothing from that team matched — don't guess across teams
+  }
   if(matches.length === 1) return matches[0];
   // Multiple same-name matches — this is the exact scenario that caused a
   // wrong cross-team match (e.g. a Pradeep Anna candidate wrongly shown for
