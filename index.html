@@ -199,6 +199,12 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 
 /* IMPORT PANEL */
 .import-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:currentColor;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:-2px;margin-right:6px;}
+.spinner-lg{width:28px;height:28px;border-width:3px;margin:0 auto;display:block;}
+.loading-block{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 20px;color:var(--text-faint);font-size:13px;}
+.skeleton-row{height:44px;border-radius:8px;background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface) 37%,var(--surface-2) 63%);background-size:400% 100%;animation:skeleton-pulse 1.4s ease infinite;margin-bottom:8px;}
+@keyframes skeleton-pulse{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
 .import-panel textarea{width:100%;min-height:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:12px;resize:vertical;}
 .import-panel .row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;}
 .import-panel .hint{color:var(--text-faint);font-size:11.5px;}
@@ -310,7 +316,7 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 </style>
 </head>
 <body>
-<div class="app" id="app"></div>
+<div class="app" id="app"><div class="loading-block"><span class="spinner spinner-lg"></span><div>Loading Coverage Desk…</div></div></div>
 
 <script>
 const STATUS_COLORS = { assigned: 'var(--teal)', woi: 'var(--amber)', unassigned: 'var(--coral)' };
@@ -366,6 +372,7 @@ let state = {
   portalSyncUpdatedAt: null,
   portalSyncMode: 'today',
   portalSyncFromCache: false,
+  dateSwitching: false,
   showIncentives: false,
   incentivesMonth: '',
   incentivesData: null,
@@ -667,6 +674,16 @@ async function loadDay(dateStr){
       state.finalized = !!finalData.finalized;
       state.needsLogin = false;
       syncShiftNoteFromNotes(); syncAbsentFromNotes(); syncExportedIdsFromNotes();
+      // Clear first so a previous date's Portal data can't linger on
+      // screen while this date's cached snapshot (if any) loads in.
+      state.portalAssignments = null;
+      // Load the last-saved Portal sync snapshot for this date from the
+      // database — this is what makes the 📡 Portal Assignee column show
+      // data immediately on load/date-switch, instead of only after
+      // someone manually clicks Sync. It's read-only and best-effort: if
+      // nothing has ever been synced for this date, the column just shows
+      // "—" until someone runs an actual sync.
+      loadCachedPortalAssignmentsForDate(dateStr);
       return;
     }catch(e){
       if(AUTH_FAILED){ state.needsLogin = true; return; } // don't silently fall back to stale local data
@@ -1947,10 +1964,10 @@ function render(){
             <button class="more-menu-item" id="toggleSummary">📊 Summary</button>
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
-            <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading ? '📡 Syncing…' : '📡 Sync Portal'}</button>
+            <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
           </div>` : ''}
         </div>
-        ${CURRENT_ROLE!=='user' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '💾 Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
+        ${CURRENT_ROLE!=='user' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
       </div>
     </div>
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
@@ -1982,7 +1999,7 @@ function render(){
 
     ${state.view!=='notes' ? renderStrip(sortedAll, conflictIds) : ''}
 
-    ${renderCallsView(sum, sortedRows, filtered, conflictIds, sortedAll, clientConflicts)}
+    ${state.dateSwitching ? renderDateSwitchSkeleton() : renderCallsView(sum, sortedRows, filtered, conflictIds, sortedAll, clientConflicts)}
     `}
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
@@ -2018,6 +2035,12 @@ function renderBulkBar(){
     </select>
     <button class="btn" id="distributeApplyBtn" title="Spreads the selected calls one-by-one across that team's available (non-absent) members">🔀 Distribute</button>
     <button class="btn ghost" id="bulkClearBtn">Clear selection</button>
+  </div>`;
+}
+
+function renderDateSwitchSkeleton(){
+  return `<div>
+    ${[1,2,3,4,5,6].map(()=>`<div class="skeleton-row"></div>`).join('')}
   </div>`;
 }
 
@@ -2449,6 +2472,10 @@ function renderStrip(rows, conflictIds){
 }
 
 function renderRescheduleImportPanel(){
+  const dayRows = state.rows.slice().sort((a,b)=>businessDayMinutes(a.time)-businessDayMinutes(b.time));
+  const manualOptionsHtml = `<option value="">— Select a call —</option>` + dayRows.map(r=>
+    `<option value="${r.id}">${escapeHtml(r.candidate||'(no name)')} — ${escapeHtml(r.time||'')}${r.company?' — '+escapeHtml(r.company):''}</option>`
+  ).join('');
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Paste WhatsApp-style reschedule/cancel messages for calls that are <b>already saved</b> in this day's list — this only updates the status/tag on matching calls, it does not create new calls. Existing calls in the DB will be scanned for a match by candidate name and time.</div>
     <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir"></textarea>
@@ -2457,6 +2484,27 @@ function renderRescheduleImportPanel(){
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelRescheduleImport">Cancel</button>
         <button class="btn primary" id="parseRescheduleBtn">Parse messages</button>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">Can't find the message, or the system won't recognize it? Mark a call manually instead:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:2;min-width:200px">
+          <label class="hint" style="display:block;margin-bottom:4px">Which call</label>
+          <select id="manualReschedCall" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">${manualOptionsHtml}</select>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label class="hint" style="display:block;margin-bottom:4px">Status</label>
+          <select id="manualReschedStatus" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+            <option value="rescheduled">↻ Rescheduled</option>
+            <option value="cancelled">✕ Cancelled</option>
+          </select>
+        </div>
+        <div style="flex:2;min-width:200px">
+          <label class="hint" style="display:block;margin-bottom:4px">Reason (optional)</label>
+          <input id="manualReschedReason" type="text" placeholder="e.g. candidate side, reschedule tomorrow" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <button class="btn primary" id="addManualReschedBtn">Add</button>
       </div>
     </div>
   </div>`;
@@ -2499,7 +2547,7 @@ function renderRescheduleConfirmPanel(){
       <div class="hint">Calls without a selected match will be skipped and nothing will be saved for them.</div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelRescheduleConfirm">Cancel</button>
-        <button class="btn primary" id="confirmRescheduleApply" ${state.rescheduleApplying?'disabled':''}>${state.rescheduleApplying?'Saving…':'Confirm & save'}</button>
+        <button class="btn primary" id="confirmRescheduleApply" ${state.rescheduleApplying?'disabled':''}>${state.rescheduleApplying?'<span class="spinner"></span>Saving…':'Confirm & save'}</button>
       </div>
     </div>
   </div>`;
@@ -2514,7 +2562,7 @@ function renderIncentivesPanel(){
   if(state.incentivesError){
     body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.incentivesError)}</div>`;
   } else if(!d){
-    body = `<div class="hint">${state.incentivesLoading ? 'Loading…' : 'No data yet — pick a month above.'}</div>`;
+    body = `<div class="hint">${state.incentivesLoading ? '<span class="spinner"></span>Loading…' : 'No data yet — pick a month above.'}</div>`;
   } else {
     const byHandler = d.byHandler || [];
     const byTeam = d.byTeam || {};
@@ -2581,7 +2629,7 @@ function renderIncentivesPanel(){
       <div style="display:flex;gap:8px;">
         <div class="hint" style="align-self:center">Last updated: ${updatedLabel}</div>
         <button class="btn ghost" id="closeIncentives">Close</button>
-        <button class="btn primary" id="refreshIncentives" ${state.incentivesLoading?'disabled':''}>${state.incentivesLoading?'Loading…':'Refresh'}</button>
+        <button class="btn primary" id="refreshIncentives" ${state.incentivesLoading?'disabled':''}>${state.incentivesLoading?'<span class="spinner"></span>Loading…':'Refresh'}</button>
       </div>
     </div>
     ${body}
@@ -2597,7 +2645,7 @@ function renderPortalSyncPanel(){
   if(state.portalSyncError){
     body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.portalSyncError)}</div>`;
   } else if(!d){
-    body = `<div class="hint">${state.portalSyncLoading ? 'Loading…' : 'No data yet — click one of the sync buttons above.'}</div>`;
+    body = `<div class="hint">${state.portalSyncLoading ? '<span class="spinner"></span>Loading…' : 'No data yet — click one of the sync buttons above.'}</div>`;
   } else {
     const todaysAssignments = (d.assignments || []).slice().sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
     const byHandler = (d.incentives && d.incentives.byHandler) || [];
@@ -2660,8 +2708,8 @@ function renderPortalSyncPanel(){
       <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn ghost" id="closePortalSync">Close</button>
-        <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='today' ? 'Syncing…' : `📅 Sync Today (${state.date})`}</button>
-        <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? 'Syncing… (~20s)' : '🗂 Full Sync (all data)'}</button>
+        <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='today' ? '<span class="spinner"></span>Syncing…' : `📅 Sync Today (${state.date})`}</button>
+        <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? '<span class="spinner"></span>Syncing… (~20s)' : '🗂 Full Sync (all data)'}</button>
       </div>
     </div>
     ${body}
@@ -2897,13 +2945,21 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
           ${buildRosterOptions(r.round, r.assignee)}
         </select>
-        ${(()=>{ const pm = findPortalMatch(r); if(!pm) return ''; const differs = pm.handler && r.assignee && pm.handler.trim().toLowerCase() !== r.assignee.trim().toLowerCase(); return `<div style="margin-top:4px;font-size:10.5px;color:${differs?'var(--amber)':'var(--teal)'};display:flex;align-items:center;gap:4px" title="From the Interview Portal (${escapeHtml(pm.team||'')})"><span>📡</span><span>${pm.handler?escapeHtml(pm.handler):'Unassigned in Portal'}${pm.status?' · '+escapeHtml(pm.status):''}${differs?' (differs from local)':''}</span></div>`; })()}
       </td>
+      <td data-label="Portal Assignee">${(()=>{
+        const pm = findPortalMatch(r);
+        if(!pm) return `<span style="color:var(--text-faint);font-size:11.5px">—</span>`;
+        const differs = pm.handler && r.assignee && pm.handler.trim().toLowerCase() !== r.assignee.trim().toLowerCase();
+        return `<div style="font-size:12px;line-height:1.35" title="From the Interview Portal (${escapeHtml(pm.team||'')})">
+          <div style="font-weight:700;color:${differs?'var(--amber)':'var(--teal)'}">📡 ${pm.handler?escapeHtml(pm.handler):'Unassigned'}</div>
+          ${pm.status ? `<div style="color:var(--text-faint);font-size:10.5px">${escapeHtml(pm.status)}${differs?' · differs from local':''}</div>` : ''}
+        </div>`;
+      })()}</td>
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
-    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="10"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
-    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="10"><span class="status-note-icon">${r.status==='cancelled'?'✕':'↻'}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (r.status==='cancelled'?'Cancelled — no reason given':'Rescheduled — no reason given'))}</td></tr>`:''}
-    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="10">
+    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="11"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
+    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="11"><span class="status-note-icon">${r.status==='cancelled'?'✕':'↻'}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (r.status==='cancelled'?'Cancelled — no reason given':'Rescheduled — no reason given'))}</td></tr>`:''}
+    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="11">
       <div class="pin-detail-fields">
         <div class="pin-field">
           <label>Interviewer (client-side)</label>
@@ -2929,6 +2985,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
       <th style="width:140px">Assigned to</th>
+      <th style="width:150px">📡 Portal Assignee</th>
       <th style="width:96px"></th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
@@ -2988,7 +3045,10 @@ function attachHandlers(conflictIds){
     state.date = e.target.value;
     state.dirty = false;
     state.showImport = false; state.showRoster = false;
+    state.dateSwitching = true;
+    render();
     await loadDay(state.date);
+    state.dateSwitching = false;
     // Demo/seed data disabled — the app's been in real use for a while now,
     // and the old seeded candidate names were polluting the "handled before"
     // cross-date scan with stale test data instead of real history.
@@ -3002,7 +3062,10 @@ function attachHandlers(conflictIds){
     const d = new Date(state.date); d.setDate(d.getDate()-1);
     state.date = d.toISOString().slice(0,10);
     state.dirty = false;
+    state.dateSwitching = true;
+    render();
     await loadDay(state.date);
+    state.dateSwitching = false;
     // Demo/seed data disabled — the app's been in real use for a while now,
     // and the old seeded candidate names were polluting the "handled before"
     // cross-date scan with stale test data instead of real history.
@@ -3016,7 +3079,10 @@ function attachHandlers(conflictIds){
     const d = new Date(state.date); d.setDate(d.getDate()+1);
     state.date = d.toISOString().slice(0,10);
     state.dirty = false;
+    state.dateSwitching = true;
+    render();
     await loadDay(state.date);
+    state.dateSwitching = false;
     // Demo/seed data disabled — the app's been in real use for a while now,
     // and the old seeded candidate names were polluting the "handled before"
     // cross-date scan with stale test data instead of real history.
@@ -3496,6 +3562,38 @@ function attachHandlers(conflictIds){
         skip: false,
       };
     });
+    state.showRescheduleImport = false;
+    render();
+  };
+
+  const addManualReschedBtn = document.getElementById('addManualReschedBtn');
+  if(addManualReschedBtn) addManualReschedBtn.onclick = ()=>{
+    const callSel = document.getElementById('manualReschedCall');
+    const statusSel = document.getElementById('manualReschedStatus');
+    const reasonEl = document.getElementById('manualReschedReason');
+    const callId = callSel ? callSel.value : '';
+    if(!callId){
+      alert('Pick which call this reschedule/cancel is for.');
+      return;
+    }
+    const row = state.rows.find(r=>r.id===callId);
+    if(!row){ alert('That call could not be found — try again.'); return; }
+    const status = statusSel ? statusSel.value : 'rescheduled';
+    const reason = reasonEl ? reasonEl.value.trim() : '';
+    // Same review-then-confirm flow as parsed messages — nothing is saved
+    // until Confirm & save is clicked on the next screen.
+    state.rescheduleReview = [{
+      raw: `Manually added: ${row.candidate||'(no name)'} — ${row.time||''}${row.company?' — '+row.company:''}`,
+      candidate: row.candidate || '',
+      time: row.time || '',
+      company: row.company || '',
+      status: status,
+      side: '',
+      reason: reason,
+      selectedRowId: row.id,
+      autoMatched: false,
+      skip: false,
+    }];
     state.showRescheduleImport = false;
     render();
   };
@@ -4476,6 +4574,23 @@ function findPriorClientOccurrence(row){
 // Control side (PortalCoverageDeskExport.gs) — Coverage Desk can only ever
 // read this, never assign/reassign/approve anything through it. Manually
 // triggered (not automatic) since it's an external call to another system.
+// Reads back whatever was last saved to the database for this date's
+// Portal assignments — no live Apps Script call, so it's fast and safe
+// to run automatically on every page load / date switch. A real sync
+// (syncPortalData / Team Sync) still overwrites this with fresh data
+// and re-saves it, same as before.
+async function loadCachedPortalAssignmentsForDate(dateStr){
+  if(!API_BASE_URL) return;
+  try{
+    const result = await apiCall('portal_sync', {qs:'type=assignments&cached=1&date=' + encodeURIComponent(dateStr)});
+    if(result.data && result.data.length){
+      const rows = result.data;
+      state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
+      state.portalSyncedAt = result.generatedAt ? new Date(result.generatedAt).toLocaleString() : state.portalSyncedAt;
+      render();
+    }
+  }catch(e){ /* best-effort — a manual sync still works even if this fails */ }
+}
 async function syncPortalData(){
   if(!API_BASE_URL){
     state.portalSyncError = 'Connect a database first (see 🗄️ Database settings) — Portal sync needs the backend to relay the request.';
