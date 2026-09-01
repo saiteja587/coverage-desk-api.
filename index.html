@@ -1957,11 +1957,12 @@ function render(){
   if(state.assigneeFilter){
     // Matches either Coverage Desk's own local assignee field OR the
     // Portal-synced handler for that call — a name only visible via
-    // Portal sync should still be findable here.
+    // Portal sync should still be findable here. Tolerates spelling
+    // variants (Bharat/Bharath) the same way the Portal column does.
     filtered = filtered.filter(r => {
-      if(r.assignee === state.assigneeFilter) return true;
+      if(namesEquivalent(r.assignee, state.assigneeFilter)) return true;
       const pm = findPortalMatch(r);
-      return !!(pm && pm.handler === state.assigneeFilter);
+      return !!(pm && namesEquivalent(pm.handler, state.assigneeFilter));
     });
   }
   if(state.clientFilter){
@@ -3014,7 +3015,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td data-label="Portal Assignee">${(()=>{
         const pm = findPortalMatch(r);
         if(!pm) return `<span style="color:var(--text-faint);font-size:11.5px">—</span>`;
-        const differs = pm.handler && r.assignee && pm.handler.trim().toLowerCase() !== r.assignee.trim().toLowerCase();
+        const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
         return `<div style="font-size:12px;line-height:1.35" title="From the Interview Portal (${escapeHtml(pm.team||'')})">
           <div style="font-weight:700;color:${differs?'var(--amber)':'var(--teal)'}">📡 ${pm.handler?escapeHtml(pm.handler):'Unassigned'}</div>
           ${pm.status ? `<div style="color:var(--text-faint);font-size:10.5px">${escapeHtml(pm.status)}${differs?' · differs from local':''}</div>` : ''}
@@ -4698,6 +4699,20 @@ async function syncPortalData(){
 // time, when available, to disambiguate same-name candidates). The exact
 // match fields may need adjusting once the real Portal data shape is
 // confirmed — this assumes candidate/time/handler fields.
+// EXACT match only, deliberately. An earlier version of this function
+// treated one name as equivalent to another if it was a short prefix of
+// it (e.g. "Bharat"/"Bharath") — that was reverted after it turned out
+// "Karthik" (Pradeep Anna Team) and "Karthikeya" (HYD Team) are two
+// completely different real people, not a spelling variant of the same
+// person. Given this app already had a real incident with cross-team
+// name mixups, a minor cosmetic "differs from local" false-positive for
+// genuine spelling variants is a far smaller problem than silently
+// treating two different people as the same one.
+function namesEquivalent(a, b){
+  const x = (a||'').trim().toLowerCase();
+  const y = (b||'').trim().toLowerCase();
+  return !!x && !!y && x === y;
+}
 // Maps a local "Assigned to" value to the Portal's team code (PRADEEP/HYD/DEV),
 // either directly (team-level assignment) or by looking up which team a
 // named individual belongs to in the roster. Returns null when the team
@@ -4708,8 +4723,19 @@ function assigneeToPortalTeamCode(assignee){
   if(label === 'hyd team') return 'HYD';
   if(label === 'pradeep anna team') return 'PRADEEP';
   if(label.startsWith('development')) return 'DEV';
-  const person = state.roster.find(p => p.name.trim().toLowerCase() === label);
+  const person = state.roster.find(p => namesEquivalent(p.name, assignee));
   if(person && person.team) return assigneeToPortalTeamCode(person.team);
+  // Not in the roster — e.g. typed manually via "Type a name…" for
+  // someone like Karthik who isn't normally on this team's roster. Fall
+  // back to the Portal's own synced data: if every record with this
+  // EXACT handler name belongs to the same team, it's safe to use that
+  // team. If the same name shows up under more than one team, stay
+  // uncertain rather than guess which one is meant.
+  if(state.portalAssignments && state.portalAssignments.length){
+    const handlerMatches = state.portalAssignments.filter(p => namesEquivalent(p.handler, assignee));
+    const teamCodes = Array.from(new Set(handlerMatches.map(p => p.teamCode).filter(Boolean)));
+    if(teamCodes.length === 1) return teamCodes[0];
+  }
   return null;
 }
 // Strips a trailing country tag like "(UK)", "(Ireland)", "(Germany)" and
