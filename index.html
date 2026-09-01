@@ -526,6 +526,11 @@ async function apiCall(resource, opts){
 // mode 'full'   -> slow: the entire call history (~20s), manual only
 async function fetchPortalSync(mode){
   if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
+  if((mode || state.portalSyncMode) === 'today' && !isViewingToday()){
+    state.portalSyncError = `Sync Today only works while viewing today's date — you're currently on ${state.date}. Switch to today first, or use Full Sync for historical data.`;
+    render();
+    return;
+  }
   state.portalSyncMode = mode || state.portalSyncMode || 'today';
   state.portalSyncLoading = true;
   render();
@@ -580,6 +585,15 @@ function stopPortalSyncPolling(){
   if(portalSyncTimer){ clearInterval(portalSyncTimer); portalSyncTimer = null; }
 }
 // ---------- dedicated monthly Incentives screen ----------
+// True only when the date currently open in Coverage Desk is today's real
+// calendar date — Portal sync is deliberately restricted to this case,
+// since syncing for a past date the person has navigated to (rather than
+// today) is what caused confusing, out-of-context data to appear earlier.
+function isViewingToday(){
+  const now = new Date();
+  const todayKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  return state.date === todayKey;
+}
 function currentMonthKey(){
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
@@ -658,6 +672,10 @@ async function saveRoster(){
   }
   await storageAdapter.set('roster', JSON.stringify(state.roster), false);
 }
+function todayDateString(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
 async function loadDay(dateStr){
   if(API_BASE_URL){
     try{
@@ -683,16 +701,21 @@ async function loadDay(dateStr){
       state.finalized = !!finalData.finalized;
       state.needsLogin = false;
       syncShiftNoteFromNotes(); syncAbsentFromNotes(); syncExportedIdsFromNotes();
-      // Clear first so a previous date's Portal data can't linger on
-      // screen while this date's cached snapshot (if any) loads in.
+      // Clear first so a previous date's Portal data can't linger while
+      // this date's own snapshot (if any) loads in.
       state.portalAssignments = null;
-      // Load the last-saved Portal sync snapshot for this date from the
-      // database — this is what makes the 📡 Portal Assignee column show
-      // data immediately on load/date-switch, instead of only after
-      // someone manually clicks Sync. It's read-only and best-effort: if
-      // nothing has ever been synced for this date, the column just shows
-      // "—" until someone runs an actual sync.
-      loadCachedPortalAssignmentsForDate(dateStr);
+      if(dateStr === todayDateString()){
+        // Today's date specifically stays manual-only — data is still
+        // actively changing, and given open questions about occasional
+        // cross-team accuracy, showing nothing by default is safer than
+        // auto-showing something that might be stale or wrong. Click a
+        // sync button to pull it deliberately.
+      } else {
+        // Past dates are more settled, so showing the last-saved snapshot
+        // automatically (no live Apps Script call, just a fast DB read)
+        // is genuinely helpful rather than risky.
+        loadCachedPortalAssignmentsForDate(dateStr);
+      }
       return;
     }catch(e){
       if(AUTH_FAILED){ state.needsLogin = true; return; } // don't silently fall back to stale local data
@@ -1932,7 +1955,14 @@ function render(){
   else if(state.filter==='conflict') filtered = sortedRows.filter(r=>conflictIds.has(r.id));
 
   if(state.assigneeFilter){
-    filtered = filtered.filter(r => r.assignee === state.assigneeFilter);
+    // Matches either Coverage Desk's own local assignee field OR the
+    // Portal-synced handler for that call — a name only visible via
+    // Portal sync should still be findable here.
+    filtered = filtered.filter(r => {
+      if(r.assignee === state.assigneeFilter) return true;
+      const pm = findPortalMatch(r);
+      return !!(pm && pm.handler === state.assigneeFilter);
+    });
   }
   if(state.clientFilter){
     filtered = filtered.filter(r => r.company === state.clientFilter);
@@ -1973,7 +2003,7 @@ function render(){
             <button class="more-menu-item" id="toggleSummary">📊 Summary</button>
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
-            <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
+            <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
           </div>` : ''}
         </div>
         ${CURRENT_ROLE!=='user' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
@@ -2090,7 +2120,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="btn" id="toggleIncentives">💰 Incentives</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
-        ${state.roster.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${escapeHtml(p.name)}" ${state.assigneeFilter===p.name?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+        ${buildCombinedAssigneeFilterOptions()}
       </select>
       <select id="clientFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by client…</option>
@@ -2717,7 +2747,7 @@ function renderPortalSyncPanel(){
       <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn ghost" id="closePortalSync">Close</button>
-        <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='today' ? '<span class="spinner"></span>Syncing…' : `📅 Sync Today (${state.date})`}</button>
+        <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading && state.portalSyncMode==='today' ? '<span class="spinner"></span>Syncing…' : `📅 Sync Today (${state.date})`}</button>
         <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? '<span class="spinner"></span>Syncing… (~20s)' : '🗂 Full Sync (all data)'}</button>
       </div>
     </div>
@@ -2822,6 +2852,22 @@ function renderRosterPanel(){
   </div>`;
 }
 
+function buildCombinedAssigneeFilterOptions(){
+  // Combines Coverage Desk's own roster names with whatever names have
+  // shown up via Portal sync (the 📡 Portal column) — so picking a name
+  // finds a call regardless of which side actually has that person's
+  // name on it right now.
+  const rosterNames = state.roster.map(p=>p.name);
+  const portalNames = (state.portalAssignments||[]).map(p=>p.handler).filter(Boolean);
+  const combined = Array.from(new Set([...rosterNames, ...portalNames])).sort((a,b)=>a.localeCompare(b));
+  return combined.map(name=>{
+    const inRoster = rosterNames.includes(name);
+    const inPortal = portalNames.includes(name);
+    const tag = inRoster && inPortal ? '' : (inPortal ? ' (Portal only)' : '');
+    return `<option value="${escapeHtml(name)}" ${state.assigneeFilter===name?'selected':''}>${escapeHtml(name)}${tag}</option>`;
+  }).join('');
+}
+
 function buildRosterOptions(round, currentAssignee){
   const advancedRound = isAdvancedRound(round);
   const teams = {};
@@ -2848,8 +2894,18 @@ function buildRosterOptions(round, currentAssignee){
       teams[t].map(p=>`<option value="${escapeHtml(p.name)}" ${p.name===currentAssignee?'selected':''}>${p.advanced?'★ ':''}${escapeHtml(p.name)}</option>`).join('') +
       `</optgroup>`;
   });
+  // If the current assignee isn't a known team or roster person — e.g. a
+  // manually typed name for someone on Development Team who isn't in the
+  // roster list — show it as its own selected option so the dropdown
+  // reflects it correctly instead of silently falling back to blank.
+  const knownValues = new Set([...teamsWithPeople, ...state.roster.map(p=>p.name)]);
+  if(currentAssignee && !knownValues.has(currentAssignee) && currentAssignee !== CUSTOM_ASSIGNEE_SENTINEL){
+    html += `<optgroup label="Custom"><option value="${escapeHtml(currentAssignee)}" selected>✏️ ${escapeHtml(currentAssignee)}</option></optgroup>`;
+  }
+  html += `<option value="${CUSTOM_ASSIGNEE_SENTINEL}">✏️ Type a name…</option>`;
   return html;
 }
+const CUSTOM_ASSIGNEE_SENTINEL = '__custom_assignee__';
 
 // Team workload counts (HYD vs Pradeep Anna) across the whole day's calls —
 // shown on the dashboard so it's easy to see at a glance if one team is
@@ -3812,7 +3868,13 @@ function attachHandlers(conflictIds){
           row.woi = input.checked;
           if(row.woi) row.assignee='';
         } else if(field==='assignee'){
-          row.assignee = input.value;
+          if(input.value === CUSTOM_ASSIGNEE_SENTINEL){
+            const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', row.assignee && row.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? row.assignee : '');
+            if(typed && typed.trim()){ row.assignee = typed.trim(); }
+            // Cancelled or blank — leave the previous assignee untouched.
+          } else {
+            row.assignee = input.value;
+          }
         } else {
           row[field] = input.value;
         }
@@ -4603,6 +4665,11 @@ async function loadCachedPortalAssignmentsForDate(dateStr){
 async function syncPortalData(){
   if(!API_BASE_URL){
     state.portalSyncError = 'Connect a database first (see 🗄️ Database settings) — Portal sync needs the backend to relay the request.';
+    render();
+    return;
+  }
+  if(!isViewingToday()){
+    state.portalSyncError = `Portal sync only works while viewing today's date — you're currently on ${state.date}. Switch to today first to sync it.`;
     render();
     return;
   }
