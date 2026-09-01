@@ -233,6 +233,15 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 
 /* TABLE */
 table{width:100%;min-width:1050px;table-layout:fixed;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);}
+@media (min-width:701px){
+  /* Keep the action buttons (📌 →2nd ✕) reachable without scrolling all
+     the way right, no matter how many columns exist — this is what was
+     "misplaced" after the Portal Assignee column was added. */
+  th:last-child, td.actions-cell{position:sticky;right:0;z-index:3;box-shadow:-6px 0 8px -6px rgba(0,0,0,0.35);}
+  th:last-child{background:var(--surface-2);}
+  td.actions-cell{background:var(--surface);}
+  tbody tr.row-unassigned td.actions-cell{background:var(--coral-dim);}
+}
 th,td{overflow:hidden;text-overflow:ellipsis;}
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px;}
 .table-scroll::-webkit-scrollbar{height:8px;}
@@ -2985,7 +2994,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
       <th style="width:140px">Assigned to</th>
-      <th style="width:150px">📡 Portal Assignee</th>
+      <th style="width:120px">📡 Portal</th>
       <th style="width:96px"></th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
@@ -4625,11 +4634,23 @@ async function syncPortalData(){
 function findPortalMatch(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
   const key = row.candidate.trim().toLowerCase();
-  const matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key);
+  let matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key);
   if(!matches.length) return null;
   if(matches.length === 1) return matches[0];
-  // multiple same-name matches — prefer one with a matching time too
-  return matches.find(p => p.time === row.time) || matches[0];
+  // Multiple same-name matches — this is the exact scenario that caused a
+  // wrong cross-team match (e.g. a Pradeep Anna candidate wrongly shown for
+  // an HYD Team call, just because they shared a name and time slot).
+  // Narrow down by time first...
+  const timeMatches = matches.filter(p => p.time === row.time);
+  if(timeMatches.length) matches = timeMatches;
+  if(matches.length > 1){
+    // ...then by client/company, since that's what actually distinguishes
+    // two same-named, same-time candidates across different teams.
+    const companyKey = (row.company||'').trim().toLowerCase();
+    const companyMatches = matches.filter(p => (p.client||'').trim().toLowerCase() === companyKey);
+    if(companyMatches.length) matches = companyMatches;
+  }
+  return matches[0];
 }
 
 // ---------- init ----------
