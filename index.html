@@ -4714,19 +4714,15 @@ function assigneeToPortalTeamCode(assignee){
 }
 function findPortalMatch(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
-  const key = row.candidate.trim().toLowerCase();
-  let matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key);
-  if(!matches.length) return null;
-  // Team-restrict first, whenever we know which team this call belongs to —
-  // this is what stops a same-named candidate from a DIFFERENT team (e.g.
-  // Pradeep) being wrongly shown on an HYD call just because HYD's own
-  // data for that date happened to be empty or incomplete at sync time.
+  // Only HYD, Pradeep Anna, and Dev are tracked in the Portal at all —
+  // Marketing Team, Sai Team, Sandeep Anna Team, etc. have no corresponding
+  // data there. Rather than guess across teams when we can't confirm a
+  // match belongs to a Portal-tracked team, show nothing.
   const expectedTeamCode = assigneeToPortalTeamCode(row.assignee);
-  if(expectedTeamCode){
-    const teamMatches = matches.filter(p => p.teamCode === expectedTeamCode);
-    if(teamMatches.length) matches = teamMatches;
-    else return null; // known team, but nothing from that team matched — don't guess across teams
-  }
+  if(!expectedTeamCode) return null;
+  const key = row.candidate.trim().toLowerCase();
+  let matches = state.portalAssignments.filter(p => (p.candidate||'').trim().toLowerCase() === key && p.teamCode === expectedTeamCode);
+  if(!matches.length) return null;
   if(matches.length === 1) return matches[0];
   // Multiple same-name matches — this is the exact scenario that caused a
   // wrong cross-team match (e.g. a Pradeep Anna candidate wrongly shown for
