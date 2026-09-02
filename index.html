@@ -1096,10 +1096,16 @@ function parseImportText(text){
     const header = parseHeaderLine(line);
     if(header){ currentDefault = header; continue; }
 
-    // Reschedule/cancel messages are handled separately by
-    // parseRescheduleText() on this same pasted text — skip them here so
-    // they don't also get added as duplicate new calls.
-    if(looksLikeRescheduleLine(line)) continue;
+    // Reschedule/cancel-looking lines used to be skipped here entirely,
+    // relying on the separate parseRescheduleText() pass to extract them
+    // from the raw text. That extractor's candidate-name regex doesn't
+    // handle a leading list number ("42.\tJanani Priya k – ..."), so
+    // lines like that silently vanished with zero trace. Now every line
+    // always goes through the same robust parsing below (which already
+    // strips list numbers correctly); the caller in runImport() checks
+    // afterward whether a reschedule-looking row actually matches a call
+    // that already existed before this paste, and merges it into that
+    // existing row instead of leaving a duplicate.
 
     // Try the specific "Name - Time (assignee)" shape first. The trailing $ anchor
     // means this only matches when there's nothing else on the line, so genuine
@@ -3579,43 +3585,49 @@ function attachHandlers(conflictIds){
       state.dirty = false;
       await loadDay(state.date);
     }
+    const beforeBatchRows = state.rows.slice(); // snapshot BEFORE this import adds anything
     const beforeCount = state.roster.length;
     const parsed = autoRouteRows(parseImportText(text), state.rows);
-    state.rows = state.rows.concat(parsed);
 
-    // Detects reschedule/cancel messages mixed into the SAME pasted text
-    // and applies them directly to matching existing rows — saved through
-    // the exact same "Save changes" flow as everything else, since status
-    // is now just a normal field on the row, not a separate system.
+    // Detects reschedule/cancel messages mixed into the SAME pasted text.
+    // If one genuinely matches a call that already existed BEFORE this
+    // paste, apply the status update there and remove the duplicate row
+    // that normal parsing above also produced for that same line (it's
+    // the same call being described twice, not two calls). If it doesn't
+    // match anything already on the books, leave the row normal parsing
+    // already produced — it's very often actually a brand-new call whose
+    // description just happens to mention a past reschedule — and flag
+    // it so it's easy to double check either way.
     const rescheduleMsgs = parseRescheduleText(text);
     let appliedCount = 0, unmatchedCount = 0;
     rescheduleMsgs.forEach(msg=>{
-      const row = matchRescheduleToRow(msg, state.rows);
-      if(!row){
+      const existingRow = matchRescheduleToRow(msg, beforeBatchRows);
+      if(existingRow){
+        const fields = [];
+        if(msg.side) fields.push({label:'Side', value: msg.side});
+        if(msg.reason) fields.push({label:'Reason', value: msg.reason});
+        existingRow.status = msg.status;
+        existingRow.statusFields = fields.length ? fields : (msg.status === 'rescheduled' ? [{label:'New Date', value:''}, {label:'New Time', value:''}] : [{label:'Reason', value:''}]);
+        appliedCount++;
+        const dupIdx = parsed.findIndex(r =>
+          (r.candidate||'').trim().toLowerCase() === msg.candidate.trim().toLowerCase() &&
+          (r.time||'').replace(/\s+/g,' ').toUpperCase() === msg.time.toUpperCase()
+        );
+        if(dupIdx !== -1) parsed.splice(dupIdx,1);
+      } else {
         unmatchedCount++;
-        // This looked like a reschedule/cancel message but didn't match
-        // any existing call — very often that means it's actually a
-        // brand-new call whose description just happens to mention a
-        // past reschedule (extremely common in real data, e.g. "...
-        // Reschedule call From August 21 ..."), not a genuine instruction
-        // to update an existing row. Rather than silently dropping it,
-        // add it as its own row flagged in Doubts so it's never lost —
-        // it just needs a quick manual look to confirm which case it is.
-        state.rows.push({
-          id: uid(), time: msg.time||'', company: msg.company||'', candidate: msg.candidate||'',
-          round:'1st', duration:'', woi:false, assignee:'', country:'USA',
-          doubts:['This looked like a reschedule/cancel message but didn\u2019t match any existing call — it may actually be a new call that just mentions a past reschedule. Please check and fill in details. Original text: "'+(msg.raw||'')+'"'],
-          raw: msg.raw||''
-        });
-        return;
+        const newRow = parsed.find(r =>
+          (r.candidate||'').trim().toLowerCase() === msg.candidate.trim().toLowerCase() &&
+          (r.time||'').replace(/\s+/g,' ').toUpperCase() === msg.time.toUpperCase()
+        );
+        if(newRow){
+          newRow.doubts = newRow.doubts || [];
+          newRow.doubts.push('This mentions "reschedule/cancel" but didn\u2019t match any call already on the list \u2014 double-check whether it\u2019s really a new call or should have updated an existing one.');
+        }
       }
-      const fields = [];
-      if(msg.side) fields.push({label:'Side', value: msg.side});
-      if(msg.reason) fields.push({label:'Reason', value: msg.reason});
-      row.status = msg.status;
-      row.statusFields = fields.length ? fields : (msg.status === 'rescheduled' ? [{label:'New Date', value:''}, {label:'New Time', value:''}] : [{label:'Reason', value:''}]);
-      appliedCount++;
     });
+
+    state.rows = state.rows.concat(parsed);
 
     state.showImport = false;
     if(state.roster.length !== beforeCount) await saveRoster();
