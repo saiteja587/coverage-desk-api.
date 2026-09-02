@@ -262,6 +262,7 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .status-note-row td{font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
 .status-note-row.status-note-rescheduled td{background:var(--violet-dim);color:var(--violet);}
 .status-note-row.status-note-cancelled td{background:var(--coral-dim);color:var(--coral);}
+.status-note-row.status-note-not_responded td{background:var(--amber-dim);color:var(--amber);}
 .status-note-icon{margin-right:5px;}
 
 .note-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 6px;flex-shrink:0;}
@@ -593,6 +594,14 @@ function isViewingToday(){
   const now = new Date();
   const todayKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
   return state.date === todayKey;
+}
+// Single source of truth for how each call status is labeled/colored/
+// iconed, so adding a new status only means changing it in one place
+// instead of hunting down every ternary across the file.
+function statusBadgeInfo(status){
+  if(status === 'cancelled') return { icon:'✕', label:'Cancelled', shortLabel:'CANCELLED', colorVar:'var(--coral)' };
+  if(status === 'not_responded') return { icon:'☎', label:'Not Responded', shortLabel:'NOT RESPONDED', colorVar:'var(--amber)' };
+  return { icon:'↻', label:'Rescheduled', shortLabel:'RESCHED.', colorVar:'var(--violet)' };
 }
 function currentMonthKey(){
   const d = new Date();
@@ -1143,12 +1152,13 @@ function parseImportText(text, baseDate){
   const out = [];
   let currentDefault = null;
   let currentTargetDate = null; // null = whatever date the import panel targets
+  let headerLineCount = 0; // team/person/date-section headers — not actual call records
   for(const line of lines){
     const dateHeader = parseDateSectionHeader(line, baseDate || state.date);
-    if(dateHeader){ currentTargetDate = dateHeader; continue; }
+    if(dateHeader){ currentTargetDate = dateHeader; headerLineCount++; continue; }
 
     const header = parseHeaderLine(line);
-    if(header){ currentDefault = header; continue; }
+    if(header){ currentDefault = header; headerLineCount++; continue; }
 
     // Reschedule/cancel-looking lines used to be skipped here entirely,
     // relying on the separate parseRescheduleText() pass to extract them
@@ -1210,6 +1220,14 @@ function parseImportText(text, baseDate){
     });
   }
   flagLikelyAmTimes(out);
+  // Attached so the caller can mathematically verify nothing was dropped:
+  // every non-header line always produces exactly one entry in `out` by
+  // construction (clean, doubted, or fallback) — so out.length should
+  // always equal lines.length - headerLineCount. If it ever doesn't, that
+  // means a genuinely new, not-yet-seen edge case slipped past every
+  // existing safety net, and the mismatch itself is the signal to go
+  // looking for it rather than silently trusting the count is right.
+  out._dataLineCount = lines.length - headerLineCount;
   return out;
 }
 // Bare times (no AM/PM in the source) default to PM per the heuristic in
@@ -1361,12 +1379,21 @@ function parseDurationMinutes(text){
 // [when]" form, and the fuller form with company/round/duration/reason,
 // often split across a couple of lines with @mentions and "sir" mixed in.
 function looksLikeRescheduleLine(line){
-  return /\b(reschedul\w*|cancel\w*)\b/i.test(line) && /\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line);
+  // Broadened to also catch "not responding"/"no response" messages (a
+  // genuinely distinct status from reschedule/cancel), and to allow a
+  // bare time like "7:00" with no AM/PM — very common in these real
+  // messages and previously required explicit AM/PM to even be recognized.
+  const hasStatusWord = /\b(reschedul\w*|cancel\w*|not\s*respond\w*|no\s*response)\b/i.test(line);
+  const hasTime = /\d{1,2}[:.]\d{2}(\s*[AaPp][Mm])?/.test(line);
+  return hasStatusWord && hasTime;
 }
 function parseRescheduleText(text){
   const results = [];
   const lines = text.split('\n').map(l=>l.trim());
-  const timeRe = /(\d{1,2}[:.]\d{2}\s*[AaPp][Mm])/;
+  // Bare times (no AM/PM) default to PM — matches the app's existing
+  // convention elsewhere for bare times, and these real messages very
+  // often drop the AM/PM since it's understood to be an evening shift.
+  const timeRe = /(\d{1,2}[:.]\d{2}\s*([AaPp][Mm])?)/;
   const blocks = [];
   let current = [];
   for(const line of lines){
@@ -1378,16 +1405,26 @@ function parseRescheduleText(text){
   }
   if(current.length) blocks.push(current);
 
+  function normalizeTime(raw){
+    const tm = raw.match(/(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])?/);
+    if(!tm) return raw.trim();
+    const ampm = tm[3] ? tm[3].toUpperCase() : 'PM'; // default when omitted, e.g. "7:00" alone
+    return `${tm[1]}:${tm[2]} ${ampm}`;
+  }
+
   blocks.forEach(blockLines=>{
     const full = blockLines.join(' ');
-    if(!looksLikeRescheduleLine(full)) return; // not a reschedule/cancel message — skip
-    const timeMatch = full.match(timeRe);
-    if(!timeMatch) return;
-    const tm = timeMatch[1].match(/(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])/);
-    const time = tm ? `${tm[1]}:${tm[2]} ${tm[3].toUpperCase()}` : timeMatch[1];
+    if(!looksLikeRescheduleLine(full)) return; // not a reschedule/cancel/no-response message — skip
 
-    const timeLine = blockLines.find(l=>timeRe.test(l));
-    const nameMatch = timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)\s*[–\-]/);
+    const timeLine = (blockLines.find(l=>timeRe.test(l)) || full)
+      .replace(/^\s*\d{1,3}[\.\)]?\s+/, ''); // strip a leading list number ("89. Name ...")
+    // Handles a name followed directly by a dash-time ("Name - 7:30 PM"),
+    // a name with a parenthetical country tag before the dash
+    // ("Name (UK) - 7:30 PM"), or a name followed by a possessive time
+    // with no dash at all ("Safiya Kamuluru's 8:30 PM IST call...").
+    const nameMatch =
+      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/) ||
+      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s+\d{1,2}[:.]\d{2}/);
     const candidate = nameMatch ? nameMatch[1].trim() : null;
 
     let company = null;
@@ -1395,13 +1432,15 @@ function parseRescheduleText(text){
     if(companyMatch) company = companyMatch[1].trim();
 
     let status = null;
-    if(/cancel/i.test(full)) status = 'cancelled';
+    if(/not\s*respond\w*|no\s*response/i.test(full)) status = 'not_responded';
+    else if(/cancel/i.test(full)) status = 'cancelled';
     else if(/reschedul/i.test(full)) status = 'rescheduled';
 
     let side = null;
     if(/candidate\s*side/i.test(full)) side = 'candidate side';
     else if(/interviewer\s*side/i.test(full)) side = 'interviewer side';
     else if(/client\s*side/i.test(full)) side = 'client side';
+    else if(/recruiter\s*(?:'s)?\s*side/i.test(full)) side = 'recruiter side';
 
     let reason = null;
     const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
@@ -1411,9 +1450,23 @@ function parseRescheduleText(text){
       if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
     }
 
-    if(candidate && status){
-      results.push({ candidate, time, company, status, side, reason, raw: full });
+    if(!candidate || !status) return;
+
+    // Detect a SECOND time mentioned alongside the first via "X & Y" /
+    // "X and Y" (e.g. "8:30 & 9:30 PM IST Both Interview was reschedule
+    // ...") — the same candidate has two separate calls that both need
+    // the same tag, not just whichever time the regex happened to grab.
+    const dualMatch = full.match(/(\d{1,2}[:.]\d{2})\s*(?:&|and)\s*(\d{1,2}[:.]\d{2})\s*([AaPp][Mm])?/i);
+    if(dualMatch){
+      const ampm = dualMatch[3] ? dualMatch[3].toUpperCase() : 'PM';
+      results.push({ candidate, time: normalizeTime(dualMatch[1]+' '+ampm), company, status, side, reason, raw: full });
+      results.push({ candidate, time: normalizeTime(dualMatch[2]+' '+ampm), company, status, side, reason, raw: full });
+      return;
     }
+
+    const timeMatch = full.match(timeRe);
+    const time = timeMatch ? normalizeTime(timeMatch[1]) : '';
+    results.push({ candidate, time, company, status, side, reason, raw: full });
   });
   return results;
 }
@@ -1528,7 +1581,7 @@ function getTabRows(view){
   if(view==='all') return all;
   if(view==='2nd') return all.filter(r=>isAdvancedRound(r.round));
   if(view==='doubts') return all.filter(r=>r.doubts && r.doubts.length>0);
-  if(view==='rescheduled') return all.filter(r=>r.status==='rescheduled' || r.status==='cancelled');
+  if(view==='rescheduled') return all.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded');
   return all.filter(r=>!isAdvancedRound(r.round));
 }
 
@@ -2032,7 +2085,7 @@ function render(){
   const advancedRows = sortedAll.filter(r=>isAdvancedRound(r.round));
   const doubtRows = sortedAll.filter(r=>r.doubts && r.doubts.length>0);
   const statusRows = sortedAll.filter(r=>r.status);
-  const rescheduledRows = sortedAll.filter(r=>r.status==='rescheduled' || r.status==='cancelled');
+  const rescheduledRows = sortedAll.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded');
   const sortedRows = getTabRows(state.view);
   const sum = summarize(sortedRows, conflictIds);
 
@@ -2119,7 +2172,7 @@ function render(){
         <button class="tab-btn ${state.view==='1st'?'active':''}" data-view="1st" title="Shortcut: 2">1st Round <span class="n">${firstRoundRows.length}</span></button>
         <button class="tab-btn ${state.view==='2nd'?'active':''}" data-view="2nd" title="Shortcut: 3">2nd Round &amp; Above <span class="n">${advancedRows.length}</span></button>
         <button class="tab-btn ${state.view==='doubts'?'active':''}" data-view="doubts" style="${doubtRows.length?'color:var(--amber)':''}" title="Shortcut: 4">Doubts <span class="n">${doubtRows.length}</span></button>
-        <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5">↻ Rescheduled/Cancelled <span class="n">${rescheduledRows.length}</span></button>
+        <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5">↻ Rescheduled/Cancelled/No Response <span class="n">${rescheduledRows.length}</span></button>
       </div>
     </div>
     <div class="hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
@@ -2607,7 +2660,7 @@ function renderRescheduleImportPanel(){
     <div class="hint" style="margin-bottom:10px">Paste WhatsApp-style reschedule/cancel messages for calls that are <b>already saved</b> in this day's list — this only updates the status/tag on matching calls, it does not create new calls. Existing calls in the DB will be scanned for a match by candidate name and time.</div>
     <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir"></textarea>
     <div class="row">
-      <div class="hint">Each message must include a name, a time (e.g. 2:30 PM), and the word "reschedule" or "cancel".</div>
+      <div class="hint">Each message must include a name, a time (e.g. 2:30 PM, or a bare "7:00"), and the word "reschedule", "cancel", or "not responding"/"no response".</div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelRescheduleImport">Cancel</button>
         <button class="btn primary" id="parseRescheduleBtn">Parse messages</button>
@@ -2625,6 +2678,7 @@ function renderRescheduleImportPanel(){
           <select id="manualReschedStatus" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
             <option value="rescheduled">↻ Rescheduled</option>
             <option value="cancelled">✕ Cancelled</option>
+            <option value="not_responded">☎ Not Responded</option>
           </select>
         </div>
         <div style="flex:2;min-width:200px">
@@ -2656,7 +2710,7 @@ function renderRescheduleConfirmPanel(){
         <span><b>Candidate:</b> ${escapeHtml(it.candidate||'—')}</span>
         <span><b>Time:</b> ${escapeHtml(it.time||'—')}</span>
         ${it.company?`<span><b>Client:</b> ${escapeHtml(it.company)}</span>`:''}
-        <span><b>Status:</b> ${it.status==='cancelled'?'✕ Cancelled':'↻ Rescheduled'}</span>
+        <span><b>Status:</b> ${statusBadgeInfo(it.status).icon} ${statusBadgeInfo(it.status).label}</span>
         ${it.side?`<span><b>Side:</b> ${escapeHtml(it.side)}</span>`:''}
         ${it.reason?`<span><b>Reason:</b> ${escapeHtml(it.reason)}</span>`:''}
       </div>
@@ -3073,7 +3127,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${r.status==='cancelled'?'var(--coral)':'var(--violet)'};border-color:${r.status==='cancelled'?'var(--coral)':'var(--violet)'}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${r.status==='cancelled'?'✕ CANCELLED':'↻ RESCHED.'}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -3111,7 +3165,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="11"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
-    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="11"><span class="status-note-icon">${r.status==='cancelled'?'✕':'↻'}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (r.status==='cancelled'?'Cancelled — no reason given':'Rescheduled — no reason given'))}</td></tr>`:''}
+    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="11"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
     ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="11">
       <div class="pin-detail-fields">
         <div class="pin-field">
@@ -3154,8 +3208,8 @@ function renderEmpty(){
   }
   if(state.view==='rescheduled'){
     return `<div class="empty-state">
-      <h3>No rescheduled or cancelled calls</h3>
-      <p>Calls tagged ↻ Rescheduled or ✕ Cancelled — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
+      <h3>No rescheduled, cancelled, or no-response calls</h3>
+      <p>Calls tagged ↻ Rescheduled, ✕ Cancelled, or ☎ Not Responded — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
     </div>`;
   }
   return `<div class="empty-state">
@@ -3650,6 +3704,7 @@ function attachHandlers(conflictIds){
     // only ever compete for capacity against that SAME date's own existing
     // rows, not today's.
     const parsedAll = parseImportText(text, state.date);
+    const totalDataLines = parsedAll._dataLineCount != null ? parsedAll._dataLineCount : parsedAll.length;
     const currentDateRaw = parsedAll.filter(r => !r._targetDate || r._targetDate === state.date);
     const otherDateRowsByDate = {};
     parsedAll.filter(r => r._targetDate && r._targetDate !== state.date).forEach(r=>{
@@ -3714,6 +3769,26 @@ function attachHandlers(conflictIds){
     state.showImport = false;
     if(state.roster.length !== beforeCount) await saveRoster();
     markDirty(); render();
+
+    // Mathematical proof nothing was dropped: every data line either (a)
+    // became a new call today, (b) became a new call on another date, or
+    // (c) got merged into an existing call as a status update — those
+    // three should always add up to the total data lines found. If they
+    // don't, that's the signal something slipped past every safety net
+    // above, and it's surfaced loudly rather than silently trusted.
+    const otherDateTotal = Object.values(otherDateRowsByDate).reduce((s,rows)=>s+rows.length,0);
+    const accountedFor = parsed.length + otherDateTotal + appliedCount;
+    const reconciliationLines = [
+      `Pasted text: ${totalDataLines} record line(s) found.`,
+      `→ ${parsed.length} new call(s) added to ${state.date}.`,
+      otherDateTotal ? `→ ${otherDateTotal} new call(s) added to other dates.` : null,
+      appliedCount ? `→ ${appliedCount} merged into existing call(s) as a reschedule/cancel update.` : null,
+      accountedFor === totalDataLines
+        ? `✓ All ${totalDataLines} accounted for.`
+        : `⚠ MISMATCH: ${accountedFor} accounted for, but ${totalDataLines} were found in the paste. Something may be missing — please review carefully.`
+    ].filter(Boolean);
+    alert(reconciliationLines.join('\n'));
+
     if(otherDateSummaries.length){
       alert('Some calls in this paste were for other dates:\n' + otherDateSummaries.join('\n'));
     }
@@ -3745,7 +3820,7 @@ function attachHandlers(conflictIds){
     const text = textEl ? textEl.value : '';
     const parsed = parseRescheduleText(text);
     if(!parsed.length){
-      alert('No reschedule/cancel messages were recognized in that text. Each message needs a name, a time like 2:30 PM, and the word "reschedule" or "cancel".');
+      alert('No reschedule/cancel/no-response messages were recognized in that text. Each message needs a name, a time like 2:30 PM (or a bare "7:00"), and the word "reschedule", "cancel", or "not responding"/"no response".');
       return;
     }
     // Build a review list: auto-match each parsed message against the calls
