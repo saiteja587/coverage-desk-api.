@@ -126,9 +126,10 @@ module.exports = async (req, res) => {
     if (resource === 'dates') return await handleDates(req, res, db);
     if (resource === 'finalized') return await handleFinalized(req, res, db);
     if (resource === 'call_status') return await handleCallStatus(req, res, db);
+    if (resource === 'call_backups') return await handleCallBackups(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|users|whoami' });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
@@ -496,4 +497,35 @@ async function handlePortalSyncCacheRead(req, res) {
   } finally {
     await db.end();
   }
+}
+
+// ---------- call_backups: automatic pre-risky-operation snapshots ----------
+// GET (no id): list backups for a date, most recent first, WITHOUT the
+//   full payload (keeps the list fast even with many backups).
+// GET (with id): full snapshot for one specific backup, for restoring.
+// POST: create a new backup — called automatically before import, clear
+//   all, and finalize. Old backups are never deleted automatically; this
+//   is meant as a safety net, not a rolling log, so nothing prunes it.
+async function handleCallBackups(req, res, db) {
+  if (req.method === 'GET') {
+    const { date, id } = req.query;
+    if (id) {
+      const [rows] = await db.query('SELECT id, call_date, reason, snapshot_json, row_count, created_at FROM call_backups WHERE id = ?', [id]);
+      if (!rows.length) return res.status(404).json({ error: 'Backup not found' });
+      return res.status(200).json({ backup: rows[0] });
+    }
+    if (!date) return res.status(400).json({ error: 'date or id query param required' });
+    const [rows] = await db.query('SELECT id, call_date, reason, row_count, created_at FROM call_backups WHERE call_date = ? ORDER BY created_at DESC LIMIT 30', [date]);
+    return res.status(200).json({ backups: rows });
+  }
+  if (req.method === 'POST') {
+    const { date, reason, rows } = req.body;
+    if (!date || !reason || !Array.isArray(rows)) return res.status(400).json({ error: 'date, reason, and rows[] required' });
+    await db.query(
+      'INSERT INTO call_backups (call_date, reason, snapshot_json, row_count) VALUES (?,?,?,?)',
+      [date, reason, JSON.stringify(rows), rows.length]
+    );
+    return res.status(200).json({ ok: true });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
 }
