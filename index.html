@@ -941,7 +941,15 @@ function parseHeaderLine(line){
     const raw = m[1].trim();
     return { type:'team', value: normalizeTeamName(raw) || titleCase(raw) };
   }
-  let m2 = trimmed.match(/^@(.+)$/);
+  // Only treat "@Name" as a plain header when the ENTIRE line is just a
+  // short name — letters/spaces/periods, nothing else. Real reschedule/
+  // reason lines look like "@Sashank Bava Sir, Nikhil Adhikrao Yadav
+  // (Ireland) - 4:30 PM Call rescheduled..." — that's substantive call
+  // data, not a header, and matching it here used to discard the entire
+  // line with zero trace, not even a doubt. Requiring the whole line to
+  // be just a name (no digits, dashes, commas, parens) means anything
+  // with real content correctly falls through to normal parsing instead.
+  let m2 = trimmed.match(/^@([A-Za-z][A-Za-z .]{1,40})$/);
   if(m2){
     const raw = m2[1].trim();
     const team = normalizeTeamName(raw);
@@ -3583,7 +3591,24 @@ function attachHandlers(conflictIds){
     let appliedCount = 0, unmatchedCount = 0;
     rescheduleMsgs.forEach(msg=>{
       const row = matchRescheduleToRow(msg, state.rows);
-      if(!row){ unmatchedCount++; return; }
+      if(!row){
+        unmatchedCount++;
+        // This looked like a reschedule/cancel message but didn't match
+        // any existing call — very often that means it's actually a
+        // brand-new call whose description just happens to mention a
+        // past reschedule (extremely common in real data, e.g. "...
+        // Reschedule call From August 21 ..."), not a genuine instruction
+        // to update an existing row. Rather than silently dropping it,
+        // add it as its own row flagged in Doubts so it's never lost —
+        // it just needs a quick manual look to confirm which case it is.
+        state.rows.push({
+          id: uid(), time: msg.time||'', company: msg.company||'', candidate: msg.candidate||'',
+          round:'1st', duration:'', woi:false, assignee:'', country:'USA',
+          doubts:['This looked like a reschedule/cancel message but didn\u2019t match any existing call — it may actually be a new call that just mentions a past reschedule. Please check and fill in details. Original text: "'+(msg.raw||'')+'"'],
+          raw: msg.raw||''
+        });
+        return;
+      }
       const fields = [];
       if(msg.side) fields.push({label:'Side', value: msg.side});
       if(msg.reason) fields.push({label:'Reason', value: msg.reason});
