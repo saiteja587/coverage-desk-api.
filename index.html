@@ -1121,6 +1121,23 @@ function parseImportText(text){
       out.push(parseDetailedLine(line));
       continue;
     }
+
+    // Fallback: this line didn't match any known format, but it's clearly
+    // meant to be a call record (non-empty, not a header, not a
+    // reschedule message). Previously lines like this were silently
+    // dropped — with a large pasted list, that meant real interview
+    // calls could vanish with zero trace. Instead, keep it as a row
+    // flagged in Doubts with the original text preserved, so nothing is
+    // ever lost — it just needs a quick manual look to fill in the
+    // details the parser couldn't figure out on its own.
+    out.push({
+      id: uid(), time:'', company:'', candidate: line.length > 80 ? line.slice(0,80)+'…' : line,
+      round:'1st', duration:'', woi:false,
+      assignee: currentDefault ? currentDefault.value : '',
+      country:'USA',
+      doubts:['Could not automatically parse this line — please fill in candidate/time/company/round manually. Original text: "'+line+'"'],
+      raw: line
+    });
   }
   flagLikelyAmTimes(out);
   return out;
