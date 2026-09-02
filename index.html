@@ -864,6 +864,36 @@ async function saveDayNow(){
     await storageAdapter.set('known-dates', JSON.stringify(list), false);
   }
 }
+// Saves new rows straight into a date OTHER than whatever is currently
+// open — used when one pasted list contains a "Call's for tomorrow
+// (DATE)" section splitting it across several days. Fetches that date's
+// existing calls first so nothing gets overwritten, runs the same
+// auto-routing against THAT date's own existing rows (not today's), then
+// saves the merged result. Returns the new total row count for that date.
+async function saveRowsToOtherDate(targetDateKey, newRows){
+  if(API_BASE_URL){
+    const existing = await apiCall('calls', {qs:'date='+targetDateKey}).catch(()=>({rows:[]}));
+    const existingRows = existing.rows || [];
+    const routed = autoRouteRows(newRows, existingRows);
+    const merged = existingRows.concat(routed);
+    await apiCall('calls', {method:'POST', body:{date: targetDateKey, rows: merged}});
+    return merged.length;
+  }
+  const r = await storageAdapter.get('day:'+targetDateKey, false).catch(()=>null);
+  const parsedExisting = r && r.value ? JSON.parse(r.value) : null;
+  const existingRows = Array.isArray(parsedExisting) ? parsedExisting : (parsedExisting && parsedExisting.rows) || [];
+  const routed = autoRouteRows(newRows, existingRows);
+  const merged = existingRows.concat(routed);
+  const payload = (parsedExisting && !Array.isArray(parsedExisting)) ? {...parsedExisting, rows: merged} : {rows: merged, finalized:false, notes:[]};
+  await storageAdapter.set('day:'+targetDateKey, JSON.stringify(payload), false);
+  const idx = await storageAdapter.get('known-dates', false).catch(()=>null);
+  const list = idx && idx.value ? JSON.parse(idx.value) : [];
+  if(!list.includes(targetDateKey)){
+    list.push(targetDateKey);
+    await storageAdapter.set('known-dates', JSON.stringify(list), false);
+  }
+  return merged.length;
+}
 
 // ---------- time helpers ----------
 function timeToMinutes(t){
@@ -933,6 +963,23 @@ function countryFromParens(parens){
   if(!p) return 'USA';
   const t = p.trim().toLowerCase();
   return t==='uk' ? 'UK' : (t.charAt(0).toUpperCase()+t.slice(1));
+}
+const MONTH_ABBR_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+// Matches section headers like "Call's for tomorrow (2nd Sep)" that split
+// one pasted list into calls for several different dates — a real pattern
+// in the source WhatsApp text that was previously invisible to the parser
+// entirely (the line itself would just become a garbage row, and every
+// call under it got dumped into whichever date happened to be open in
+// Coverage Desk, silently mixing days together).
+function parseDateSectionHeader(line, baseDate){
+  const m = line.match(/call'?s?\s+for\s+tomorrow\s*\(\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\s*\)/i);
+  if(!m) return null;
+  const day = parseInt(m[1],10);
+  const monthIdx = MONTH_ABBR_MAP[m[2].slice(0,3).toLowerCase()];
+  if(monthIdx === undefined || !day) return null;
+  const baseYear = new Date(baseDate).getFullYear();
+  const d = new Date(baseYear, monthIdx, day);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 function parseHeaderLine(line){
   const trimmed = line.trim();
@@ -1026,11 +1073,14 @@ function parseDetailedLine(line){
     // Any "[qualifier] Interview/Call" phrase is a round-type descriptor, not a
     // company — broadened from just technical/coding/loop to cover the full
     // realistic range (final, video, screening, panel, HR, virtual, telephonic,
-    // etc.) so a new qualifier word doesn't quietly slip through as "company"
-    // the way "final interview" just did. "phn" is a common WhatsApp shorthand
-    // for "phone" — treated the same way.
+    // presentation, etc.) so a new qualifier word doesn't quietly slip through
+    // as "company" the way "final interview" and "presentation interview" just
+    // did — each time one was missing from this list, the real company after
+    // it got skipped over entirely and the descriptor phrase became the wrong
+    // "company" value instead. "phn" is a common WhatsApp shorthand for
+    // "phone" — treated the same way.
     return /^((phone|phn)\s+)?(interview|call)s?$/i.test(s)
-      || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary)\s+(interview|call|round)$/i.test(s);
+      || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behavioral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
   }
   let company = '';
   for(let i=1; i<segs.length; i++){
@@ -1088,11 +1138,15 @@ function parseDetailedLine(line){
 
   return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line };
 }
-function parseImportText(text){
+function parseImportText(text, baseDate){
   const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
   const out = [];
   let currentDefault = null;
+  let currentTargetDate = null; // null = whatever date the import panel targets
   for(const line of lines){
+    const dateHeader = parseDateSectionHeader(line, baseDate || state.date);
+    if(dateHeader){ currentTargetDate = dateHeader; continue; }
+
     const header = parseHeaderLine(line);
     if(header){ currentDefault = header; continue; }
 
@@ -1127,12 +1181,14 @@ function parseImportText(text){
       } else if(currentDefault){
         assignee = currentDefault.value;
       }
-      out.push({id:uid(), time:timeRaw, company:'', candidate:name, round:'1st', duration:'', woi:false, assignee, country, doubts:['Round and company weren\u2019t specified in this format — round defaulted to 1st, please verify.'], raw:line});
+      out.push({id:uid(), time:timeRaw, company:'', candidate:name, round:'1st', duration:'', woi:false, assignee, country, doubts:['Round and company weren\u2019t specified in this format — round defaulted to 1st, please verify.'], raw:line, _targetDate: currentTargetDate});
       continue;
     }
 
     if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /waiting for invite|\bwoi\b/i.test(line)){
-      out.push(parseDetailedLine(line));
+      const detailed = parseDetailedLine(line);
+      detailed._targetDate = currentTargetDate;
+      out.push(detailed);
       continue;
     }
 
@@ -1150,7 +1206,7 @@ function parseImportText(text){
       assignee: currentDefault ? currentDefault.value : '',
       country:'USA',
       doubts:['Could not automatically parse this line — please fill in candidate/time/company/round manually. Original text: "'+line+'"'],
-      raw: line
+      raw: line, _targetDate: currentTargetDate
     });
   }
   flagLikelyAmTimes(out);
@@ -3587,7 +3643,19 @@ function attachHandlers(conflictIds){
     }
     const beforeBatchRows = state.rows.slice(); // snapshot BEFORE this import adds anything
     const beforeCount = state.roster.length;
-    const parsed = autoRouteRows(parseImportText(text), state.rows);
+
+    // A single paste can contain section headers like "Call's for tomorrow
+    // (2nd Sep)" splitting one list across several different dates —
+    // split those out now, before routing/assigning, so each date's calls
+    // only ever compete for capacity against that SAME date's own existing
+    // rows, not today's.
+    const parsedAll = parseImportText(text, state.date);
+    const currentDateRaw = parsedAll.filter(r => !r._targetDate || r._targetDate === state.date);
+    const otherDateRowsByDate = {};
+    parsedAll.filter(r => r._targetDate && r._targetDate !== state.date).forEach(r=>{
+      (otherDateRowsByDate[r._targetDate] = otherDateRowsByDate[r._targetDate] || []).push(r);
+    });
+    const parsed = autoRouteRows(currentDateRaw, state.rows);
 
     // Detects reschedule/cancel messages mixed into the SAME pasted text.
     // If one genuinely matches a call that already existed BEFORE this
@@ -3629,9 +3697,26 @@ function attachHandlers(conflictIds){
 
     state.rows = state.rows.concat(parsed);
 
+    // Save each other date's calls directly — they never touch state.rows
+    // (which only ever holds the currently open date), so this happens as
+    // its own direct save rather than through the usual "Save changes"
+    // flow for today.
+    const otherDateSummaries = [];
+    for(const [dateKey, rows] of Object.entries(otherDateRowsByDate)){
+      try{
+        const total = await saveRowsToOtherDate(dateKey, rows);
+        otherDateSummaries.push(`${rows.length} call(s) saved to ${dateKey} (${total} total there now)`);
+      }catch(e){
+        otherDateSummaries.push(`⚠ Failed to save ${rows.length} call(s) meant for ${dateKey}: ${e.message}`);
+      }
+    }
+
     state.showImport = false;
     if(state.roster.length !== beforeCount) await saveRoster();
     markDirty(); render();
+    if(otherDateSummaries.length){
+      alert('Some calls in this paste were for other dates:\n' + otherDateSummaries.join('\n'));
+    }
     if(rescheduleMsgs.length){
       // Persist the reschedule/cancel tags to their own dedicated table
       // right away, rather than waiting for the person to hit the general
