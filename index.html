@@ -384,6 +384,9 @@ let state = {
   portalSyncFromCache: false,
   dateSwitching: false,
   showIncentives: false,
+  showBackups: false,
+  backupsList: [],
+  backupsLoading: false,
   incentivesMonth: '',
   incentivesData: null,
   incentivesLoading: false,
@@ -835,9 +838,30 @@ async function saveAllChanges(){
   state.saving = true;
   state.saveError = '';
   render();
+  const sentRowCount = state.rows.length; // snapshot for verification below
+  const sentDate = state.date;
   try{
     await Promise.all([saveDayNow(), saveRoster()]);
     state.dirty = false;
+    // Closes the loop instead of just trusting the POST succeeded:
+    // immediately re-fetch this date's calls from the database and
+    // confirm the count matches what was just sent. A 200 response
+    // doesn't guarantee the write actually landed correctly — this
+    // catches a mismatch the moment it happens instead of someone
+    // noticing missing calls the next time they open this date.
+    if(API_BASE_URL){
+      try{
+        const verify = await apiCall('calls', {qs:'date='+encodeURIComponent(sentDate)});
+        const savedCount = (verify.rows||[]).length;
+        if(savedCount !== sentRowCount){
+          state.saveError = `⚠ Save verification failed: sent ${sentRowCount} call(s) but the database now shows ${savedCount} for ${sentDate}. Please refresh and check carefully before continuing — do not assume the save worked.`;
+          state.dirty = true;
+        }
+      }catch(e){
+        // Couldn't verify — doesn't necessarily mean the save failed, just
+        // that we can't confirm it right now. Don't block on this alone.
+      }
+    }
   }catch(e){
     // A real failure — keep dirty=true so the Save button still correctly
     // shows there's unsaved work, and surface a clear error instead of
@@ -879,6 +903,35 @@ async function saveDayNow(){
 // existing calls first so nothing gets overwritten, runs the same
 // auto-routing against THAT date's own existing rows (not today's), then
 // saves the merged result. Returns the new total row count for that date.
+// Snapshots the CURRENT state of a date's calls before a risky operation
+// (import, clear all, finalize) — a real recovery point independent of
+// whatever bug might cause data loss, since it's not relying on the same
+// save path that could be the thing going wrong. Best-effort: a failed
+// backup should never block the actual operation the person is trying to
+// do, just gets logged to the console.
+async function createBackup(reason, dateKey, rows){
+  if(!API_BASE_URL) return;
+  try{
+    await apiCall('call_backups', {method:'POST', body:{date: dateKey || state.date, reason, rows: rows || state.rows}});
+  }catch(e){
+    console.error('Backup failed (operation continuing anyway):', e);
+  }
+}
+async function loadBackupsList(dateKey){
+  if(!API_BASE_URL) return [];
+  try{
+    const result = await apiCall('call_backups', {qs:'date='+encodeURIComponent(dateKey || state.date)});
+    return result.backups || [];
+  }catch(e){ return []; }
+}
+async function restoreBackup(backupId){
+  const result = await apiCall('call_backups', {qs:'id='+encodeURIComponent(backupId)});
+  const backup = result.backup;
+  if(!backup) throw new Error('Backup not found');
+  let rows;
+  try{ rows = JSON.parse(backup.snapshot_json); }catch(e){ throw new Error('Backup data is corrupted'); }
+  return { rows, callDate: backup.call_date, reason: backup.reason, createdAt: backup.created_at };
+}
 async function saveRowsToOtherDate(targetDateKey, newRows){
   if(API_BASE_URL){
     const existing = await apiCall('calls', {qs:'date='+targetDateKey}).catch(()=>({rows:[]}));
@@ -1563,6 +1616,29 @@ function computeConflicts(rows){
   return conflictMap;
 }
 
+// Flags anyone carrying a noticeably disproportionate share of today's
+// calls — distinct from computeConflicts() above, which only catches
+// literal double-bookings. This is about workload balance: someone with
+// 10 calls while others have 3-4 is exactly the kind of overload that
+// leads to a missed call, which becomes a reschedule message, which
+// becomes another data-entry cycle — catching it at assignment time is
+// cheaper than untangling it afterward.
+function computeWorkloadWarnings(rows){
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  const counts = {};
+  rows.forEach(r=>{
+    if(!r.assignee || teamNames.has(r.assignee) || r.woi) return; // only individual assignments count
+    counts[r.assignee] = (counts[r.assignee] || 0) + 1;
+  });
+  const entries = Object.entries(counts);
+  if(entries.length < 2) return [];
+  const total = entries.reduce((s,[,c])=>s+c, 0);
+  const avg = total / entries.length;
+  return entries
+    .filter(([,count]) => count >= 6 && count >= avg * 1.8)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([name,count])=>({ name, count, avg: Math.round(avg*10)/10 }));
+}
 function summarize(rows, conflictIds){
   let assigned=0, unassigned=0, woi=0;
   const rowIds = new Set(rows.map(r=>r.id));
@@ -2014,6 +2090,7 @@ function closeAllPanels(){
   state.showNotifications = false;
   state.showPortalSync = false;
   state.showIncentives = false;
+  state.showBackups = false;
   state.showRoster = false;
   state.showImport = false;
   state.showRescheduleImport = false;
@@ -2029,6 +2106,7 @@ function getActivePanelName(){
   if(state.showNotifications) return 'notifications';
   if(state.showPortalSync) return 'portalSync';
   if(state.showIncentives) return 'incentives';
+  if(state.showBackups) return 'backups';
   if(state.showRoster) return 'roster';
   if(state.showImport) return 'import';
   if(state.showRescheduleImport) return 'rescheduleImport';
@@ -2051,6 +2129,7 @@ function renderActivePanel(name){
   if(name === 'notifications') return renderNotificationsPanel();
   if(name === 'portalSync') return renderPortalSyncPanel();
   if(name === 'incentives') return renderIncentivesPanel();
+  if(name === 'backups') return renderBackupsPanel();
   if(name === 'roster') return renderRosterPanel();
   if(name === 'import') return renderImportPanel();
   if(name === 'rescheduleImport') return renderRescheduleImportPanel();
@@ -2060,7 +2139,7 @@ function renderActivePanel(name){
 function panelTitle(name){
   const titles = {
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
-    notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives',
+    notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
     rescheduleReview:'Confirm Reschedule/Cancel'
   };
@@ -2161,6 +2240,7 @@ function render(){
     </div>
     ${renderActivePanel(activePanel)}
     ` : `
+    ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
     <div class="shift-note-box">
       <label for="shiftNoteInput">📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></label>
       <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE==='user'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
@@ -2259,6 +2339,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       ${isReadOnly ? `<button class="btn" id="toggleRoster">Team (${state.roster.length})</button>` : ''}
       <button class="btn" id="togglePortalSync">📡 Team Sync</button>
       <button class="btn" id="toggleIncentives">💰 Incentives</button>
+      <button class="btn" id="toggleBackups">🕐 Backups</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${buildCombinedAssigneeFilterOptions()}
@@ -2817,6 +2898,35 @@ function renderIncentivesPanel(){
   </div>`;
 }
 
+function renderBackupsPanel(){
+  const reasonLabels = {
+    'pre-import': '📥 Before an import',
+    'pre-clear-all': '🗑️ Before Clear All',
+    'pre-finalize': '✅ Before Finalize'
+  };
+  const body = state.backupsLoading
+    ? `<div class="hint"><span class="spinner"></span>Loading backups…</div>`
+    : (!state.backupsList.length
+      ? `<div class="empty-state"><h3>No backups yet for ${escapeHtml(state.date)}</h3><p>A backup is taken automatically right before every import, Clear All, or Finalize — nothing to restore until one of those has happened on this date.</p></div>`
+      : `<div style="max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:8px 12px">When</th><th style="padding:8px 12px">Reason</th><th style="padding:8px 12px">Calls saved</th><th style="padding:8px 12px"></th></tr></thead>
+            <tbody>
+              ${state.backupsList.map(b=>`<tr style="border-top:1px solid var(--border-soft)">
+                <td style="padding:8px 12px">${escapeHtml(new Date(b.created_at).toLocaleString())}</td>
+                <td style="padding:8px 12px">${escapeHtml(reasonLabels[b.reason] || b.reason)}</td>
+                <td style="padding:8px 12px;font-weight:600">${b.row_count}</td>
+                <td style="padding:8px 12px;text-align:right"><button class="btn ghost" data-restore-backup="${b.id}" style="font-size:11.5px;padding:5px 10px">Restore this</button></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`);
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:14px">Automatic point-in-time snapshots taken right before import, Clear All, or Finalize for <b>${escapeHtml(state.date)}</b> — a real recovery point independent of the normal save path, in case anything ever goes wrong. Restoring replaces today's current calls with exactly what was saved at that moment (your current, unrestored state is itself backed up first, so restoring is never a one-way trip).</div>
+    ${body}
+  </div>`;
+}
+
 function renderPortalSyncPanel(){
   const d = state.portalSyncData;
   const updatedLabel = state.portalSyncUpdatedAt
@@ -3335,19 +3445,53 @@ function attachHandlers(conflictIds){
   if(incentivesNextBtn) incentivesNextBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), 1)); };
   const refreshIncentivesBtn = document.getElementById('refreshIncentives');
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
+  const toggleBackupsBtn = document.getElementById('toggleBackups');
+  if(toggleBackupsBtn) toggleBackupsBtn.onclick = async ()=>{
+    openOnlyPanel('showBackups');
+    render();
+    if(state.showBackups){
+      state.backupsLoading = true; render();
+      state.backupsList = await loadBackupsList(state.date);
+      state.backupsLoading = false; render();
+    }
+  };
+  document.querySelectorAll('[data-restore-backup]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = btn.getAttribute('data-restore-backup');
+      const backup = state.backupsList.find(b=>String(b.id)===String(id));
+      const label = backup ? new Date(backup.created_at).toLocaleString() : 'this backup';
+      if(!confirm(`Restore the ${state.rows.length}-call state from ${label}? Your CURRENT calls will be backed up first, so this can be undone too if needed.`)) return;
+      try{
+        await createBackup('pre-restore', state.date, state.rows);
+        const restored = await restoreBackup(id);
+        state.rows = restored.rows;
+        markDirty();
+        closeAllPanels();
+        render();
+        await saveAllChanges();
+        alert(`Restored ${restored.rows.length} call(s) from the backup taken ${new Date(restored.createdAt).toLocaleString()}.`);
+      }catch(e){
+        alert('Restore failed: ' + e.message);
+      }
+    };
+  });
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
     state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', importance:''});
     markDirty(); render();
   };
   const clearAllBtn = document.getElementById('clearAll');
-  if(clearAllBtn) clearAllBtn.onclick = ()=>{
+  if(clearAllBtn) clearAllBtn.onclick = async ()=>{
     if(!state.rows.length) return;
-    const ok = confirm(`Remove all ${state.rows.length} calls for ${state.date}? This can't be undone.`);
-    if(ok){ state.rows = []; markDirty(); render(); }
+    const ok = confirm(`Remove all ${state.rows.length} calls for ${state.date}? A backup is saved automatically first, so this can be undone from 🕐 Backups if needed.`);
+    if(ok){
+      await createBackup('pre-clear-all', state.date, state.rows);
+      state.rows = []; markDirty(); render();
+    }
   };
   const finalizeBtn = document.getElementById('finalizeBtn');
-  if(finalizeBtn) finalizeBtn.onclick = ()=>{
+  if(finalizeBtn) finalizeBtn.onclick = async ()=>{
+    await createBackup('pre-finalize', state.date, state.rows);
     markDirty();
     state.finalized = true;
     render();
@@ -3696,6 +3840,7 @@ function attachHandlers(conflictIds){
       await loadDay(state.date);
     }
     const beforeBatchRows = state.rows.slice(); // snapshot BEFORE this import adds anything
+    await createBackup('pre-import', state.date, beforeBatchRows);
     const beforeCount = state.roster.length;
 
     // A single paste can contain section headers like "Call's for tomorrow
