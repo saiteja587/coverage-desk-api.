@@ -1631,6 +1631,11 @@ function computeClientTimeConflicts(rows){
   rows.forEach(r=>{
     if(!r.company || !r.time || r.woi) return;
     const key = normalizeCompanyKey(r.company);
+    byCompany[key] = byCompany[key] || [];
+    byCompany[key].push(r);
+  });
+  const conflictMap = new Map();
+  Object.values(byCompany).forEach(calls=>{
     for(let i=0;i<calls.length;i++){
       for(let j=i+1;j<calls.length;j++){
         const a = calls[i], b = calls[j];
@@ -1732,6 +1737,11 @@ function findRepeatClients(rows){
   rows.forEach(r=>{
     if(!r.company || !r.company.trim()) return;
     const key = normalizeCompanyKey(r.company);
+    byCompany[key] = byCompany[key] || [];
+    byCompany[key].push(r);
+  });
+  const results = [];
+  Object.values(byCompany).forEach(group=>{
     if(group.length>1){
       group.sort((a,b)=>businessDayMinutes(a.time)-businessDayMinutes(b.time));
       const timeCounts = {};
@@ -1982,6 +1992,16 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
   allRows.forEach(row=>{
     if(!row.company || !isAdvancedRound(row.round)) return;
     const key = normalizeCompanyKey(row.company);
+    byCompany[key] = byCompany[key] || [];
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
+  });
+  const results = [];
+  Object.values(byCompany).forEach(occ=>{
+    // Only a genuine match if it's more than one DIFFERENT candidate — a
+    // single candidate progressing through their own 2nd round then 3rd
+    // round at the same company is normal round progression, not a case of
+    // "someone else went through this client before" (that's what the
+    // Repeat Candidates tab is for).
     const uniqueCandidates = new Set(occ.map(o=>(o.candidate||'').trim().toLowerCase()));
     if(occ.length > 1 && uniqueCandidates.size > 1){
       // Most recent date first — today's occurrence (like Reshma's) shows
@@ -5093,6 +5113,12 @@ async function scanClientHistoryAllRounds(forceRefresh){
   allRows.forEach(row=>{
     if(!row.company) return;
     const key = normalizeCompanyKey(row.company);
+    byCompany[key] = byCompany[key] || [];
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
+  });
+  const results = [];
+  Object.values(byCompany).forEach(occ=>{
+    // Only counts as a "same client, different candidates" match if it's
     // genuinely more than one candidate — a single candidate progressing
     // through their own 2nd round, then 3rd round, at the same company is
     // normal round progression (already covered by the Repeat Candidates
