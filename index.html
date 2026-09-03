@@ -1605,7 +1605,7 @@ function matchRescheduleToRow(parsed, rows){
   const pool = timeMatches.length ? timeMatches : candidates;
   if(pool.length === 1) return pool[0];
   if(parsed.company){
-    const companyMatch = pool.find(r => (r.company||'').trim().toLowerCase() === parsed.company.trim().toLowerCase());
+    const companyMatch = pool.find(r => normalizeCompanyKey(r.company) === normalizeCompanyKey(parsed.company));
     if(companyMatch) return companyMatch;
   }
   return pool[0];
@@ -1630,12 +1630,7 @@ function computeClientTimeConflicts(rows){
   const byCompany = {};
   rows.forEach(r=>{
     if(!r.company || !r.time || r.woi) return;
-    const key = r.company.trim().toLowerCase();
-    byCompany[key] = byCompany[key] || [];
-    byCompany[key].push(r);
-  });
-  const conflictMap = new Map();
-  Object.values(byCompany).forEach(calls=>{
+    const key = normalizeCompanyKey(r.company);
     for(let i=0;i<calls.length;i++){
       for(let j=i+1;j<calls.length;j++){
         const a = calls[i], b = calls[j];
@@ -1736,12 +1731,7 @@ function findRepeatClients(rows){
   const byCompany = {};
   rows.forEach(r=>{
     if(!r.company || !r.company.trim()) return;
-    const key = r.company.trim().toLowerCase();
-    byCompany[key] = byCompany[key] || [];
-    byCompany[key].push(r);
-  });
-  const results = [];
-  Object.values(byCompany).forEach(group=>{
+    const key = normalizeCompanyKey(r.company);
     if(group.length>1){
       group.sort((a,b)=>businessDayMinutes(a.time)-businessDayMinutes(b.time));
       const timeCounts = {};
@@ -1963,7 +1953,7 @@ async function scanForRepeatCandidates(forceRefresh){
     if(!row.candidate) return;
     const key = row.candidate.trim().toLowerCase();
     byCandidate[key] = byCandidate[key] || [];
-    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
+    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, status: row.status, statusFields: row.statusFields});
   });
 
   const results = [];
@@ -1991,17 +1981,7 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
   const byCompany = {};
   allRows.forEach(row=>{
     if(!row.company || !isAdvancedRound(row.round)) return;
-    const key = row.company.trim().toLowerCase();
-    byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
-  });
-  const results = [];
-  Object.values(byCompany).forEach(occ=>{
-    // Only a genuine match if it's more than one DIFFERENT candidate — a
-    // single candidate progressing through their own 2nd round then 3rd
-    // round at the same company is normal round progression, not a case of
-    // "someone else went through this client before" (that's what the
-    // Repeat Candidates tab is for).
+    const key = normalizeCompanyKey(row.company);
     const uniqueCandidates = new Set(occ.map(o=>(o.candidate||'').trim().toLowerCase()));
     if(occ.length > 1 && uniqueCandidates.size > 1){
       // Most recent date first — today's occurrence (like Reshma's) shows
@@ -3263,6 +3243,17 @@ function classifyCompany(company){
   return null;
 }
 
+// Client names get typed inconsistently across different coordinators/dates
+// — "Sallie Mae" one day, "Salliemae" or "Sallie-Mae" another. An exact
+// trim+lowercase match misses these entirely, which silently breaks the
+// PRIOR/CLIENT history badges and repeat-client detection for a client that
+// really is the same company. Stripping everything but letters/numbers
+// before comparing means spacing, punctuation, and casing differences no
+// longer matter, while still keeping the original text for display.
+function normalizeCompanyKey(company){
+  return (company||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+
 // A 1st round call running longer than 30 minutes is unusual — worth a second
 // look, and especially so if it's a Healthcare/Education client, where longer
 // first-round screens are more likely to signal something needing attention.
@@ -3313,7 +3304,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="prior-badge" style="color:var(--coral);border-color:var(--coral)" title="⚠ This candidate had a call ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.company?' ('+escapeHtml(reschedWarn.company)+')':''}${reschedWarn.assignee?' — was handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">↻ RESCHED. BEFORE</span>` : ''; })()}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5072,6 +5063,24 @@ function findPriorOccurrence(row){
   return prior[prior.length - 1]; // most recent prior occurrence
 }
 
+// Specifically flags when this SAME candidate had a call marked
+// rescheduled/cancelled/not-responded on a DIFFERENT date — this is the
+// scenario where a call quietly reappears later (today, tomorrow, whenever
+// it actually got rebooked) and whoever picks it up has no idea it was
+// already rescheduled or cancelled once already. entry.occurrences is
+// already sorted most-recent-first, so the first status match found here
+// is the most recent one — that's the one worth surfacing.
+function findPriorRescheduleWarning(row){
+  if(!row.candidate || !state.notifications) return null;
+  const key = row.candidate.trim().toLowerCase();
+  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  if(!entry) return null;
+  return entry.occurrences.find(o =>
+    o.status && ['rescheduled','cancelled','not_responded'].includes(o.status) &&
+    !(o.date === state.date && o.time === row.time && o.round === row.round)
+  ) || null;
+}
+
 // Same idea as the candidate history above, but grouped by CLIENT/COMPANY
 // instead of candidate, and covering EVERY round (not just 2nd round+) —
 // e.g. Manoj B's call today with Texas A&M shows this automatically because
@@ -5083,13 +5092,7 @@ async function scanClientHistoryAllRounds(forceRefresh){
   const byCompany = {};
   allRows.forEach(row=>{
     if(!row.company) return;
-    const key = row.company.trim().toLowerCase();
-    byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
-  });
-  const results = [];
-  Object.values(byCompany).forEach(occ=>{
-    // Only counts as a "same client, different candidates" match if it's
+    const key = normalizeCompanyKey(row.company);
     // genuinely more than one candidate — a single candidate progressing
     // through their own 2nd round, then 3rd round, at the same company is
     // normal round progression (already covered by the Repeat Candidates
@@ -5106,8 +5109,8 @@ async function scanClientHistoryAllRounds(forceRefresh){
 }
 function findPriorClientOccurrence(row){
   if(!row.company || !state.clientHistory) return null;
-  const key = row.company.trim().toLowerCase();
-  const entry = state.clientHistory.find(n => n.company.trim().toLowerCase() === key);
+  const key = normalizeCompanyKey(row.company);
+  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key);
   if(!entry) return null;
   const rowCandidate = (row.candidate||'').trim().toLowerCase();
   // Always points to a genuinely DIFFERENT candidate — otherwise, if this
@@ -5250,8 +5253,8 @@ function findPortalMatch(row){
   if(matches.length > 1){
     // ...then by client/company, since that's what actually distinguishes
     // two same-named, same-time candidates across different teams.
-    const companyKey = (row.company||'').trim().toLowerCase();
-    const companyMatches = matches.filter(p => (p.client||'').trim().toLowerCase() === companyKey);
+    const companyKey = normalizeCompanyKey(row.company);
+    const companyMatches = matches.filter(p => normalizeCompanyKey(p.client) === companyKey);
     if(companyMatches.length) matches = companyMatches;
   }
   return matches[0];
