@@ -200,6 +200,8 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 /* IMPORT PANEL */
 .import-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
 @keyframes spin{to{transform:rotate(360deg);}}
+@keyframes row-jump-flash{0%,100%{background:transparent;}30%,70%{background:var(--teal-dim);}}
+tr.row-jump-highlight{animation:row-jump-flash 1.4s ease-in-out 2;}
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:currentColor;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:-2px;margin-right:6px;}
 .spinner-lg{width:28px;height:28px;border-width:3px;margin:0 auto;display:block;}
 .loading-block{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 20px;color:var(--text-faint);font-size:13px;}
@@ -1040,6 +1042,17 @@ function hourBucketLabel(mins){
   const suffix = h>=12?'PM':'AM';
   let h12 = h%12; if(h12===0) h12=12;
   return h12+suffix;
+}
+// Same idea as hourBucketLabel() but at half-hour precision ("2:00PM",
+// "2:30PM") instead of just the hour — the coverage graph needs this so
+// "how many calls at 10:00 vs 10:30" is actually answerable at a glance.
+function halfHourBucketLabel(mins){
+  if(mins===9999) return '?';
+  let h = Math.floor(mins/60);
+  const m = mins % 60;
+  const suffix = h>=12?'PM':'AM';
+  let h12 = h%12; if(h12===0) h12=12;
+  return h12+':'+String(m).padStart(2,'0')+suffix;
 }
 
 // ---------- parsing WhatsApp text ----------
@@ -2726,7 +2739,9 @@ function renderStrip(rows, conflictIds){
   const buckets = {};
   rows.forEach(r=>{
     const m = timeToMinutes(r.time);
-    const h = m===9999 ? '?' : Math.floor(m/60);
+    // 30-minute buckets instead of hourly — "how many calls at 10:00 vs
+    // 10:30" was previously invisible, both got merged into one "10PM" bar.
+    const h = m===9999 ? '?' : Math.floor(m/30);
     buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], mins:businessDayMinutes(r.time), hyd:0, pa:0, hydAssigned:0, paAssigned:0, otherAssigned:0};
     const isAdv = isAdvancedRound(r.round);
     if(isAdv){
@@ -2762,14 +2777,14 @@ function renderStrip(rows, conflictIds){
     const hydFree = Math.max(hydCount - b.hyd, 0);
     const paFree = Math.max(paCount - b.pa, 0);
     const anyFree = hydFree>0 || paFree>0;
-    const label = k==='?' ? 'Unknown time' : hourBucketLabel(k*60);
-    let tooltip = `${label} \u2014 ${total} call${total===1?'':'s'}\n`
+    const label = k==='?' ? 'Unknown time' : halfHourBucketLabel(k*30);
+    let tooltip = `${label} \u2014 ${total} call${total===1?'':'s'} \u2014 click to jump to these calls\n`
       + `HYD Team: ${b.hyd}/${hydCount} booked (${hydFree} free)\n`
       + `Pradeep Anna Team: ${b.pa}/${paCount} booked (${paFree} free)`;
     if(b.advanced){
       tooltip += `\n\n2nd Round & Above (${b.advanced}):\n` + b.advancedNames.join('\n');
     }
-    return `<div class="hour" style="height:${total*unit}px" title="${escapeHtml(tooltip)}">
+    return `<div class="hour" data-bucket="${k}" style="height:${total*unit}px;cursor:pointer" title="${escapeHtml(tooltip)}">
       ${b.hydAssigned?`<div class="seg" style="background:var(--teal);height:${b.hydAssigned*unit}px"></div>`:''}
       ${b.paAssigned?`<div class="seg" style="background:var(--blue);height:${b.paAssigned*unit}px"></div>`:''}
       ${b.otherAssigned?`<div class="seg" style="background:var(--text-faint);height:${b.otherAssigned*unit}px"></div>`:''}
@@ -2779,15 +2794,15 @@ function renderStrip(rows, conflictIds){
       <div class="hour-free-dot" style="background:${anyFree?'var(--teal)':'var(--coral)'}"></div>
     </div>`;
   }).join('');
-  const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':hourBucketLabel(k*60)}</div>`).join('');
+  const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':halfHourBucketLabel(k*30)}</div>`).join('');
   const minW = Math.max(keys.length*30, 260);
   return `<div class="strip-wrap">
-    <div class="strip-title"><span>Coverage by hour (IST) \u2014 all rounds combined</span><span>● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span></div>
+    <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span>● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span></div>
     <div class="strip-scroll"><div style="min-width:${minW}px">
     <div class="strip">${barsHtml}</div>
     <div class="strip-hours">${lblsHtml}</div>
     </div></div>
-    <div class="strip-hint">Hover a bar to see exactly how many slots HYD Team and Pradeep Anna Team have free at that time.</div>
+    <div class="strip-hint">Hover a bar for free-slot details, or click it to jump straight to those calls below.</div>
   </div>`;
 }
 
@@ -3292,7 +3307,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       category==='Education'?'row-education':'',
       longDuration?'row-long-duration':''
     ].filter(Boolean).join(' ');
-    return `<tr data-id="${r.id}" class="${rowClasses}">
+    return `<tr data-id="${r.id}" data-bucket="${(()=>{ const m = timeToMinutes(r.time); return m===9999 ? '?' : Math.floor(m/30); })()}" class="${rowClasses}">
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
@@ -4247,6 +4262,29 @@ function attachHandlers(conflictIds){
     markDirty();
     render();
   };
+  // Coverage graph bars are clickable — jump straight to the matching
+  // calls in the table below instead of manually scrolling up to check
+  // the graph, then back down to actually assign something.
+  document.querySelectorAll('.hour[data-bucket]').forEach(bar=>{
+    bar.onclick = ()=>{
+      const bucket = bar.getAttribute('data-bucket');
+      const targetRow = document.querySelector(`tr[data-bucket="${CSS.escape(bucket)}"]`);
+      if(!targetRow){
+        // The calls in that slot might be in a different tab (e.g. 2nd
+        // Round while viewing 1st Round) — switch to All Calls so
+        // there's always somewhere for them to actually be found.
+        if(state.view !== 'all'){ state.view = 'all'; render(); }
+        setTimeout(()=>{
+          const retry = document.querySelector(`tr[data-bucket="${CSS.escape(bucket)}"]`);
+          if(retry){ retry.scrollIntoView({behavior:'smooth', block:'center'}); retry.classList.add('row-jump-highlight'); setTimeout(()=>retry.classList.remove('row-jump-highlight'), 3000); }
+        }, 50);
+        return;
+      }
+      targetRow.scrollIntoView({behavior:'smooth', block:'center'});
+      targetRow.classList.add('row-jump-highlight');
+      setTimeout(()=>targetRow.classList.remove('row-jump-highlight'), 3000);
+    };
+  });
   const bulkClearBtn = document.getElementById('bulkClearBtn');
   if(bulkClearBtn) bulkClearBtn.onclick = ()=>{ state.selectedIds.clear(); render(); };
   const moveToDateBtn = document.getElementById('moveToDateBtn');
