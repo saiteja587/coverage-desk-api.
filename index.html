@@ -956,6 +956,50 @@ async function saveRowsToOtherDate(targetDateKey, newRows){
   }
   return merged.length;
 }
+// Moves the currently-selected rows OUT of today's list and INTO a
+// different date entirely, preserving their assignee/round/etc as-is
+// (a relocation, not a re-route) — exactly what's needed when calls got
+// saved under the wrong date by mistake. Both the source and target
+// dates are backed up first, since this touches two dates at once.
+async function moveSelectedRowsToDate(targetDateKey){
+  const idsToMove = new Set(state.selectedIds);
+  const rowsToMove = state.rows.filter(r => idsToMove.has(r.id));
+  if(!rowsToMove.length) return { movedCount: 0, targetTotal: 0 };
+
+  await createBackup('pre-move-out', state.date, state.rows);
+
+  let targetRows = [];
+  if(API_BASE_URL){
+    const existing = await apiCall('calls', {qs:'date='+encodeURIComponent(targetDateKey)}).catch(()=>({rows:[]}));
+    targetRows = existing.rows || [];
+  } else {
+    const r = await storageAdapter.get('day:'+targetDateKey, false).catch(()=>null);
+    const parsedExisting = r && r.value ? JSON.parse(r.value) : null;
+    targetRows = Array.isArray(parsedExisting) ? parsedExisting : (parsedExisting && parsedExisting.rows) || [];
+  }
+  await createBackup('pre-move-in', targetDateKey, targetRows);
+
+  const merged = targetRows.concat(rowsToMove);
+  if(API_BASE_URL){
+    await apiCall('calls', {method:'POST', body:{date: targetDateKey, rows: merged}});
+  } else {
+    const r = await storageAdapter.get('day:'+targetDateKey, false).catch(()=>null);
+    const parsedExisting = r && r.value ? JSON.parse(r.value) : null;
+    const payload = (parsedExisting && !Array.isArray(parsedExisting)) ? {...parsedExisting, rows: merged} : {rows: merged, finalized:false, notes:[]};
+    await storageAdapter.set('day:'+targetDateKey, JSON.stringify(payload), false);
+    const idx = await storageAdapter.get('known-dates', false).catch(()=>null);
+    const list = idx && idx.value ? JSON.parse(idx.value) : [];
+    if(!list.includes(targetDateKey)){ list.push(targetDateKey); await storageAdapter.set('known-dates', JSON.stringify(list), false); }
+  }
+
+  state.rows = state.rows.filter(r => !idsToMove.has(r.id));
+  state.selectedIds.clear();
+  markDirty();
+  render();
+  await saveAllChanges();
+
+  return { movedCount: rowsToMove.length, targetTotal: merged.length };
+}
 
 // ---------- time helpers ----------
 function timeToMinutes(t){
@@ -1112,8 +1156,12 @@ function parseDetailedLine(line){
   // en-dash (–) or em-dash (—) with either side's whitespace optional —
   // real WhatsApp messages are inconsistent about spacing around these
   // ("Samala— Interview—Detroit..." with missing spaces was landing as one
-  // giant unsplit blob before this fix).
-  const segs = skeleton.split(/\s+-\s+|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim()).filter(Boolean);
+  // giant unsplit blob before this fix). Also splits on a plain hyphen with
+  // a space BEFORE it but none after ("Duration -1Hr -2nd Round") — that
+  // pattern used to leave round/duration stuck inside one unsplit chunk,
+  // undetectable by either the round or duration regex, silently
+  // defaulting the round to 1st even when it was clearly stated.
+  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim()).filter(Boolean);
   const timeRegex = /(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])/;
   let name = segs[0] || skeleton;
   // Defensive second pass: catches stray leading numbering the first strip
@@ -1149,7 +1197,10 @@ function parseDetailedLine(line){
     if(i===timeIdx) continue;
     if(isDescriptorSegment(segs[i])) continue;
     if(/^duration:?/i.test(segs[i])) continue;
-    company = segs[i];
+    // A stray leading hyphen ("- -Houston methodist") happens when the
+    // source has a double-dash-like gap ("Interview - -Houston...") — a
+    // company name should never actually start with a bare hyphen.
+    company = segs[i].replace(/^-+\s*/, '');
     break;
   }
 
@@ -1174,14 +1225,19 @@ function parseDetailedLine(line){
 
   // duration: explicit "Duration: X" first, else a paren that's purely a duration token
   let duration = '';
-  const durMatch = mainPart.match(/duration:?\s*([0-9]+\s*(mins?|hrs?|hours?))/i);
+  const durMatch = mainPart.match(/duration:?\s*-?\s*([0-9]+\s*(mins?|hrs?|hours?))/i);
   if(durMatch) duration = durMatch[1];
   else {
     const durParen = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
     if(durParen) duration = durParen.replace(/([0-9])\s*([a-z])/i,'$1 $2');
   }
 
-  const woi = /waiting for invite|\bwoi\b/i.test(clean);
+  // Broadened from the literal "waiting for invite" to the word stem
+  // "invit" — real text varies ("invite", "invitation", "inviting"), and
+  // the exact-substring version missed "Waiting for invitation", which
+  // then fell all the way through to the raw-text fallback instead of
+  // being recognized as a WOI call with its country/etc parsed properly.
+  const woi = /waiting\s+for\s+invit\w*|\bwoi\b/i.test(clean);
 
   const doubts = [];
   if(!time && !woi) doubts.push('No time found in this line — check the original text.');
@@ -1201,7 +1257,7 @@ function parseDetailedLine(line){
   return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line };
 }
 function parseImportText(text, baseDate){
-  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')).filter(Boolean);
   const out = [];
   let currentDefault = null;
   let currentTargetDate = null; // null = whatever date the import panel targets
@@ -1248,7 +1304,7 @@ function parseImportText(text, baseDate){
       continue;
     }
 
-    if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /waiting for invite|\bwoi\b/i.test(line)){
+    if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /waiting\s+for\s+invit\w*|\bwoi\b/i.test(line)){
       const detailed = parseDetailedLine(line);
       detailed._targetDate = currentTargetDate;
       out.push(detailed);
@@ -1442,7 +1498,7 @@ function looksLikeRescheduleLine(line){
 }
 function parseRescheduleText(text){
   const results = [];
-  const lines = text.split('\n').map(l=>l.trim());
+  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''));
   // Bare times (no AM/PM) default to PM — matches the app's existing
   // convention elsewhere for bare times, and these real messages very
   // often drop the AM/PM since it's understood to be an evening shift.
@@ -2294,6 +2350,9 @@ function renderBulkBar(){
       <option value="Pradeep Anna Team">Pradeep Anna Team</option>
     </select>
     <button class="btn" id="distributeApplyBtn" title="Spreads the selected calls one-by-one across that team's available (non-absent) members">🔀 Distribute</button>
+    <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+    <input type="date" id="moveToDateInput" class="cell-input" style="background:var(--surface-2);border:1px solid var(--border);width:auto">
+    <button class="btn" id="moveToDateBtn" title="Move the selected calls to a different date entirely — fixes calls that got saved under the wrong date without losing any data">📅 Move to date</button>
     <button class="btn ghost" id="bulkClearBtn">Clear selection</button>
   </div>`;
 }
@@ -4190,6 +4249,20 @@ function attachHandlers(conflictIds){
   };
   const bulkClearBtn = document.getElementById('bulkClearBtn');
   if(bulkClearBtn) bulkClearBtn.onclick = ()=>{ state.selectedIds.clear(); render(); };
+  const moveToDateBtn = document.getElementById('moveToDateBtn');
+  if(moveToDateBtn) moveToDateBtn.onclick = async ()=>{
+    const input = document.getElementById('moveToDateInput');
+    const targetDate = input ? input.value : '';
+    if(!targetDate){ alert('Pick a date to move these calls to.'); return; }
+    if(targetDate === state.date){ alert('That\u2019s the same date these calls are already on.'); return; }
+    if(!confirm(`Move ${state.selectedIds.size} selected call(s) from ${state.date} to ${targetDate}? Both dates are backed up automatically first, so this can be undone from \ud83d\udd50 Backups if needed.`)) return;
+    try{
+      const result = await moveSelectedRowsToDate(targetDate);
+      alert(`Moved ${result.movedCount} call(s) to ${targetDate} (${result.targetTotal} total there now).`);
+    }catch(e){
+      alert('Move failed: ' + e.message);
+    }
+  };
 
   document.querySelectorAll('.pin-toggle').forEach(btn=>{
     btn.onclick = ()=>{
