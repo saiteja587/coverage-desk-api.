@@ -175,14 +175,17 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 .strip-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 12px;margin-bottom:20px;}
 .strip-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px;display:flex;justify-content:space-between;}
 .strip{display:flex;align-items:flex-end;gap:3px;height:64px;}
-.strip .hour{flex:1;display:flex;flex-direction:column-reverse;gap:1px;min-width:4px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;}
+.strip .hour{flex:0 0 46px;display:flex;flex-direction:column-reverse;gap:1px;min-width:46px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;}
 .hour-free-dot{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;}
 .strip-hint{font-size:10.5px;color:var(--text-faint);margin-top:14px;text-align:center;}
-.strip .hour .seg{width:100%;}
+.strip .hour .seg{width:100%;min-height:3px;}
 .strip .hour-lbl{font-family:var(--mono);font-size:9px;color:var(--text-faint);text-align:center;margin-top:6px;}
 .strip-hours{display:flex;gap:3px;}
-.strip-hours .hour-lbl{flex:1;}
-.strip-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.strip-hours .hour-lbl{flex:0 0 46px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.strip-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;}
+.strip-scroll::-webkit-scrollbar{height:8px;}
+.strip-scroll::-webkit-scrollbar-thumb{background:var(--teal-dim);border-radius:4px;}
+.strip-scroll::-webkit-scrollbar-thumb:hover{background:var(--teal);}
 .strip-empty{color:var(--text-faint);font-size:12px;font-family:var(--mono);padding:10px 0;}
 
 /* TOOLBAR */
@@ -2795,7 +2798,7 @@ function renderStrip(rows, conflictIds){
     </div>`;
   }).join('');
   const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':halfHourBucketLabel(k*30)}</div>`).join('');
-  const minW = Math.max(keys.length*30, 260);
+  const minW = Math.max(keys.length*46, 260);
   return `<div class="strip-wrap">
     <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span>● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span></div>
     <div class="strip-scroll"><div style="min-width:${minW}px">
@@ -4385,8 +4388,14 @@ function attachHandlers(conflictIds){
     if(moveBtn) moveBtn.onclick = ()=>{
       const row = state.rows.find(r=>r.id===id);
       if(row){
+        const teamNames = new Set(state.roster.map(p=>p.team));
         row.round = '2nd Round';
-        row.assignee = ''; // team-level 1st-round default no longer applies — needs a manual pick
+        // Only clear a TEAM-level assignment (e.g. "HYD Team") — that
+        // default doesn't carry over to 2nd round & above, which needs a
+        // named person. But if an individual was already assigned, keep
+        // them — clearing it unconditionally was flipping the row to
+        // red/"unassigned" even when someone was already correctly on it.
+        if(teamNames.has(row.assignee)) row.assignee = '';
         markDirty(); render();
       }
     };
