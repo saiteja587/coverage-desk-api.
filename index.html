@@ -3370,7 +3370,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="prior-badge" style="color:var(--coral);border-color:var(--coral)" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">↻ RESCHED. BEFORE</span>` : ''; })()}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="prior-badge" style="color:var(--coral);border-color:var(--coral)" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">↻ RESCHED. BEFORE</span>` : ''; })()}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="prior-badge" style="color:var(--teal);border-color:var(--teal)" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻ ROUND HISTORY</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5164,6 +5164,31 @@ function findPriorRescheduleWarning(row){
     !(o.date === state.date && o.time === row.time && o.round === row.round) &&
     normalizeCompanyKey(o.company) === rowCompanyKey
   ) || null;
+}
+
+// Specifically flags "this same candidate has a prior round with this exact
+// client" — a case neither existing badge actually shows: PRIOR fires for
+// ANY past occurrence of this candidate regardless of client, so it doesn't
+// tell you it's the SAME client; CLIENT deliberately only fires for a
+// DIFFERENT candidate at this client, since same-candidate/same-client was
+// treated as "just normal round progression, not worth a separate flag."
+// In practice that round-progression info (2nd Round last week, now back
+// for 3rd Round with the same client) is exactly what's useful to see at a
+// glance — this badge is that missing signal.
+function findPriorSameClientOccurrence(row){
+  if(!row.candidate || !row.company || !state.notifications) return null;
+  const rowCompanyKey = normalizeCompanyKey(row.company);
+  if(!rowCompanyKey) return null;
+  const key = row.candidate.trim().toLowerCase();
+  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  if(!entry) return null;
+  const matches = entry.occurrences.filter(o =>
+    !(o.date === state.date && o.time === row.time && o.round === row.round) &&
+    normalizeCompanyKey(o.company) === rowCompanyKey
+  );
+  // entry.occurrences is already sorted most-recent-first, and filter()
+  // preserves that order, so the first match here is the most recent one.
+  return matches.length ? matches[0] : null;
 }
 
 // Same idea as the candidate history above, but grouped by CLIENT/COMPANY
