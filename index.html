@@ -418,6 +418,9 @@ let state = {
   notifSearchClients: '',
   hideAllNotifCandidates: false,
   hideAllNotifClients: false,
+  allReschedulesData: null,
+  notifSearchAllResched: '',
+  hideAllNotifAllResched: false,
   showSummary: false,
   backingUp: false,
   showUsers: false,
@@ -2016,7 +2019,18 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
   return results;
 }
 
-// Team-grouped export, matching the *Team Name* / @Person format you use in WhatsApp.
+// Flat list of EVERY call ever tagged Rescheduled/Cancelled/Not Responded,
+// across every saved date — one row per call, not grouped by candidate or
+// client, so it's a plain "what happened, when, where" reference rather
+// than a pattern-detection tool like the scans above.
+async function scanAllReschedules(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const results = allRows
+    .filter(r => r.status && ['rescheduled','cancelled','not_responded'].includes(r.status))
+    .map(r => ({ date: r._date, time: r.time, candidate: r.candidate, company: r.company, status: r.status, assignee: r.assignee, statusFields: r.statusFields }));
+  results.sort((a,b)=> b.date.localeCompare(a.date) || String(b.time||'').localeCompare(String(a.time||'')));
+  return results;
+}
 function buildTeamGroupedExportText(rows){
   // Sort the entire day chronologically FIRST, before any grouping happens.
   // This was missing entirely before — calls were pushed into each team's list
@@ -2645,7 +2659,8 @@ function renderNotificationsPanel(){
     { key:'sameday', label:'Same Candidate Today' },
     { key:'clientsToday', label:'🏢 Repeat Clients Today' },
     { key:'candidatesAcross', label:'📅 Repeat Candidates (All Dates)' },
-    { key:'clientsAcross', label:'🎯 Same Client, 2nd Round+ (All Dates)' }
+    { key:'clientsAcross', label:'🎯 Same Client, 2nd Round+ (All Dates)' },
+    { key:'allResched', label:'↻ All Rescheduled/Cancelled' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>`
@@ -2711,6 +2726,37 @@ function renderNotificationsPanel(){
           <span style="display:flex;gap:6px"><button class="btn ghost" id="hideAllClients">Hide all</button><button class="btn ghost" id="runNotifScanClients">Re-scan</button></span>
         </div>
         <input type="text" class="notif-search" id="notifSearchClients" placeholder="Search client…" value="${escapeHtml(state.notifSearchClients||'')}">
+        ${rowsHtml || '<div class="hint">No matches.</div>'}`;
+    }
+  } else if(active === 'allResched'){
+    if(state.allReschedulesData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Scans every date you've saved calls for and lists every call ever marked Rescheduled, Cancelled, or Not Responded — candidate, date, time, and client, all in one place.</div>
+        <button class="btn primary" id="runAllReschedScan">🔍 Scan for all rescheduled/cancelled calls</button>`;
+    } else if(state.allReschedulesData.length===0){
+      content = `<div class="hint">No rescheduled/cancelled/no-response calls found across your saved dates yet. <button class="btn ghost" id="runAllReschedScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else if(state.hideAllNotifAllResched){
+      content = `<div class="hint">Hidden. <button class="btn ghost" id="unhideAllResched">Show ${state.allReschedulesData.length} result(s) again</button></div>`;
+    } else {
+      const q = (state.notifSearchAllResched||'').trim().toLowerCase();
+      const visible = q ? state.allReschedulesData.filter(n => (n.candidate||'').toLowerCase().includes(q) || (n.company||'').toLowerCase().includes(q)) : state.allReschedulesData;
+      const rowsHtml = visible.map(n=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(n.candidate||'Candidate')} <span class="notif-warn" style="color:${statusBadgeInfo(n.status).colorVar}">${statusBadgeInfo(n.status).icon} ${statusBadgeInfo(n.status).label}</span></div>
+          <div class="notif-detail">
+            <span class="notif-chip">${escapeHtml(n.date)}</span>
+            <span class="notif-chip">${escapeHtml(n.time||'time n/a')}</span>
+            <span class="notif-chip">${escapeHtml(n.company||'client n/a')}</span>
+            ${n.assignee?`<span class="notif-chip">${escapeHtml(n.assignee)}</span>`:''}
+          </div>
+        </div>
+      `).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.allReschedulesData.length} rescheduled/cancelled/no-response call(s) across your saved dates, most recent first.</div>
+          <span style="display:flex;gap:6px"><button class="btn ghost" id="hideAllResched">Hide all</button><button class="btn ghost" id="runAllReschedScan">Re-scan</button></span>
+        </div>
+        <input type="text" class="notif-search" id="notifSearchAllResched" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchAllResched||'')}">
         ${rowsHtml || '<div class="hint">No matches.</div>'}`;
     }
   }
@@ -3324,7 +3370,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="prior-badge" style="color:var(--coral);border-color:var(--coral)" title="⚠ This candidate had a call ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.company?' ('+escapeHtml(reschedWarn.company)+')':''}${reschedWarn.assignee?' — was handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">↻ RESCHED. BEFORE</span>` : ''; })()}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="prior-badge" style="color:var(--coral);border-color:var(--coral)" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">↻ RESCHED. BEFORE</span>` : ''; })()}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="prior-badge" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">PRIOR</span>` : ''; })()}${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -3667,6 +3713,22 @@ function attachHandlers(conflictIds){
   const notifSearchClientsInput = document.getElementById('notifSearchClients');
   if(notifSearchClientsInput) notifSearchClientsInput.addEventListener('input', ()=>{
     state.notifSearchClients = notifSearchClientsInput.value;
+    render();
+  });
+  const runAllReschedBtn = document.getElementById('runAllReschedScan');
+  if(runAllReschedBtn) runAllReschedBtn.onclick = async ()=>{
+    runAllReschedBtn.textContent = 'Scanning…';
+    state.allReschedulesData = await scanAllReschedules(true);
+    state.hideAllNotifAllResched = false;
+    render();
+  };
+  const hideAllReschedBtn = document.getElementById('hideAllResched');
+  if(hideAllReschedBtn) hideAllReschedBtn.onclick = ()=>{ state.hideAllNotifAllResched = true; render(); };
+  const unhideAllReschedBtn = document.getElementById('unhideAllResched');
+  if(unhideAllReschedBtn) unhideAllReschedBtn.onclick = ()=>{ state.hideAllNotifAllResched = false; render(); };
+  const notifSearchAllReschedInput = document.getElementById('notifSearchAllResched');
+  if(notifSearchAllReschedInput) notifSearchAllReschedInput.addEventListener('input', ()=>{
+    state.notifSearchAllResched = notifSearchAllReschedInput.value;
     render();
   });
   document.querySelectorAll('.notif-tab-btn').forEach(btn=>{
@@ -5092,12 +5154,15 @@ function findPriorOccurrence(row){
 // is the most recent one — that's the one worth surfacing.
 function findPriorRescheduleWarning(row){
   if(!row.candidate || !state.notifications) return null;
+  const rowCompanyKey = normalizeCompanyKey(row.company);
+  if(!rowCompanyKey) return null; // no client on this row — can't confirm it's the same client, so don't guess
   const key = row.candidate.trim().toLowerCase();
   const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
   if(!entry) return null;
   return entry.occurrences.find(o =>
     o.status && ['rescheduled','cancelled','not_responded'].includes(o.status) &&
-    !(o.date === state.date && o.time === row.time && o.round === row.round)
+    !(o.date === state.date && o.time === row.time && o.round === row.round) &&
+    normalizeCompanyKey(o.company) === rowCompanyKey
   ) || null;
 }
 
