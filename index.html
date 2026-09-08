@@ -12,6 +12,7 @@
 <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOTIgMTkyIj48cmVjdCB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgcng9IjM2IiBmaWxsPSIjMEYxNDE5Ii8+PHJlY3QgeD0iMjQiIHk9IjQwIiB3aWR0aD0iMTQ0IiBoZWlnaHQ9IjExMiIgcng9IjEwIiBmaWxsPSIjMTYxRDI0IiBzdHJva2U9IiM0RkQxQzUiIHN0cm9rZS13aWR0aD0iMyIvPjxsaW5lIHgxPSIyNCIgeTE9IjY4IiB4Mj0iMTY4IiB5Mj0iNjgiIHN0cm9rZT0iIzJBMzMzRCIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iNDYiIGN5PSI5MCIgcj0iNiIgZmlsbD0iIzRGRDFDNSIvPjxyZWN0IHg9IjYyIiB5PSI4NiIgd2lkdGg9IjgwIiBoZWlnaHQ9IjgiIHJ4PSI0IiBmaWxsPSIjOEI5OEE1Ii8+PGNpcmNsZSBjeD0iNDYiIGN5PSIxMTQiIHI9IjYiIGZpbGw9IiNGMkI4NEIiLz48cmVjdCB4PSI2MiIgeT0iMTEwIiB3aWR0aD0iNjAiIGhlaWdodD0iOCIgcng9IjQiIGZpbGw9IiM4Qjk4QTUiLz48Y2lyY2xlIGN4PSI0NiIgY3k9IjEzOCIgcj0iNiIgZmlsbD0iI0YyNjg1QyIvPjxyZWN0IHg9IjYyIiB5PSIxMzQiIHdpZHRoPSI3MCIgaGVpZ2h0PSI4IiByeD0iNCIgZmlsbD0iIzhCOThBNSIvPjwvc3ZnPg==">
 <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOTIgMTkyIj48cmVjdCB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgcng9IjM2IiBmaWxsPSIjMEYxNDE5Ii8+PHJlY3QgeD0iMjQiIHk9IjQwIiB3aWR0aD0iMTQ0IiBoZWlnaHQ9IjExMiIgcng9IjEwIiBmaWxsPSIjMTYxRDI0IiBzdHJva2U9IiM0RkQxQzUiIHN0cm9rZS13aWR0aD0iMyIvPjxsaW5lIHgxPSIyNCIgeTE9IjY4IiB4Mj0iMTY4IiB5Mj0iNjgiIHN0cm9rZT0iIzJBMzMzRCIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iNDYiIGN5PSI5MCIgcj0iNiIgZmlsbD0iIzRGRDFDNSIvPjxyZWN0IHg9IjYyIiB5PSI4NiIgd2lkdGg9IjgwIiBoZWlnaHQ9IjgiIHJ4PSI0IiBmaWxsPSIjOEI5OEE1Ii8+PGNpcmNsZSBjeD0iNDYiIGN5PSIxMTQiIHI9IjYiIGZpbGw9IiNGMkI4NEIiLz48cmVjdCB4PSI2MiIgeT0iMTEwIiB3aWR0aD0iNjAiIGhlaWdodD0iOCIgcng9IjQiIGZpbGw9IiM4Qjk4QTUiLz48Y2lyY2xlIGN4PSI0NiIgY3k9IjEzOCIgcj0iNiIgZmlsbD0iI0YyNjg1QyIvPjxyZWN0IHg9IjYyIiB5PSIxMzQiIHdpZHRoPSI3MCIgaGVpZ2h0PSI4IiByeD0iNCIgZmlsbD0iIzhCOThBNSIvPjwvc3ZnPg==">
 <title>Coverage Desk</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -266,6 +267,8 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .mini-badge-round{color:var(--teal);border:1px solid var(--teal);}
 .mini-badge-client{color:var(--amber);border:1px solid var(--amber);}
 .mini-badge-resched{color:var(--coral);border:1px solid var(--coral);}
+.mini-badge-newstudent{color:var(--text-muted);border:1px dashed var(--text-faint);cursor:pointer;}
+.mini-badge-newstudent:hover{color:var(--text);border-color:var(--text-muted);}
 .doubt-icon{color:var(--amber);}
 .doubt-note-row td{background:var(--amber-dim);color:var(--amber);font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
 .doubt-note-icon{margin-right:5px;}
@@ -342,6 +345,11 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 
 <script>
 const STATUS_COLORS = { assigned: 'var(--teal)', woi: 'var(--amber)', unassigned: 'var(--coral)' };
+// Seeded once from the uploaded student-master spreadsheet — after the
+// first successful load, this seed is never used again; all edits go
+// through the normal Students Master panel and its own storage.
+const DEFAULT_STUDENTS_SEED = [{"n":"Abhishek Karre","c":"United States"},{"n":"Abhishek Muralidharan","c":"United States"},{"n":"Abhishek Singh Hazari","c":"United Kingdom"},{"n":"Adithya Ranga Sai Battini","c":"United States"},{"n":"AJAY BABU MANDHA","c":"United States"},{"n":"Ajay Kumar Polam","c":"United States"},{"n":"Ajay Lakkuntla","c":"United States"},{"n":"Akash Goud Amula","c":"United States"},{"n":"AKHIL BASHA DUDEKULA","c":"United States"},{"n":"Akhil Kondabathini","c":"United States"},{"n":"Akhila Marka","c":"United Kingdom"},{"n":"Akshara Movva","c":"United States"},{"n":"AKSHAY KUMAR JANGALA","c":"United States"},{"n":"Akshaya Paila","c":"United States"},{"n":"AKSHITHA KOTAGIRI","c":"United States"},{"n":"Ambika Valapatla","c":"United Kingdom"},{"n":"Amrutha Varshini","c":"United States"},{"n":"Amruthacharya Kothakota","c":"United States"},{"n":"Amulya chowdary Bellam","c":"United States"},{"n":"Amulya Lakkireddy","c":"United States"},{"n":"Anand Kumar Kopperla","c":"United Kingdom"},{"n":"Andrew Sedillo","c":"United States"},{"n":"Anil Kumar Nagam","c":"Ireland"},{"n":"Anil Telusuri","c":"United States"},{"n":"Anirudh Sai Puppala","c":"United States"},{"n":"Anmol Kumar Ale","c":"United Kingdom"},{"n":"Anuhya Gullapudi","c":"Ireland"},{"n":"Aparna Veldurti","c":"United States"},{"n":"Aravind Jambuka","c":"United States"},{"n":"Aruna kumari Nagabhiru","c":"United States"},{"n":"Arunprasad Maruthachalamurthy","c":"United States"},{"n":"Ashri Julkanain","c":"India"},{"n":"Ashrith Bhooka Ravinandan","c":"United States"},{"n":"Ashwan Teja Dasari","c":"Ireland"},{"n":"ASLESHA RAMANUJAM","c":"United States"},{"n":"Aslesha Yalamanchili","c":"United States"},{"n":"ASMITA TIRKEY","c":"Ireland"},{"n":"Atharva Nirdesh Varshney","c":"United Kingdom"},{"n":"Avirineni Navaneeth Rao","c":"United States"},{"n":"Bala Seeta Rami Reddy Avuluri","c":"United States"},{"n":"Battu Sai Kumar","c":"United States"},{"n":"Benhur Ruchitha Mamidi","c":"United States"},{"n":"Bhanu Prakash Pushpaka","c":"United States"},{"n":"Bhanu Prakash Sunke","c":"United States"},{"n":"Bharath Reddy Choudary","c":"Ireland"},{"n":"Bhargav Venigalla","c":"Germany"},{"n":"Bhaskara Sai Chandu Anisetti","c":"United States"},{"n":"BHAVANA ANAMDASU","c":"United States"},{"n":"Bhavanand Jupalli","c":"United States"},{"n":"Bhavani Gali","c":"United States"},{"n":"BhavanTeja Ammisetty","c":"United States"},{"n":"Bhuvanesh Marineni","c":"United States"},{"n":"Chaitanya Vemula","c":"United States"},{"n":"Chaithra Talagavara Sundaresha","c":"United Kingdom"},{"n":"chakravarthi sangoju","c":"United States"},{"n":"Chandan Shekar Hemmanahalli","c":"United Kingdom"},{"n":"CHANDANA SETTY SHARAFF","c":"United States"},{"n":"Chandi Priya Katta","c":"United States"},{"n":"Chandra Sekar Nandanavanam","c":"United States"},{"n":"Chandra Sekhar Mutina","c":"United States"},{"n":"Chandru Ganesan","c":"United States"},{"n":"Charitha Rampally","c":"United States"},{"n":"CHARITHA SRI SIDDAMSETTI","c":"United States"},{"n":"Chatura Vallabhaneni","c":"United States"},{"n":"Cherishma Samala","c":"United States"},{"n":"Chetan Babu Sakamuri","c":"United Kingdom"},{"n":"chetan sakamuri","c":"Aland Islands"},{"n":"Chidghana Hemantharaju","c":"Germany"},{"n":"Chivatam Eswar Chandra Vidya Sagar","c":"United Kingdom"},{"n":"Deepak Bantu","c":"United States"},{"n":"Deepanshu Raghuvanshi","c":"Ireland"},{"n":"Deepesh Naidu Paladugu","c":"United States"},{"n":"Deepthi Vadlapati","c":"United States"},{"n":"Devakalyan Adigopula","c":"United States"},{"n":"Developer Student Account","c":"United States"},{"n":"Devi Annamreddy","c":"United States"},{"n":"Devika Gunda","c":"United States"},{"n":"Diddi Sushma Swaraj","c":"United States"},{"n":"Dinesh Kumar Anini","c":"United Kingdom"},{"n":"Dinesh Sai Boppana","c":"United States"},{"n":"Dummy Student ADD","c":"Albania"},{"n":"Durga Lakshmi Bala Subash Sriram","c":"United States"},{"n":"Eemana Sairam","c":"United States"},{"n":"Ganesh Krishna Murugan","c":"United States"},{"n":"Ganesh Narayana Mareedu","c":"United States"},{"n":"Ganesh Reddy Neela","c":"United States"},{"n":"Gayathri Malempati","c":"United States"},{"n":"Geetha Bachina","c":"United States"},{"n":"Geetha Bujala","c":"United States"},{"n":"Geetheswara Reddy Chenchani","c":"United Kingdom"},{"n":"GNANA PRAKASH BANDI","c":"United States"},{"n":"Greha Shah","c":"United Kingdom"},{"n":"Gulla Srilatha","c":"United States"},{"n":"Gurusai Ravi Raja Reddy Ankireddy","c":"United States"},{"n":"Hamdoon A. K. A. Gaffoor","c":"Ireland"},{"n":"Haneesh Reddy","c":"United States"},{"n":"Hanmanth Reddy Aleti","c":"United States"},{"n":"Hari Venkateswarlu Annam","c":"United States"},{"n":"Harinath Reddy","c":"United States"},{"n":"Harish selva Selvaraj","c":"United States"},{"n":"Haritha Nallam","c":"United States"},{"n":"Harivardhan Reddy Manda","c":"United States"},{"n":"Harsha nandini Manikonda","c":"United States"},{"n":"Harshapriya Golagani","c":"United States"},{"n":"Harshavardanreddy Putluri","c":"United States"},{"n":"HARSHITHA DEVI SUNKARA","c":"United States"},{"n":"HAVILA PENUMAKA","c":"United States"},{"n":"Hemanth Kumar Panditi","c":"United Kingdom"},{"n":"Hemanth Rayavarapu","c":"United Kingdom"},{"n":"Himaja Rao Adirala","c":"United States"},{"n":"Humera Khanam Pathan","c":"United States"},{"n":"Jagadeesh Naidu Mamidibathula","c":"United States"},{"n":"Jagadish Goddati","c":"United States"},{"n":"JAHNAVI BATTU","c":"United States"},{"n":"Jahnavi Bhavana","c":"United States"},{"n":"Jahnavi Kalisetty","c":"United States"},{"n":"Jammula Chaithanya","c":"United States"},{"n":"Janani priya Kasireddy","c":"United States"},{"n":"Jangam Vinod Kumar","c":"Ireland"},{"n":"Jayanth Kethineni","c":"United States"},{"n":"Jennifer Mary Nancy","c":"United States"},{"n":"Jyothi Lohith Kumar Mamidi","c":"United States"},{"n":"Jyothipriya Ramavath","c":"United States"},{"n":"Jyothish Reddy Jaggavarapu","c":"United States"},{"n":"Kambli Giri","c":"United States"},{"n":"Karri Dileep","c":"Canada"},{"n":"Karri Tejaswini","c":"United States"},{"n":"Karthik D","c":"India"},{"n":"Karthik Komirisetti","c":"United States"},{"n":"Karthikeya Tirupathi","c":"United States"},{"n":"Kasaraneni Keerthi Sai","c":"United States"},{"n":"Kaushik Budida","c":"United States"},{"n":"Kautik Saridey","c":"United States"},{"n":"Kavya Kandagattla","c":"United States"},{"n":"Kavyashree Chandrashekar","c":"United States"},{"n":"Keerthana sathish Kumar","c":"United States"},{"n":"Keerthi Muppalaneni","c":"United States"},{"n":"Keerthi Sajja","c":"United States"},{"n":"Keerthi venkata Prasanna Kotra","c":"United States"},{"n":"Keerththana Sripathmarasa","c":"United Kingdom"},{"n":"Khadar Basha Shaik","c":"United States"},{"n":"Khurshid Shaik","c":"United States"},{"n":"Kiran Biradar","c":"United Kingdom"},{"n":"Kiran Teja Devineni","c":"United States"},{"n":"Kishore Mavireddy","c":"United States"},{"n":"kosanam chetan sai","c":"United States"},{"n":"Krishna Kumar korada","c":"United States"},{"n":"Krishna Murthy Koravi","c":"United States"},{"n":"Krishna Reddy Sabbella","c":"United States"},{"n":"Krishna Vamshi Reddy","c":"United States"},{"n":"KUNDURU VENKATA NIKHIL","c":"United States"},{"n":"Kusal Sai Ayinala","c":"United States"},{"n":"Kushal Sai Venigalla","c":"United States"},{"n":"Kusuma Naga Lalitha Batraju","c":"United States"},{"n":"Lahari Beerla","c":"United States"},{"n":"Lakshmi Bhavani Chennamsetty","c":"United States"},{"n":"Lakshmi Narayana Utlapalli","c":"United States"},{"n":"Lakshmi Sai Anusha Adiraju","c":"United Kingdom"},{"n":"Lakshmi Sreya Tushara Bandaru","c":"United States"},{"n":"Lavan Kumar Terapalli","c":"Canada"},{"n":"LAVANYA AKIRI","c":"United States"},{"n":"Laxman Nayak kodavath","c":"United States"},{"n":"Laxmi Prasanna Ganji","c":"United States"},{"n":"Likitha Chowdary Kasaraneni","c":"United States"},{"n":"Likitha Reddy Gudibandi","c":"United States"},{"n":"Lohith Cheedalla","c":"United States"},{"n":"Lohith Kukkadapu","c":"United States"},{"n":"Lokesh pathipati","c":"United States"},{"n":"Lokesh Reddy Ratnala","c":"United States"},{"n":"Madhuri Veeramalla","c":"United States"},{"n":"Mahesh Tirumalasetti","c":"United States"},{"n":"Maheshkumar Madipeddi","c":"United States"},{"n":"Mahnoor Hassan","c":"United States"},{"n":"Mallikarjun Reddy Vuradi","c":"United States"},{"n":"Manasa Keerthi","c":"United States"},{"n":"Maneesha Chalasani","c":"United States"},{"n":"Maneesha Gayathri Sunkara","c":"Germany"},{"n":"Mani Teja Akinapalli","c":"United States"},{"n":"Manideep reddy Mukkala","c":"United States"},{"n":"Manideepa Balan","c":"United States"},{"n":"Manikanta Puttoj","c":"Ireland"},{"n":"Manikethan Reddy Peesari","c":"United States"},{"n":"Manisha Vemireddy","c":"United States"},{"n":"Manjur Kanekal","c":"United States"},{"n":"Manoj kumar Bodduluru","c":"United States"},{"n":"Manoj Kumar Gondala","c":"United Kingdom"},{"n":"Manokrishna Nenuganti","c":"United States"},{"n":"Mansi Solanki","c":"United Kingdom"},{"n":"Masthan Babu Padarthi","c":"United States"},{"n":"Mathew kodavalli","c":"United Kingdom"},{"n":"Meghana Botta","c":"United Kingdom"},{"n":"Meghana Chittepu","c":"United States"},{"n":"Meghana Sanaka","c":"United States"},{"n":"Merugu Rajeswari","c":"India"},{"n":"Mounika Kumari Moodavath","c":"United States"},{"n":"Mounika Sandepamu","c":"United Kingdom"},{"n":"Muhammed Shibil Kooran Puthiyapurayi","c":"United States"},{"n":"Muzammil Mohammed","c":"United States"},{"n":"Mydhili Palagani","c":"United Kingdom"},{"n":"Naga Bhargav kumar Pilla","c":"United Kingdom"},{"n":"Naga Raju Jetti","c":"United States"},{"n":"Naga Sai Kumar Potti","c":"United States"},{"n":"Naga sankar nakkina","c":"United States"},{"n":"Naga Tarun Kumar Kunapareddy","c":"United States"},{"n":"Nagamani Medepalli","c":"United States"},{"n":"Nagaraju Kante","c":"Ireland"},{"n":"Nagidi Uday Kiran","c":"United States"},{"n":"Nagoor Basha Shaik","c":"United Kingdom"},{"n":"Nalabolu Prasanna Kumar","c":"United States"},{"n":"Narendra Swamy","c":"United States"},{"n":"Narsimha Rao Vengisetti","c":"United States"},{"n":"Navanthi Guvvala","c":"United States"},{"n":"Naveed Raja Maligaveli","c":"United States"},{"n":"Naveen Kumar Ramishetty","c":"United Kingdom"},{"n":"Naveen Reddy Pinreddy","c":"United States"},{"n":"Navya Baddam","c":"United States"},{"n":"Navya Desham","c":"United States"},{"n":"Navya Sreerama","c":"United States"},{"n":"Navya sri Chittiprolu","c":"United Kingdom"},{"n":"Navya Sri Mulukuntla","c":"United States"},{"n":"Nikhil Darisa","c":"United States"},{"n":"Nikhil Kumar Chandra","c":"United States"},{"n":"Nikhil Yadav","c":"Ireland"},{"n":"Nikitha Gopu","c":"United States"},{"n":"Nimisha Kumar","c":"United Kingdom"},{"n":"NITHESH KUMAR YADDLAPALLI","c":"United States"},{"n":"Padmaraju Siva Prasanth Raju","c":"United States"},{"n":"Paladugu Harshitha","c":"United States"},{"n":"PAVAN KALYAN LAKKISETTY","c":"United States"},{"n":"Pavan Kalyan Reddy Pochugari","c":"United States"},{"n":"Pavan Kumar Nagaraju Nagarathna","c":"United States"},{"n":"Pavan Kumar Reddy Naramreddy","c":"United States"},{"n":"Pavan kumar Thyarala","c":"United States"},{"n":"Pinky Sachdev","c":"United States"},{"n":"Pippalla Srilakshmi Subrahmanyam","c":"United States"},{"n":"Potla Lakshmi prasanna","c":"United States"},{"n":"Prabhath Medarametla","c":"United States"},{"n":"Pradeep Kommalapati","c":"United States"},{"n":"Pradhan Das","c":"United States"},{"n":"Pragna Tammineni","c":"United States"},{"n":"Pranay Mohan Kanakabandi","c":"United States"},{"n":"Pranay Thanneru","c":"United States"},{"n":"Pranaya Gundaboina","c":"United States"},{"n":"Praneetha Sate","c":"United States"},{"n":"Prasath Natarajan","c":"United Kingdom"},{"n":"Prashanth Muddam","c":"United States"},{"n":"Prashanth Nimmani","c":"United States"},{"n":"Prashanth Reddy Mittakanti","c":"United States"},{"n":"Prashanth Reddy Voladri","c":"Ireland"},{"n":"Prathyusha Anantha","c":"United States"},{"n":"Prathyusha Gadi","c":"United States"},{"n":"Pravallika Obulapuram","c":"United States"},{"n":"Praveen Dondapati","c":"United States"},{"n":"Prem Kumar Golla","c":"United States"},{"n":"Prem Sai Jagadish Batchu","c":"United Kingdom"},{"n":"Prema Kumari Ravipalli","c":"United States"},{"n":"Prema Latha Kolukulapally","c":"United States"},{"n":"Privith Sadhu","c":"United States"},{"n":"Priyanka Mupparaju","c":"United States"},{"n":"Priyanka Nelluri","c":"United States"},{"n":"Priyanka Tella","c":"United States"},{"n":"Pulipati Sai Teja","c":"United States"},{"n":"Rachana Nemilla","c":"United States"},{"n":"Raghuvamshi Goud karnati","c":"United States"},{"n":"RAGHUVARDHAN KATIPELLY","c":"United States"},{"n":"Raheema Begum Shaik","c":"United States"},{"n":"Rahul Akula","c":"United States"},{"n":"Rajesh Chaitanya Meedemula","c":"United Kingdom"},{"n":"Rajesh Pagadala","c":"United States"},{"n":"Rajesh Yadav Golla","c":"United States"},{"n":"Rajeswari M","c":"India"},{"n":"Raji","c":"United States"},{"n":"RAKESH GANDRA","c":"United States"},{"n":"Ram Mohan Reddy Muthyala","c":"United States"},{"n":"Ramakrishna Y","c":"United States"},{"n":"Ramasita Kona","c":"United States"},{"n":"Rameetha Reddy Sarasani","c":"United States"},{"n":"Ramya Perumal","c":"United States"},{"n":"Rasul Shaik","c":"United States"},{"n":"RAVEENDRA MARNA","c":"United Kingdom"},{"n":"Ravi Teja Algubelli","c":"United States"},{"n":"Reshma Shaik","c":"United Kingdom"},{"n":"Revanth Reddy Dharmala","c":"United States"},{"n":"Rishika Yalamanchili","c":"United States"},{"n":"Ritheesha Rajannagari","c":"United States"},{"n":"Riyaz Ahemed shaik","c":"United States"},{"n":"Robin Luke Jangam","c":"United States"},{"n":"Rohini Sura","c":"United States"},{"n":"Rohit Garjakuntla","c":"United Kingdom"},{"n":"ROHIT GUNNAM","c":"United States"},{"n":"Rohit Shyam","c":"United States"},{"n":"ROHITH ESAMPALLY","c":"United States"},{"n":"Rohith Modem","c":"United States"},{"n":"Rohith Myana","c":"United States"},{"n":"Rojarani Cheruku","c":"Canada"},{"n":"Roopal Mishra","c":"United States"},{"n":"Ruchika Godugu","c":"United States"},{"n":"RUCHITHA MANDALAPU","c":"United States"},{"n":"Ruthik Reddy Damerla","c":"United States"},{"n":"S Sai Kiran","c":"United States"},{"n":"Saaiiram Mandadapu","c":"United States"},{"n":"Sadhu Sri Charan","c":"Ireland"},{"n":"Safiya Kamuluru","c":"United States"},{"n":"Sai Aditya Nekkalapudi","c":"United States"},{"n":"Sai Chandana Panthulu","c":"United States"},{"n":"Sai Karthik Reddy Papammagari","c":"United States"},{"n":"Sai Nikhil Velagapudi","c":"United States"},{"n":"Sai Prasanna Patlolla","c":"United States"},{"n":"SAI PRASHANTH ALAKUNTLA","c":"United States"},{"n":"Sai Preetham D","c":"United States"},{"n":"SAI RAGHAVA VOBBANABOINA","c":"United States"},{"n":"Sai Rohit Reddy Parne","c":"United States"},{"n":"Sai Rohith Chada","c":"United States"},{"n":"Sai Sahithi Gunnapaneni","c":"United States"},{"n":"Sai Sampath Nagalla","c":"United States"},{"n":"Sai sankar chakradhar Maddali","c":"United States"},{"n":"Sai Shivani Kushanapalli","c":"United States"},{"n":"Sai Shwetha Kancharlapalli","c":"United States"},{"n":"Sai sreekanth Korukonda","c":"United Kingdom"},{"n":"Sai Sushrith Yadav Vaggu","c":"Canada"},{"n":"Sai Swagath Chava","c":"United States"},{"n":"Sai vardhan Jella","c":"United States"},{"n":"Sai Veera Venkat Tadisetty","c":"United States"},{"n":"Saiesh Vemulapalli","c":"United States"},{"n":"Saikiran Galla","c":"Ireland"},{"n":"Sailaja Meenigala","c":"United States"},{"n":"Saimanoj Kumar Addala","c":"United States"},{"n":"Sairam Karnati","c":"United States"},{"n":"Sairamakrishna Yaswanth Komaravolu","c":"United States"},{"n":"Sairamya Kankanampati","c":"United States"},{"n":"Saisnehanjali Sanike","c":"United States"},{"n":"Saiteja Reddy Poreddy","c":"United States"},{"n":"Saitejdeepkumar Chowdary Bodapati","c":"United States"},{"n":"Sakshi Goud","c":"United Kingdom"},{"n":"SALMA REDDIPALLI","c":"United States"},{"n":"Samyuktha Noolu","c":"United States"},{"n":"Sananazneen Shaik","c":"United States"},{"n":"Sandeep Guguloth","c":"United States"},{"n":"Sandeep Kaur","c":"United States"},{"n":"Sanjay Nenavath","c":"United States"},{"n":"Sardhak Peddapalli","c":"United Kingdom"},{"n":"Sathvika Ontela","c":"United States"},{"n":"Satya Devi Vundavalli","c":"United States"},{"n":"Satya Krishna Vallabhu","c":"United States"},{"n":"Satya Pavan Vignesh Veera","c":"United States"},{"n":"Saurabh Singh","c":"United Kingdom"},{"n":"Sekhar Reddy Kandula","c":"United States"},{"n":"Shadab Ahmed","c":"Canada"},{"n":"Shaik Ikramulla Shareef","c":"United States"},{"n":"Shaik Mohammad Sartaj Ali","c":"Ireland"},{"n":"Shajiya Begum","c":"United Kingdom"},{"n":"Shanmukha Muppalla","c":"United States"},{"n":"Shareef Shaik","c":"United Kingdom"},{"n":"Sharon Rentala","c":"United Kingdom"},{"n":"Sharukh Ahamed Shaik","c":"United States"},{"n":"Shashank Reddy Pisati","c":"United States"},{"n":"Sheba Diana Modam Reddy","c":"United States"},{"n":"Sherry Kollmann","c":"United States"},{"n":"Shilpitha Reddy Peruvala","c":"United States"},{"n":"Shiva Prasad Reddy Nagireddy","c":"United States"},{"n":"Shiva Shankar Orsu","c":"Ireland"},{"n":"Shiva Venkata Sai Kumar Kommuri","c":"United States"},{"n":"Shivendra Gupta","c":"United States"},{"n":"Shree Ramji","c":"United Kingdom"},{"n":"SHRUTHI CHEVA","c":"United States"},{"n":"Shruthi Salla","c":"United States"},{"n":"Shweta Hari","c":"United States"},{"n":"Siddharth Yalamanchili","c":"United States"},{"n":"Sinduja Bhoopathi","c":"United States"},{"n":"Siva Sai Kiran Akula","c":"United States"},{"n":"SIVA SAI KRISHNA TANINKI","c":"United States"},{"n":"Sivakumar Kolluru","c":"United States"},{"n":"Snigdha Chanda","c":"United States"},{"n":"Somishetti Pooja","c":"United States"},{"n":"Souban Ahmed","c":"United States"},{"n":"Soujanya Degavath","c":"United States"},{"n":"Sowmya Palla","c":"United States"},{"n":"Sravan Kumar Dama","c":"United States"},{"n":"Sravan kumar Sunketa","c":"United States"},{"n":"Sravani Naragani","c":"United States"},{"n":"Sravani Thurlapati","c":"United States"},{"n":"Sravya Reddappa","c":"United States"},{"n":"Sree Nikitha Reddy Doddareddy","c":"United States"},{"n":"Sreeja Damera","c":"United States"},{"n":"Sreeja Thimmapuram","c":"UNITED STATES"},{"n":"Srestha Somala","c":"United States"},{"n":"Sri Harsha Pochincharla","c":"United States"},{"n":"Sri Mayur Dasari","c":"United States"},{"n":"Sri Sandeep Kommanaboyina","c":"United States"},{"n":"Srija Reddy Vellanki","c":"United States"},{"n":"Srija Sadula","c":"United States"},{"n":"Srikanth Banoth","c":"United States"},{"n":"srikanth kasthala","c":"United States"},{"n":"Srikar Reddy Maadhu","c":"United States"},{"n":"Srilakshmi Jammula","c":"United States"},{"n":"Srilekha Reddy Lekireddy","c":"United States"},{"n":"Srimani Kumar Gamidi","c":"United States"},{"n":"Srinivas Bharadwaj Muchimilli","c":"Canada"},{"n":"Srinivas Reddy Marri","c":"United States"},{"n":"Srinivasa Rao Ambati","c":"United States"},{"n":"SrinivasaReddy Mekapothu","c":"United States"},{"n":"SRINU PAMULURI","c":"United States"},{"n":"Sriram Maddineni","c":"Ireland"},{"n":"Sriramadasu Sai Teja","c":"United Kingdom"},{"n":"Srivalli Tummala","c":"United States"},{"n":"Subhash Nethra","c":"United States"},{"n":"Subramanyam Meka","c":"United States"},{"n":"SUBRAMANYAM NOOKALA","c":"United States"},{"n":"Sujith Koneru","c":"United States"},{"n":"Sumasree Bodela","c":"United States"},{"n":"Sumayya Fathima Shaik","c":"United States"},{"n":"Sunaina Ali Basha","c":"United States"},{"n":"SUNDEEP BATTINA","c":"United States"},{"n":"Sunil Kumar Pasupuleti","c":"Canada"},{"n":"Sunnyhitha Dubbaka","c":"United Kingdom"},{"n":"Suresh kadiyala","c":"United States"},{"n":"SURVI SAIKISHOR GOUD","c":"United States"},{"n":"Surya Kiran Adari","c":"United States"},{"n":"Surya Teja Gowd Ayinavilli","c":"Ireland"},{"n":"Sushma gonu","c":"United States"},{"n":"Sushma Rayala","c":"United States"},{"n":"Sushma Reddy V","c":"United States"},{"n":"Sushma Sri Kondamareddy","c":"United States"},{"n":"Sushmitha Basavaraju","c":"United Kingdom"},{"n":"Sushmitha Kamani","c":"United States"},{"n":"Sushmitha Yerramasetti","c":"United States"},{"n":"Susmitha Polisetti","c":"Ireland"},{"n":"Swapna Kusuluri","c":"United States"},{"n":"Swathi Batt","c":"United States"},{"n":"Swathi Datla","c":"United States"},{"n":"Swathi Konakanchi","c":"United States"},{"n":"SWECHA SEKHAR SIDDAMSHETTY","c":"United States"},{"n":"Sweta Sridhar","c":"United Kingdom"},{"n":"Swetha Bunga","c":"United States"},{"n":"Syed Umar Farook","c":"United States"},{"n":"Tagili Karthik Kumar","c":"United States"},{"n":"TANVI ANANTULA","c":"United States"},{"n":"TARUN DONDA","c":"United States"},{"n":"Teja ram","c":"Not Added"},{"n":"Teja Ravipati","c":"United States"},{"n":"Tejasri Guttikonda","c":"United States"},{"n":"Tejaswaroop Renukuntla","c":"United States"},{"n":"Tejaswi Dasari","c":"United States"},{"n":"test test","c":"India"},{"n":"teststudent","c":"India"},{"n":"Thanuja Moganti","c":"United States"},{"n":"Thirumalagiri Sowjanya Maddineni","c":"United States"},{"n":"Thiruvengadam Leelakrishnan","c":"United Kingdom"},{"n":"Thrayamba keswar bettala","c":"United Kingdom"},{"n":"Toluganti Satya Praneeth Reddy","c":"United States"},{"n":"Triveni Nagabirava","c":"United States"},{"n":"Uday Guntupalli","c":"United States"},{"n":"Uday Kiran Ganta","c":"United States"},{"n":"Upendra Kumar Malladi","c":"United States"},{"n":"Uppalapati Sri Lakshmi","c":"United States"},{"n":"Usha Sree Sharanya Boinapally","c":"United States"},{"n":"Vaishnavi Kokkirala","c":"United States"},{"n":"Vamshi Arutla","c":"United States"},{"n":"Vamshi Burugupally","c":"United States"},{"n":"Vamshi Krishna Reddy Attla","c":"United States"},{"n":"Vamshi Merugu","c":"United States"},{"n":"Vanka Lasya Priyanka","c":"United States"},{"n":"VARAHALA BHARATH","c":"United States"},{"n":"Varmini Akella","c":"United States"},{"n":"Varsha Reddy Veerati","c":"United States"},{"n":"Varshini Reddy Borra","c":"United States"},{"n":"Varshitha Gosi","c":"United States"},{"n":"Varun Noone","c":"United States"},{"n":"Varun Venaganti","c":"United States"},{"n":"Vasavi Ramya","c":"United States"},{"n":"Vasreya Nimmaluri","c":"United States"},{"n":"Veditha Reddy Avuthu","c":"United States"},{"n":"Venkat Beera","c":"United States"},{"n":"Venkata Avinash Matcha","c":"United States"},{"n":"Venkata Naga Surya Lalitamanogjna Parsa","c":"United States"},{"n":"Venkata Praveen Putta","c":"United States"},{"n":"Venkata Sai Shashi Kumar Yella","c":"United States"},{"n":"Venkata Sai Swetha Gatamaneni","c":"Germany"},{"n":"Venkata Saketh Reddy Vennapusa","c":"United Kingdom"},{"n":"Venkata Surya Yakkala","c":"Ireland"},{"n":"Venkata Tarun Dodda","c":"United States"},{"n":"Venkata Uday Chand NUTHI","c":"United States"},{"n":"Venkatesh Gompa","c":"United States"},{"n":"VENKATESH NIDUMUKKALA","c":"United States"},{"n":"Venkateswara Rao Narra","c":"United States"},{"n":"Venugopal Mylapilli","c":"United States"},{"n":"Vijayalakshmi Pandian","c":"United States"},{"n":"Vijetha Nonwar","c":"United Kingdom"},{"n":"Vinay Kumar Bollepalli","c":"United States"},{"n":"Vinay Kumar Nandigama","c":"United States"},{"n":"Vineeth Sai Movva","c":"United States"},{"n":"Viswanadhuni sairam","c":"Ireland"},{"n":"Vivek Maddukuri","c":"United States"},{"n":"Vivek Paranthaman","c":"United States"},{"n":"Vybhavi Acharya Bailore","c":"United States"},{"n":"Vyshakh Prasad","c":"United States"},{"n":"Yannam Jeshwanth Reddy","c":"United States"},{"n":"Yasaswi Vankayalapati","c":"United States"},{"n":"Yaseswini Pamulapati","c":"United States"},{"n":"Yashaswi Kashozhala","c":"United Kingdom"},{"n":"Yashaswini Ganjikunta","c":"United States"},{"n":"Yashwanth Reddy Kareddy","c":"United States"},{"n":"Yaswanth Sai Teja Gorantla","c":"United States"},{"n":"Yedulla Sandeep","c":"United States"},{"n":"Yeswanthi Chowdavaram","c":"United States"},{"n":"YOCHITH KOMATINENI","c":"United States"}];
+
 const DEFAULT_ROSTER = [
   {id:uid(), name:"Karthikeya", team:"HYD Team", advanced:true},
   {id:uid(), name:"Stephen", team:"HYD Team", advanced:true},
@@ -444,7 +452,16 @@ let state = {
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
-  exportedIds: []
+  exportedIds: [],
+  showStudentsMaster: false,
+  studentsMaster: [],
+  studentsMasterLoaded: false,
+  studentsMasterLoading: false,
+  studentsMasterBackendMissing: false,
+  studentsSearch: '',
+  studentsAddError: '',
+  showAddStudentForm: false,
+  importDefaultRound: '1st'
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -698,6 +715,77 @@ async function saveRoster(){
     return;
   }
   await storageAdapter.set('roster', JSON.stringify(state.roster), false);
+}
+
+// ---------- Students Master (the full active-student roster, separate
+// from state.roster which is just coordinators/team members) ----------
+// Seeded once from an uploaded spreadsheet, then lives independently —
+// used to recognize/validate candidate names during a WhatsApp import and
+// to surface a student's domain, assigned counselor, visa, etc. at a
+// glance. Follows the same "try backend, fall back to local" shape as
+// loadRoster, but ALSO tolerates the backend simply not having this
+// endpoint yet (a brand-new feature, not yet in api/data.js) — that case
+// is flagged via studentsMasterBackendMissing so the panel can say so
+// plainly instead of silently pretending everything's synced.
+async function loadStudentsMaster(){
+  function seedFromSpreadsheet(){
+    return DEFAULT_STUDENTS_SEED.map(s => ({ id: uid(), name: s.n, country: s.c }));
+  }
+  if(API_BASE_URL){
+    try{
+      const data = await apiCall('students', {});
+      if(data.rows && data.rows.length){
+        state.studentsMaster = data.rows;
+      } else {
+        // Backend reachable and the endpoint exists, but no rows saved
+        // yet — seed it once from the spreadsheet and persist that.
+        state.studentsMaster = seedFromSpreadsheet();
+        await saveStudentsMaster();
+      }
+      state.studentsMasterLoaded = true;
+      state.studentsMasterBackendMissing = false;
+      return;
+    }catch(e){
+      // Most likely: this backend doesn't have a 'students' resource yet.
+      state.studentsMasterBackendMissing = true;
+    }
+  }
+  try{
+    const r = await storageAdapter.get('students-master', false);
+    const parsed = r && r.value ? JSON.parse(r.value) : null;
+    state.studentsMaster = (parsed && parsed.length) ? parsed : seedFromSpreadsheet();
+  }catch(e){
+    state.studentsMaster = seedFromSpreadsheet();
+  }
+  try{ await storageAdapter.set('students-master', JSON.stringify(state.studentsMaster), false); }catch(e){}
+  state.studentsMasterLoaded = true;
+}
+async function saveStudentsMaster(){
+  if(API_BASE_URL){
+    try{
+      await apiCall('students', {method:'POST', body:{rows: state.studentsMaster}});
+      state.studentsMasterBackendMissing = false;
+    }catch(e){
+      state.studentsMasterBackendMissing = true;
+      // Fall through to local storage too, so at least this browser keeps
+      // the edit until the backend endpoint exists.
+      try{ await storageAdapter.set('students-master', JSON.stringify(state.studentsMaster), false); }catch(e2){}
+    }
+    return;
+  }
+  try{ await storageAdapter.set('students-master', JSON.stringify(state.studentsMaster), false); }catch(e){}
+}
+// Strips everything but letters before comparing — same idea as
+// normalizeCompanyKey — so a name typed slightly differently in a
+// WhatsApp paste ("Keerththana" vs "Keerthana", extra spacing, etc.)
+// still matches the spreadsheet entry.
+function normalizeNameKey(name){
+  return (name||'').toLowerCase().replace(/[^a-z]/g,'');
+}
+function findStudentMasterMatch(candidateName){
+  const key = normalizeNameKey(candidateName);
+  if(!key || !state.studentsMaster) return null;
+  return state.studentsMaster.find(s => normalizeNameKey(s.name) === key) || null;
 }
 function todayDateString(){
   const d = new Date();
@@ -1158,7 +1246,7 @@ function normalizeAssigneeText(raw){
   t = t.replace(/^strictly\s+/i,'').trim();
   return t;
 }
-function parseDetailedLine(line){
+function parseDetailedLine(line, defaultRound){
   let clean = line.replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
 
   // split off the assignment chain at the first arrow
@@ -1194,6 +1282,7 @@ function parseDetailedLine(line){
   // missed (different punctuation, extra spaces, etc.) so no "1. " ever
   // survives into the candidate name shown in the table.
   name = name.replace(/^\s*\d{1,3}\s*[\.\):\-]?\s+/, '').trim();
+  name = name.replace(/[-–—]+\s*$/, '').trim();
   let timeIdx = segs.findIndex(s=>timeRegex.test(s));
 
   // Company extraction: scan forward past the name, skipping any segment that's
@@ -1245,9 +1334,19 @@ function parseDetailedLine(line){
   // rounds like this silently defaulted to "1st" instead of being detected.
   const roundSegMatch = segs.find(s=>/^(final|\d+\w{0,4})\s*rounds?$/i.test(s.trim()));
   const roundFound = roundParen || roundSegMatch;
-  let round = roundFound || '1st';
+  let round = roundFound || (defaultRound || '1st');
 
   const country = countryFromParens(parens);
+
+  // Real messages often carry a THIRD kind of parenthetical besides country
+  // and round — the student's target role for this interview, e.g.
+  // "(Marketing Operations Specialist)". Whatever's left over after country/
+  // round/duration are matched is that role — captured here since it was
+  // previously just discarded.
+  const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test((x||'').trim()));
+  const durParenForRole = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
+  const roleParen = parens.find(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && p.trim().length>0);
+  const role = (roleParen||'').trim();
 
   // duration: explicit "Duration: X" first, else a paren that's purely a duration token
   let duration = '';
@@ -1271,18 +1370,30 @@ function parseDetailedLine(line){
   if(!roundFound && !woi) doubts.push('Round wasn\u2019t stated in the source — defaulted to 1st, please verify.');
   if(!duration.trim() && !woi) doubts.push('Duration wasn\u2019t stated in the source — conflict detection can\u2019t check overlaps for this call without it.');
 
-  // assignee: first token right after the first arrow
-  let assignee = '';
+  // assignee: first token right after the first arrow. Anything after that
+  // — whether combined with a hyphen ("gopi-Mary Joan Mostrey...") or a
+  // second arrow ("Kumar -> Hiring manager") — is the interviewer, which
+  // was previously just discarded even though it's stated in most records.
+  let assignee = '', interviewer = '';
   if(afterArrowRaw){
     const rest = afterArrowRaw.replace(/^\s*(->|→)\s*/, '');
-    const firstPiece = rest.split(/->|→|,|[-–—]/)[0];
-    const assigneeText = firstPiece ? firstPiece.trim() : '';
-    if(assigneeText) assignee = matchOrCreateRosterName(assigneeText);
+    const arrowPieces = rest.split(/->|→/).map(s=>s.trim()).filter(Boolean);
+    if(arrowPieces.length){
+      // The FIRST piece can itself combine assignee and interviewer via a
+      // plain hyphen or comma ("gopi- LaStarr Davis AVP of Operations").
+      // Split there on a hyphen immediately followed by a capital letter —
+      // a real first name is never followed by that pattern.
+      const firstPieceParts = arrowPieces[0].split(/,|[-–—](?=\s*[A-Z])/).map(s=>s.trim()).filter(Boolean);
+      const assigneeText = firstPieceParts[0] || '';
+      if(assigneeText) assignee = matchOrCreateRosterName(assigneeText);
+      const interviewerParts = firstPieceParts.slice(1).concat(arrowPieces.slice(1));
+      interviewer = interviewerParts.join(' — ').trim();
+    }
   }
 
-  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line };
+  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer };
 }
-function parseImportText(text, baseDate){
+function parseImportText(text, baseDate, defaultRound){
   const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')).filter(Boolean);
   const out = [];
   let currentDefault = null;
@@ -1326,12 +1437,12 @@ function parseImportText(text, baseDate){
       } else if(currentDefault){
         assignee = currentDefault.value;
       }
-      out.push({id:uid(), time:timeRaw, company:'', candidate:name, round:'1st', duration:'', woi:false, assignee, country, doubts:['Round and company weren\u2019t specified in this format — round defaulted to 1st, please verify.'], raw:line, _targetDate: currentTargetDate});
+      out.push({id:uid(), time:timeRaw, company:'', candidate:name, round: defaultRound || '1st', duration:'', woi:false, assignee, country, doubts:['Round and company weren\u2019t specified in this format — round defaulted to '+(defaultRound==='2nd'?'2nd':'1st')+', please verify.'], raw:line, _targetDate: currentTargetDate});
       continue;
     }
 
     if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /waiting\s+for\s+invit\w*|\bwoi\b/i.test(line)){
-      const detailed = parseDetailedLine(line);
+      const detailed = parseDetailedLine(line, defaultRound);
       detailed._targetDate = currentTargetDate;
       out.push(detailed);
       continue;
@@ -1347,7 +1458,7 @@ function parseImportText(text, baseDate){
     // details the parser couldn't figure out on its own.
     out.push({
       id: uid(), time:'', company:'', candidate: line.length > 80 ? line.slice(0,80)+'…' : line,
-      round:'1st', duration:'', woi:false,
+      round: defaultRound || '1st', duration:'', woi:false,
       assignee: currentDefault ? currentDefault.value : '',
       country:'USA',
       doubts:['Could not automatically parse this line — please fill in candidate/time/company/round manually. Original text: "'+line+'"'],
@@ -2188,6 +2299,7 @@ function closeAllPanels(){
   state.showImport = false;
   state.showRescheduleImport = false;
   state.rescheduleReview = null;
+  state.showStudentsMaster = false;
   state.showMoreMenu = false;
   stopPortalSyncPolling();
 }
@@ -2204,6 +2316,7 @@ function getActivePanelName(){
   if(state.showImport) return 'import';
   if(state.showRescheduleImport) return 'rescheduleImport';
   if(state.rescheduleReview) return 'rescheduleReview';
+  if(state.showStudentsMaster) return 'studentsMaster';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -2227,6 +2340,7 @@ function renderActivePanel(name){
   if(name === 'import') return renderImportPanel();
   if(name === 'rescheduleImport') return renderRescheduleImportPanel();
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
+  if(name === 'studentsMaster') return renderStudentsMasterPanel();
   return '';
 }
 function panelTitle(name){
@@ -2234,7 +2348,7 @@ function panelTitle(name){
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
-    rescheduleReview:'Confirm Reschedule/Cancel'
+    rescheduleReview:'Confirm Reschedule/Cancel', studentsMaster:'Students Master'
   };
   return titles[name] || '';
 }
@@ -2315,6 +2429,7 @@ function render(){
             <button class="more-menu-item" id="loadScrumPrep">📋 Load from Scrum Prep</button>
             <button class="more-menu-item" id="toggleSummary">📊 Summary</button>
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
+            <button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
           </div>` : ''}
@@ -2427,6 +2542,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     <div class="toolbar">
       ${isReadOnly ? `<span class="read-only-badge">👁 Read-only — ask an admin for edit access</span>` : `
       <button class="btn primary" id="toggleImport">＋ Import from WhatsApp text</button>
+      ${state.view==='2nd' ? `<button class="btn primary" id="toggleImport2nd" title="Same import textarea, but any call without an explicit round defaults to 2nd Round instead of 1st">＋ Import 2nd Round Calls</button>` : ''}
       <button class="btn" id="toggleRescheduleImport">↻ Import Reschedule/Cancel</button>
       <button class="btn" id="addRow">＋ Add call</button>
       <button class="btn" id="toggleRoster">Team (${state.roster.length})</button>
@@ -3143,6 +3259,7 @@ function renderImportPanel(){
       <label style="font-size:12.5px;color:var(--text-muted);white-space:nowrap">Import into date:</label>
       <input type="date" id="importDate" value="${state.date}">
     </div>
+    ${state.importDefaultRound==='2nd' ? `<div class="hint" style="color:var(--teal);margin-bottom:8px">↻ Calls without an explicit round will default to <b>2nd Round</b> (opened from the 2nd Round tab).</div>` : ''}
     <textarea id="importText" placeholder="Paste either format:&#10;1. Royal Prabhu (UK) – Interview – Lloyds Group – 1:30 PM IST – Duration: 30 Mins (1st Round)&#10;&#10;or a team-grouped list:&#10;*HYD Team*&#10;Sweta Sridhar - 2&#10;Meghana B - 3.30 (*STEPHEN*)"></textarea>
     <div class="row">
       <div class="hint">Supports team-header lists (*Team*, @Name) and numbered lists with → assignee arrows. Times without AM/PM assumed 1–11 = PM, 12 = AM — check after import.</div>
@@ -3165,6 +3282,62 @@ function teamCaption(team){
     "Needs Team Assignment": "Auto-added from a pasted list — move into the right team below"
   };
   return captions[team] || '';
+}
+
+function renderStudentsMasterPanel(){
+  if(state.studentsMasterLoading){
+    return `<div class="import-panel"><div class="hint"><span class="spinner"></span> Loading Students Master…</div></div>`;
+  }
+  const q = (state.studentsSearch||'').trim().toLowerCase();
+  let rows = state.studentsMaster || [];
+  if(q){
+    rows = rows.filter(s =>
+      (s.name||'').toLowerCase().includes(q) ||
+      (s.country||'').toLowerCase().includes(q)
+    );
+  }
+  rows = rows.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const rowsHtml = rows.map(s=>`
+    <tr data-student-id="${s.id}">
+      <td style="min-width:220px"><input class="cell-input student-field" data-field="name" data-id="${s.id}" value="${escapeHtml(s.name||'')}"></td>
+      <td style="min-width:160px"><input class="cell-input student-field" data-field="country" data-id="${s.id}" value="${escapeHtml(s.country||'')}" placeholder="Country"></td>
+      <td style="width:36px;text-align:right"><button class="row-del student-del" data-id="${s.id}" title="Remove from Students Master">✕</button></td>
+    </tr>
+  `).join('');
+
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">
+      Every active student's name and country, in one place. Candidate names in the daily WhatsApp import are automatically checked against this list — a name not found here gets a small "N" badge so it's easy to spot and add.
+      ${state.studentsMasterBackendMissing ? `<br><b style="color:var(--amber)">⚠ Your backend doesn't have a 'students' resource yet — edits here are saved to this browser only until that's added. Ask Claude for the api/data.js snippet and MySQL table for it.</b>` : ''}
+    </div>
+    <div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div class="hint">${(state.studentsMaster||[]).length} students total</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label class="btn ghost" style="cursor:pointer;margin:0">
+          ⬆ Import from Excel
+          <input type="file" id="studentsExcelInput" accept=".xlsx,.xls" style="display:none">
+        </label>
+        <button class="btn primary" id="toggleAddStudentForm">➕ Add Student</button>
+      </div>
+    </div>
+    ${state.showAddStudentForm ? `
+    <div class="add-row" style="margin-bottom:6px;flex-wrap:wrap">
+      <input type="text" id="newStudentName" placeholder="Full name…" style="flex:1.4;min-width:160px">
+      <input type="text" id="newStudentCountry" placeholder="Country…" style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-size:13px">
+      <button class="btn primary" id="addStudentBtn">Add</button>
+    </div>
+    ${state.studentsAddError ? `<div style="color:var(--coral);font-size:12px;margin-bottom:10px">${escapeHtml(state.studentsAddError)}</div>` : ''}
+    ` : ''}
+    <input type="text" id="studentsSearchBox" placeholder="Search name or country…" value="${escapeHtml(state.studentsSearch||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;margin:10px 0 12px">
+    <div class="table-scroll" style="max-height:480px;overflow-y:auto">
+      <table style="min-width:420px">
+        <thead><tr>
+          <th>Name</th><th>Country</th><th></th>
+        </tr></thead>
+        <tbody>${rowsHtml || '<tr><td colspan="3" style="text-align:center;color:var(--text-faint);padding:20px">No matches.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 function renderRosterPanel(){
@@ -3378,7 +3551,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -3555,7 +3728,9 @@ function attachHandlers(conflictIds){
   const backToCallsBtn = document.getElementById('backToCalls');
   if(backToCallsBtn) backToCallsBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const toggleImportBtn = document.getElementById('toggleImport');
-  if(toggleImportBtn) toggleImportBtn.onclick = ()=>{ openOnlyPanel('showImport'); render(); };
+  if(toggleImportBtn) toggleImportBtn.onclick = ()=>{ state.importDefaultRound = '1st'; openOnlyPanel('showImport'); render(); };
+  const toggleImport2ndBtn = document.getElementById('toggleImport2nd');
+  if(toggleImport2ndBtn) toggleImport2ndBtn.onclick = ()=>{ state.importDefaultRound = '2nd'; openOnlyPanel('showImport'); render(); };
   const toggleRescheduleImportBtn = document.getElementById('toggleRescheduleImport');
   if(toggleRescheduleImportBtn) toggleRescheduleImportBtn.onclick = ()=>{ openOnlyPanel('showRescheduleImport'); render(); };
   const toggleRosterBtn = document.getElementById('toggleRoster');
@@ -3830,6 +4005,118 @@ function attachHandlers(conflictIds){
     state.allDatesLoading = false;
     render();
   };
+  const toggleStudentsMasterBtn = document.getElementById('toggleStudentsMaster');
+  if(toggleStudentsMasterBtn) toggleStudentsMasterBtn.onclick = async ()=>{
+    openOnlyPanel('showStudentsMaster');
+    if(state.showStudentsMaster && !state.studentsMasterLoaded){
+      state.studentsMasterLoading = true;
+      render();
+      await loadStudentsMaster();
+      state.studentsMasterLoading = false;
+    }
+    render();
+  };
+  document.querySelectorAll('.quick-add-student').forEach(badge=>{
+    badge.onclick = async ()=>{
+      const candidateName = badge.dataset.candidate;
+      closeAllPanels();
+      state.showStudentsMaster = true;
+      state.showAddStudentForm = true;
+      state.studentsAddError = '';
+      if(!state.studentsMasterLoaded){
+        state.studentsMasterLoading = true;
+        render();
+        await loadStudentsMaster();
+        state.studentsMasterLoading = false;
+      }
+      render();
+      const nameInput = document.getElementById('newStudentName');
+      if(nameInput){ nameInput.value = candidateName; nameInput.focus(); }
+    };
+  });
+  const toggleAddStudentFormBtn = document.getElementById('toggleAddStudentForm');
+  if(toggleAddStudentFormBtn) toggleAddStudentFormBtn.onclick = ()=>{
+    state.showAddStudentForm = !state.showAddStudentForm;
+    state.studentsAddError = '';
+    render();
+  };
+  const addStudentBtn = document.getElementById('addStudentBtn');
+  if(addStudentBtn) addStudentBtn.onclick = async ()=>{
+    const nameInput = document.getElementById('newStudentName');
+    const countryInput = document.getElementById('newStudentCountry');
+    const name = nameInput ? nameInput.value.trim() : '';
+    if(!name){ state.studentsAddError = 'Type a name first.'; render(); return; }
+    if(findStudentMasterMatch(name)){
+      state.studentsAddError = `"${name}" already exists in Students Master — no duplicate added.`;
+      render();
+      return;
+    }
+    state.studentsMaster.push({
+      id: uid(), name,
+      country: countryInput ? countryInput.value.trim() : ''
+    });
+    state.studentsAddError = '';
+    state.showAddStudentForm = false;
+    render();
+    await saveStudentsMaster();
+  };
+  const studentsSearchBox = document.getElementById('studentsSearchBox');
+  if(studentsSearchBox){
+    let studentsSearchTimer = null;
+    studentsSearchBox.addEventListener('input', ()=>{
+      state.studentsSearch = studentsSearchBox.value;
+      clearTimeout(studentsSearchTimer);
+      // Debounced — re-rendering a 500+ row table on every keystroke is
+      // noticeably slower than waiting for a short pause in typing.
+      studentsSearchTimer = setTimeout(render, 200);
+    });
+  }
+  document.querySelectorAll('.student-field').forEach(input=>{
+    let studentFieldSaveTimer = null;
+    input.addEventListener('input', ()=>{
+      const student = state.studentsMaster.find(s=>s.id===input.dataset.id);
+      if(!student) return;
+      student[input.dataset.field] = input.value;
+      clearTimeout(studentFieldSaveTimer);
+      studentFieldSaveTimer = setTimeout(saveStudentsMaster, 600);
+    });
+  });
+  document.querySelectorAll('.student-del').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const student = state.studentsMaster.find(s=>s.id===btn.dataset.id);
+      if(!student) return;
+      if(!confirm(`Remove "${student.name}" from Students Master? This can't be undone from here.`)) return;
+      state.studentsMaster = state.studentsMaster.filter(s=>s.id!==btn.dataset.id);
+      render();
+      await saveStudentsMaster();
+    };
+  });
+  const studentsExcelInput = document.getElementById('studentsExcelInput');
+  if(studentsExcelInput) studentsExcelInput.addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      const sheetName = wb.SheetNames[0];
+      const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {defval:''});
+      let added = 0, updated = 0, skipped = 0;
+      json.forEach(row=>{
+        const name = (row['Candidate Name'] || row['Name'] || '').toString().trim();
+        if(!name){ skipped++; return; }
+        const country = (row['Location'] || row['Country'] || '').toString().trim();
+        const existing = findStudentMasterMatch(name);
+        if(existing){ existing.name = name; existing.country = country; updated++; }
+        else { state.studentsMaster.push({ id: uid(), name, country }); added++; }
+      });
+      render();
+      await saveStudentsMaster();
+      alert(`Students Master updated from "${file.name}": ${added} new, ${updated} updated${skipped?`, ${skipped} row(s) skipped (no name)`:''}.`);
+    }catch(err){
+      alert('Could not read that Excel file: ' + (err && err.message ? err.message : err));
+    }
+    studentsExcelInput.value = '';
+  });
   const exportCsvBtn = document.getElementById('exportCsvBtn');
   if(exportCsvBtn) exportCsvBtn.onclick = ()=>{
     if(!state.allDatesData) return;
@@ -4005,7 +4292,7 @@ function attachHandlers(conflictIds){
     // split those out now, before routing/assigning, so each date's calls
     // only ever compete for capacity against that SAME date's own existing
     // rows, not today's.
-    const parsedAll = parseImportText(text, state.date);
+    const parsedAll = parseImportText(text, state.date, state.importDefaultRound);
     const totalDataLines = parsedAll._dataLineCount != null ? parsedAll._dataLineCount : parsedAll.length;
     const currentDateRaw = parsedAll.filter(r => !r._targetDate || r._targetDate === state.date);
     const otherDateRowsByDate = {};
@@ -5148,6 +5435,7 @@ async function startApp(){
     state.clientHistory = results;
     render();
   }).catch(()=>{});
+  loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
 }
 // Looks up the most recent PRIOR occurrence of this candidate (any date/round
 // other than this exact row) from the repeat-candidate scan results, for the
