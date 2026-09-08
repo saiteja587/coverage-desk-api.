@@ -279,6 +279,8 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .status-note-icon{margin-right:5px;}
 
 .note-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 6px;flex-shrink:0;}
+.clear-status-btn{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:11px;padding:0 4px;margin-right:4px;vertical-align:middle;}
+.clear-status-btn:hover{color:var(--coral);}
 .note-del:hover{color:var(--coral);}
 
 /* NOTIFICATIONS */
@@ -461,7 +463,10 @@ let state = {
   studentsSearch: '',
   studentsAddError: '',
   showAddStudentForm: false,
-  importDefaultRound: '1st'
+  importDefaultRound: '1st',
+  lastImportedIds: null,
+  lastImportedCount: 0,
+  lastImportMergedCount: 0
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -785,7 +790,27 @@ function normalizeNameKey(name){
 function findStudentMasterMatch(candidateName){
   const key = normalizeNameKey(candidateName);
   if(!key || !state.studentsMaster) return null;
-  return state.studentsMaster.find(s => normalizeNameKey(s.name) === key) || null;
+  const exact = state.studentsMaster.find(s => normalizeNameKey(s.name) === key);
+  if(exact) return exact;
+  // WhatsApp messages very often abbreviate to "First L." (e.g. "Sushmitha
+  // B" for "Sushmitha Basavaraju"). Only resolve this when it's completely
+  // unambiguous — if more than one master-list student shares that exact
+  // first name AND last-name initial, this returns null rather than guess,
+  // same principle as the Karthik/Karthikeya incident: under-matching is
+  // safe, silently conflating two different real people is not.
+  const parts = (candidateName||'').trim().split(/\s+/);
+  if(parts.length === 2 && /^[A-Za-z]\.?$/.test(parts[1])){
+    const firstNameKey = normalizeNameKey(parts[0]);
+    const initial = parts[1][0].toLowerCase();
+    const candidates = state.studentsMaster.filter(s=>{
+      const sParts = (s.name||'').trim().split(/\s+/);
+      if(sParts.length < 2) return false;
+      return normalizeNameKey(sParts[0]) === firstNameKey &&
+             sParts[sParts.length-1][0].toLowerCase() === initial;
+    });
+    if(candidates.length === 1) return candidates[0];
+  }
+  return null;
 }
 function todayDateString(){
   const d = new Date();
@@ -1733,6 +1758,70 @@ function matchRescheduleToRow(parsed, rows){
   return pool[0];
 }
 
+// Detects when a freshly-parsed import line is actually describing a call
+// that's ALREADY in today's list — the common case being: the plain call
+// list went in earlier via a normal import, and this later paste (e.g. the
+// "2nd Round Import" button) is just supplying details — role, interviewer,
+// the real round — that weren't in the original message. Matching on
+// candidate + time (company as a tiebreaker) means that call gets enriched
+// in place instead of showing up twice.
+function findExistingCallMatch(parsedRow, existingRows){
+  const key = (parsedRow.candidate||'').trim().toLowerCase();
+  if(!key) return null;
+  const candidates = existingRows.filter(r => (r.candidate||'').trim().toLowerCase() === key);
+  if(!candidates.length) return null;
+  const normTime = (t)=> (t||'').replace(/\s+/g,'').toUpperCase();
+  const timeMatches = candidates.filter(r => normTime(r.time) === normTime(parsedRow.time));
+  if(timeMatches.length === 1) return timeMatches[0];
+  if(timeMatches.length > 1){
+    if(parsedRow.company){
+      const companyMatch = timeMatches.find(r => normalizeCompanyKey(r.company) === normalizeCompanyKey(parsedRow.company));
+      if(companyMatch) return companyMatch;
+    }
+    return timeMatches[0];
+  }
+  // No exact time match, but if there's exactly one same-name candidate
+  // today AND the client also matches, it's still almost certainly the
+  // same call with a slightly reworded time — safe enough to merge.
+  if(candidates.length === 1 && parsedRow.company && candidates[0].company &&
+     normalizeCompanyKey(candidates[0].company) === normalizeCompanyKey(parsedRow.company)){
+    return candidates[0];
+  }
+  return null;
+}
+
+// Finds groups of calls that are almost certainly the same call entered
+// more than once — same candidate, same time, same round — regardless of
+// how they got that way (two separate imports, a paste run twice, etc).
+// This is a broader safety net than the "undo last import" banner, which
+// only knows about the single most recent import.
+function findDuplicateCallGroups(rows){
+  const byKey = {};
+  rows.forEach(r=>{
+    if(!r.candidate) return;
+    const key = r.candidate.trim().toLowerCase() + '|' +
+      (r.time||'').replace(/\s+/g,'').toUpperCase() + '|' +
+      (r.round||'').trim().toLowerCase();
+    byKey[key] = byKey[key] || [];
+    byKey[key].push(r);
+  });
+  return Object.values(byKey).filter(g=>g.length>1);
+}
+// When collapsing a duplicate group down to one row, keep whichever copy
+// has the most information filled in (interviewer/role/company/etc) rather
+// than just an arbitrary one — so a de-dupe never throws away detail that
+// only one of the copies happened to have.
+function callCompletenessScore(r){
+  let score = 0;
+  if(r.interviewer) score++;
+  if(r.role) score++;
+  if(r.company) score++;
+  if(r.assignee) score++;
+  if(r.duration) score++;
+  if(r.status) score++;
+  return score;
+}
+
 function findFreePeopleAtTime(time, needsAdvanced){
   const busyNames = new Set(
     state.rows.filter(r => r.time === time && r.assignee && !r.woi).map(r => r.assignee)
@@ -2438,6 +2527,13 @@ function render(){
       </div>
     </div>
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
+    ${state.lastImportedIds && state.lastImportedIds.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>✅ Last import added ${state.lastImportedIds.length} new call(s)${state.lastImportMergedCount?` and updated ${state.lastImportMergedCount} existing call(s) with role/interviewer/round info`:''}.</span>
+      <span style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn ghost" id="undoLastImportBtn" style="color:var(--coral);border-color:var(--coral)">↩ Undo import (remove ${state.lastImportedIds.length})</button>
+        <button class="btn ghost" id="dismissLastImportBtn">Dismiss</button>
+      </span>
+    </div>` : ''}
     ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);margin:-10px 0 16px">Portal sync error: ${escapeHtml(state.portalSyncError)}</div>` : ''}
     ${state.portalSyncedAt ? `<div class="hint" style="margin:-10px 0 16px">Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
     <div id="scrumPrepToast" style="display:none;background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-size:12.5px;padding:10px 14px;border-radius:8px;margin:-14px 0 16px;"></div>
@@ -2552,6 +2648,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="btn" id="togglePortalSync">📡 Team Sync</button>
       <button class="btn" id="toggleIncentives">💰 Incentives</button>
       <button class="btn" id="toggleBackups">🕐 Backups</button>
+      <button class="btn ghost" id="removeDuplicatesBtn" style="color:var(--amber)" title="Find and remove duplicate calls — same candidate, time, and round">🧹 Remove Duplicates</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${buildCombinedAssigneeFilterOptions()}
@@ -3148,7 +3245,8 @@ function renderBackupsPanel(){
   const reasonLabels = {
     'pre-import': '📥 Before an import',
     'pre-clear-all': '🗑️ Before Clear All',
-    'pre-finalize': '✅ Before Finalize'
+    'pre-finalize': '✅ Before Finalize',
+    'pre-dedupe': '🧹 Before removing duplicates'
   };
   const body = state.backupsLoading
     ? `<div class="hint"><span class="spinner"></span>Loading backups…</div>`
@@ -3551,7 +3649,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -3675,6 +3773,7 @@ function attachHandlers(conflictIds){
     }
     state.date = e.target.value;
     state.dirty = false;
+    state.lastImportedIds = null;
     state.showImport = false; state.showRoster = false;
     state.dateSwitching = true;
     render();
@@ -3693,6 +3792,7 @@ function attachHandlers(conflictIds){
     const d = new Date(state.date); d.setDate(d.getDate()-1);
     state.date = d.toISOString().slice(0,10);
     state.dirty = false;
+    state.lastImportedIds = null;
     state.dateSwitching = true;
     render();
     await loadDay(state.date);
@@ -4267,7 +4367,41 @@ function attachHandlers(conflictIds){
     state.backingUp = false;
     render();
   };
+  const removeDuplicatesBtn = document.getElementById('removeDuplicatesBtn');
+  if(removeDuplicatesBtn) removeDuplicatesBtn.onclick = async ()=>{
+    const groups = findDuplicateCallGroups(state.rows);
+    if(!groups.length){ alert('No duplicate calls found for ' + state.date + ' — same candidate, time, and round all appear only once.'); return; }
+    const totalExtra = groups.reduce((s,g)=>s+g.length-1, 0);
+    if(!confirm(`Found ${groups.length} candidate(s) with duplicate entries (${totalExtra} extra row(s) total). For each, the most complete copy will be kept and the rest removed. A backup is saved first, so this can be undone from 🕐 Backups if needed. Continue?`)) return;
+    await createBackup('pre-dedupe', state.date, state.rows);
+    const idsToRemove = new Set();
+    groups.forEach(g=>{
+      const sorted = g.slice().sort((a,b)=>callCompletenessScore(b)-callCompletenessScore(a));
+      sorted.slice(1).forEach(r=>idsToRemove.add(r.id));
+    });
+    state.rows = state.rows.filter(r=>!idsToRemove.has(r.id));
+    markDirty();
+    render();
+    await saveAllChanges();
+    alert(`Removed ${idsToRemove.size} duplicate call(s).`);
+  };
 
+  const undoLastImportBtn = document.getElementById('undoLastImportBtn');
+  if(undoLastImportBtn) undoLastImportBtn.onclick = async ()=>{
+    if(!state.lastImportedIds || !state.lastImportedIds.length) return;
+    const count = state.lastImportedIds.length;
+    if(!confirm(`Remove the ${count} call(s) added by the last import? Calls that were merged into existing rows (role/interviewer/round info added, not duplicated) will keep that info — only the newly-created rows are removed.`)) return;
+    const idsToRemove = new Set(state.lastImportedIds);
+    state.rows = state.rows.filter(r=>!idsToRemove.has(r.id));
+    state.lastImportedIds = null;
+    state.lastImportedCount = 0;
+    state.lastImportMergedCount = 0;
+    markDirty();
+    render();
+    await saveAllChanges();
+  };
+  const dismissLastImportBtn = document.getElementById('dismissLastImportBtn');
+  if(dismissLastImportBtn) dismissLastImportBtn.onclick = ()=>{ state.lastImportedIds = null; render(); };
   const cancelImport = document.getElementById('cancelImport');
   if(cancelImport) cancelImport.onclick = ()=>{ closeAllPanels(); render(); };
   const runImport = document.getElementById('runImport');
@@ -4339,7 +4473,37 @@ function attachHandlers(conflictIds){
       }
     });
 
-    state.rows = state.rows.concat(parsed);
+    // Merge into an already-existing call instead of adding a duplicate —
+    // this is exactly the "2nd Round Import" use case: the calls were
+    // already added earlier via a plain daily import, and this paste is
+    // just supplying details (role, interviewer, the real round) that
+    // weren't in the original message. Only genuinely new candidates/times
+    // become new rows; everything else enriches the existing row in place.
+    let mergedCount = 0;
+    const trulyNewRows = [];
+    parsed.forEach(p=>{
+      const existing = findExistingCallMatch(p, beforeBatchRows);
+      if(existing){
+        if(p.role && !existing.role) existing.role = p.role;
+        if(p.interviewer && !existing.interviewer) existing.interviewer = p.interviewer;
+        if(p.company && !existing.company) existing.company = p.company;
+        if(p.duration && !existing.duration) existing.duration = p.duration;
+        if(p.assignee && !existing.assignee) existing.assignee = p.assignee;
+        // Only upgrade the round if THIS paste actually stated it explicitly
+        // (not a default) — otherwise a vaguer later paste could downgrade
+        // an already-correct 2nd Round back to a defaulted 1st.
+        const roundWasExplicit = !(p.doubts||[]).some(d=>/Round wasn.t stated/.test(d));
+        if(p.round && roundWasExplicit && p.round !== existing.round) existing.round = p.round;
+        mergedCount++;
+      } else {
+        trulyNewRows.push(p);
+      }
+    });
+
+    state.rows = state.rows.concat(trulyNewRows);
+    state.lastImportedIds = trulyNewRows.map(r=>r.id);
+    state.lastImportedCount = trulyNewRows.length;
+    state.lastImportMergedCount = mergedCount;
 
     // Save each other date's calls directly — they never touch state.rows
     // (which only ever holds the currently open date), so this happens as
@@ -4360,21 +4524,24 @@ function attachHandlers(conflictIds){
     markDirty(); render();
 
     // Mathematical proof nothing was dropped: every data line either (a)
-    // became a new call today, (b) became a new call on another date, or
-    // (c) got merged into an existing call as a status update — those
-    // three should always add up to the total data lines found. If they
-    // don't, that's the signal something slipped past every safety net
-    // above, and it's surfaced loudly rather than silently trusted.
+    // became a new call today, (b) became a new call on another date, (c)
+    // got merged into an existing call as a status update, or (d) got
+    // merged into an existing call as a duplicate-avoidance enrichment —
+    // those four should always add up to the total data lines found. If
+    // they don't, that's the signal something slipped past every safety
+    // net above, and it's surfaced loudly rather than silently trusted.
     const otherDateTotal = Object.values(otherDateRowsByDate).reduce((s,rows)=>s+rows.length,0);
-    const accountedFor = parsed.length + otherDateTotal + appliedCount;
+    const accountedFor = trulyNewRows.length + mergedCount + otherDateTotal + appliedCount;
     const reconciliationLines = [
       `Pasted text: ${totalDataLines} record line(s) found.`,
-      `→ ${parsed.length} new call(s) added to ${state.date}.`,
+      `→ ${trulyNewRows.length} new call(s) added to ${state.date}.`,
+      mergedCount ? `→ ${mergedCount} already existed in the list \u2014 merged in (role/interviewer/round), no duplicate created.` : null,
       otherDateTotal ? `→ ${otherDateTotal} new call(s) added to other dates.` : null,
       appliedCount ? `→ ${appliedCount} merged into existing call(s) as a reschedule/cancel update.` : null,
       accountedFor === totalDataLines
         ? `✓ All ${totalDataLines} accounted for.`
-        : `⚠ MISMATCH: ${accountedFor} accounted for, but ${totalDataLines} were found in the paste. Something may be missing — please review carefully.`
+        : `⚠ MISMATCH: ${accountedFor} accounted for, but ${totalDataLines} were found in the paste. Something may be missing — please review carefully.`,
+      trulyNewRows.length ? `\nIf this added anything unwanted, use the ↩ Undo import banner at the top to remove just the ${trulyNewRows.length} new call(s) in one click.` : null
     ].filter(Boolean);
     alert(reconciliationLines.join('\n'));
 
@@ -4750,6 +4917,18 @@ function attachHandlers(conflictIds){
     if(resolveBtn) resolveBtn.onclick = ()=>{
       const row = state.rows.find(r=>r.id===id);
       if(row){ row.doubts = []; markDirty(); render(); }
+    };
+    const clearStatusBtn = tr.querySelector('.clear-status-btn');
+    if(clearStatusBtn) clearStatusBtn.onclick = async ()=>{
+      const row = state.rows.find(r=>r.id===id);
+      if(!row || !row.status) return;
+      const label = statusBadgeInfo(row.status).label.toLowerCase();
+      if(!confirm(`Clear the "${label}" tag from "${row.candidate||'this call'}"? The call itself stays exactly where it is (including in the 2nd Round tab) — only the ${label} status is removed.`)) return;
+      row.status = '';
+      row.statusFields = [];
+      render();
+      try{ await saveCallStatuses(); }
+      catch(e){ alert('Cleared locally, but saving to the server failed: ' + (e && e.message ? e.message : e)); }
     };
     const moveBtn = tr.querySelector('.move-2nd');
     if(moveBtn) moveBtn.onclick = ()=>{
