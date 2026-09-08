@@ -787,6 +787,24 @@ async function saveStudentsMaster(){
 function normalizeNameKey(name){
   return (name||'').toLowerCase().replace(/[^a-z]/g,'');
 }
+// Standard edit distance — used only for the bounded typo-tolerance check
+// below, never for anything with real stakes (like Portal handler matching).
+function levenshteinDistance(a, b){
+  const m = a.length, n = b.length;
+  if(m === 0) return n;
+  if(n === 0) return m;
+  let prev = new Array(n+1), curr = new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j] = j;
+  for(let i=1;i<=m;i++){
+    curr[0] = i;
+    for(let j=1;j<=n;j++){
+      const cost = a[i-1] === b[j-1] ? 0 : 1;
+      curr[j] = Math.min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost);
+    }
+    const tmp = prev; prev = curr; curr = tmp;
+  }
+  return prev[n];
+}
 function findStudentMasterMatch(candidateName){
   const key = normalizeNameKey(candidateName);
   if(!key || !state.studentsMaster) return null;
@@ -809,6 +827,26 @@ function findStudentMasterMatch(candidateName){
              sParts[sParts.length-1][0].toLowerCase() === initial;
     });
     if(candidates.length === 1) return candidates[0];
+  }
+  // Small typo tolerance — catches things like "Chigdhana Hemantharaju"
+  // typed in a WhatsApp message vs the master list's actual "Chidghana
+  // Hemantharaju" (two adjacent letters swapped). Only applied to longer
+  // names, since a couple of edits on a short name is far too likely to be
+  // a coincidence rather than a typo; capped at 2 edits; and — same rule
+  // as the abbreviation case above — only resolves when exactly one
+  // master-list student is that close. Ambiguous or nothing close enough
+  // means no match, never a guess.
+  if(key.length >= 10){
+    const closeMatches = [];
+    for(const s of state.studentsMaster){
+      const sKey = normalizeNameKey(s.name);
+      if(Math.abs(sKey.length - key.length) > 2) continue;
+      if(levenshteinDistance(key, sKey) <= 2){
+        closeMatches.push(s);
+        if(closeMatches.length > 1) break; // already ambiguous — stop early
+      }
+    }
+    if(closeMatches.length === 1) return closeMatches[0];
   }
   return null;
 }
