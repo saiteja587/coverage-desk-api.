@@ -35,6 +35,8 @@
   --violet:#9B87F5;
   --blue:#5B9FE8;
   --violet-dim:#251F3D;
+  --onsite:#E85CC8;
+  --onsite-dim:#3A1E33;
   --display:'Space Grotesk',sans-serif;
   --body:'Inter',sans-serif;
   --mono:'IBM Plex Mono',monospace;
@@ -258,6 +260,9 @@ tbody tr.row-unassigned{background:var(--coral-dim);}
 tbody tr.row-conflict{outline:1px solid var(--violet);outline-offset:-1px;}
 tbody tr.row-healthcare{box-shadow:inset 3px 0 0 var(--teal);}
 tbody tr.row-education{box-shadow:inset 3px 0 0 var(--amber);}
+tbody tr.row-onsite{box-shadow:inset -3px 0 0 var(--onsite);}
+tbody tr.row-healthcare.row-onsite{box-shadow:inset 3px 0 0 var(--teal), inset -3px 0 0 var(--onsite);}
+tbody tr.row-education.row-onsite{box-shadow:inset 3px 0 0 var(--amber), inset -3px 0 0 var(--onsite);}
 tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .cat-badge{display:inline-block;font-size:12px;margin-right:4px;}
 .prior-badge{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:1px 4px;margin-right:5px;vertical-align:middle;cursor:default;}
@@ -319,6 +324,7 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .round-input.round2{background:var(--teal-dim);color:var(--teal);}
 .round-input.roundfinal{background:var(--violet-dim);color:var(--violet);}
 .woi-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+.onsite-toggle input{accent-color:var(--onsite);}
 .woi-toggle input{accent-color:var(--amber);}
 .woi-toggle span{font-size:11px;color:var(--text-muted);font-family:var(--mono);}
 .flag-icon{color:var(--violet);font-size:12px;margin-right:4px;}
@@ -1417,6 +1423,15 @@ function parseDetailedLine(line, defaultRound){
   const roundFound = roundParen || roundSegMatch;
   let round = roundFound || (defaultRound || '1st');
 
+  // A line explicitly saying "(Candidate 1st Interview)" / "(Candidate 1st
+  // inteview)" (real source data has that typo) is stating plainly that
+  // this is this candidate's very first interview with us — that's a
+  // stronger, more direct signal than any other round detection or default,
+  // and overrides it even if e.g. the 2nd Round Import button was used or
+  // the line separately (contradictorily) mentions another round.
+  const candidateFirstInterview = /candidate['\u2019]?s?\s*(1st|first)\s*int\w*/i.test(clean);
+  if(candidateFirstInterview) round = '1st';
+
   const country = countryFromParens(parens);
 
   // Real messages often carry a THIRD kind of parenthetical besides country
@@ -1444,6 +1459,11 @@ function parseDetailedLine(line, defaultRound){
   // then fell all the way through to the raw-text fallback instead of
   // being recognized as a WOI call with its country/etc parsed properly.
   const woi = /waiting\s+for\s+invit\w*|\bwoi\b/i.test(clean);
+  // Real messages sometimes explicitly say "(OnSite Interview)"/"(On-Site)"
+  // — captured automatically when stated. When they don't (per real
+  // experience, the 2nd-round supplementary details often skip it), the
+  // Onsite checkbox in the table is there to set it manually.
+  const onsite = /on\s*-?\s*site/i.test(clean);
 
   const doubts = [];
   if(!time && !woi) doubts.push('No time found in this line — check the original text.');
@@ -1492,7 +1512,7 @@ function parseDetailedLine(line, defaultRound){
     }
   }
 
-  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC };
+  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC, onsite, candidateFirstInterview };
 }
 function parseImportText(text, baseDate, defaultRound){
   const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')).filter(Boolean);
@@ -2338,7 +2358,8 @@ function buildTeamGroupedExportText(rows){
   const cleanTime = (t)=> (t||'').replace(/\s*[AaPp][Mm]\s*$/,'').trim();
 
   rows.forEach(r=>{
-    const label = r.country && r.country!=='USA' ? `${r.candidate} (${r.country})` : r.candidate;
+    let label = r.country && r.country!=='USA' ? `${r.candidate} (${r.country})` : r.candidate;
+    if(r.candidateFirstInterview) label += ' (*Candidate 1st Interview*)'; // *text* renders bold in WhatsApp
     const time = cleanTime(r.time);
     if(r.woi){
       unresolved.push(`${label} - Waiting for Invite`);
@@ -3719,7 +3740,8 @@ function renderTable(rows, conflictIds, clientConflicts){
       isConflict?'row-conflict':'',
       category==='Healthcare'?'row-healthcare':'',
       category==='Education'?'row-education':'',
-      longDuration?'row-long-duration':''
+      longDuration?'row-long-duration':'',
+      r.onsite?'row-onsite':''
     ].filter(Boolean).join(' ');
     return `<tr data-id="${r.id}" data-bucket="${(()=>{ const m = timeToMinutes(r.time); return m===9999 ? '?' : Math.floor(m/30); })()}" class="${rowClasses}">
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
@@ -3745,6 +3767,12 @@ function renderTable(rows, conflictIds, clientConflicts){
           <span>WOI</span>
         </label>
       </td>
+      <td data-label="Onsite">
+        <label class="woi-toggle onsite-toggle" title="On-site / in-person interview">
+          <input type="checkbox" data-field="onsite" ${r.onsite?'checked':''}>
+          <span>Onsite</span>
+        </label>
+      </td>
       <td data-label="Assigned to">
         ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
@@ -3760,11 +3788,11 @@ function renderTable(rows, conflictIds, clientConflicts){
           ${pm.status ? `<div style="color:var(--text-faint);font-size:10.5px">${escapeHtml(pm.status)}${differs?' · differs from local':''}</div>` : ''}
         </div>`;
       })()}</td>
-      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
+      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
-    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="11"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
-    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="11"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
-    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="11">
+    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="12"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
+    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="12"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
+    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="12">
       <div class="pin-detail-fields">
         <div class="pin-field">
           <label>Interviewer (client-side)</label>
@@ -3777,6 +3805,12 @@ function renderTable(rows, conflictIds, clientConflicts){
         <div class="pin-field">
           <label>Importance / priority note</label>
           <input class="pin-importance" data-id="${r.id}" placeholder="e.g. VIP client, urgent, exec round" value="${escapeHtml(r.importance||'')}">
+        </div>
+        <div class="pin-field" style="flex:0 0 100%;min-width:0">
+          <label class="woi-toggle" style="cursor:pointer">
+            <input type="checkbox" class="pin-candidate-first-interview" data-id="${r.id}" ${r.candidateFirstInterview?'checked':''}>
+            <span style="font-size:12px;color:var(--text-muted);text-transform:none;letter-spacing:0;font-weight:500">Candidate's 1st Interview — shown in bold when the finalized list is exported</span>
+          </label>
         </div>
       </div>
     </td></tr>`:''}`;
@@ -3793,6 +3827,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:104px">Round</th>
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
+      <th style="width:60px">Onsite</th>
       <th style="width:140px">Assigned to</th>
       <th style="width:120px">📡 Portal</th>
       <th style="width:96px"></th>
@@ -3973,7 +4008,7 @@ function attachHandlers(conflictIds){
   });
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
-    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:''});
+    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false});
     markDirty(); render();
   };
   const clearAllBtn = document.getElementById('clearAll');
@@ -4951,6 +4986,14 @@ function attachHandlers(conflictIds){
       markDirty();
     });
   });
+  document.querySelectorAll('.pin-candidate-first-interview').forEach(cb=>{
+    cb.onchange = ()=>{
+      const row = state.rows.find(r=>r.id===cb.dataset.id);
+      if(!row) return;
+      row.candidateFirstInterview = cb.checked;
+      markDirty();
+    };
+  });
 
   document.querySelectorAll('tbody tr').forEach(tr=>{
     const id = tr.dataset.id;
@@ -4963,6 +5006,8 @@ function attachHandlers(conflictIds){
         if(field==='woi'){
           row.woi = input.checked;
           if(row.woi) row.assignee='';
+        } else if(field==='onsite'){
+          row.onsite = input.checked;
         } else if(field==='assignee'){
           if(input.value === CUSTOM_ASSIGNEE_SENTINEL){
             const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', row.assignee && row.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? row.assignee : '');
@@ -4975,7 +5020,7 @@ function attachHandlers(conflictIds){
           row[field] = input.value;
         }
         markDirty();
-        if(field==='woi' || field==='assignee' || field==='time'){
+        if(field==='woi' || field==='assignee' || field==='time' || field==='onsite'){
           render();
           // Fast sequential assigning: after picking someone, jump straight to
           // the next still-unassigned row's dropdown instead of requiring a
