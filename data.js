@@ -127,9 +127,10 @@ module.exports = async (req, res) => {
     if (resource === 'finalized') return await handleFinalized(req, res, db);
     if (resource === 'call_status') return await handleCallStatus(req, res, db);
     if (resource === 'call_backups') return await handleCallBackups(req, res, db);
+    if (resource === 'students') return await handleStudents(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|users|whoami' });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
@@ -221,10 +222,11 @@ async function handleCalls(req, res, db) {
         const values = rows.map(r => [
           r.id, date, r.time||'', r.candidate||'', r.company||'', r.round||'', r.duration||'',
           r.woi?1:0, r.assignee||'', r.country||'USA', JSON.stringify(r.doubts||[]), r.raw||'',
-          r.interviewer||'', r.importance||''
+          r.interviewer||'', r.importance||'', r.role||'', r.technicalPOC||'',
+          r.onsite?1:0, r.candidateFirstInterview?1:0
         ]);
         await db.query(
-          `INSERT INTO calls (id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance)
+          `INSERT INTO calls (id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance, role, technical_poc, is_onsite, is_candidate_first_interview)
            VALUES ?`,
           [values]
         );
@@ -253,6 +255,10 @@ function rowToCall(row) {
     raw: row.raw_text || '',
     interviewer: row.interviewer || '',
     importance: row.importance || '',
+    role: row.role || '',
+    technicalPOC: row.technical_poc || '',
+    onsite: !!row.is_onsite,
+    candidateFirstInterview: !!row.is_candidate_first_interview,
     status: row.cs_status || row.status || '',
     statusFields: safeParse(row.cs_status_fields_json || row.status_fields_json, []),
   };
@@ -395,6 +401,36 @@ async function handleDates(req, res, db) {
 function formatDate(d) {
   const dt = new Date(d);
   return dt.toISOString().slice(0, 10);
+}
+
+// ---------- students (the full active-student master list — separate from
+// `roster`, which is just the small daily coordinator/team list). Deliberately
+// minimal: just name + country, per the actual current need. ----------
+async function handleStudents(req, res, db) {
+  if (req.method === 'GET') {
+    const [rows] = await db.query('SELECT * FROM students ORDER BY name');
+    return res.status(200).json({
+      rows: rows.map(r => ({ id: r.id, name: r.name, country: r.country })),
+    });
+  }
+  if (req.method === 'POST') {
+    const { rows } = req.body;
+    if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows[] required' });
+    try {
+      await db.beginTransaction();
+      await db.query('DELETE FROM students');
+      if (rows.length) {
+        const values = rows.map(s => [s.id, s.name || '', s.country || '']);
+        await db.query('INSERT INTO students (id, name, country) VALUES ?', [values]);
+      }
+      await db.commit();
+      return res.status(200).json({ ok: true, count: rows.length });
+    } catch (e) {
+      await db.rollback();
+      throw e;
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ---------- portal_sync: live read-only pull from the Interview Portal ----------
