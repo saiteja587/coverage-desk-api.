@@ -240,6 +240,16 @@ tr.row-jump-highlight{animation:row-jump-flash 1.4s ease-in-out 2;}
 .absent-toggle{display:flex;align-items:center;cursor:pointer;}
 .absent-toggle input{cursor:pointer;}
 .absent-badge{color:var(--coral);font-size:10.5px;font-weight:600;}
+.conflict-pair-card{border:1px solid var(--violet);border-radius:10px;padding:12px 14px;margin-bottom:12px;background:var(--violet-dim);}
+.conflict-pair-title{font-weight:700;font-size:13px;color:var(--violet);margin-bottom:10px;}
+.conflict-pair-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap;}
+.conflict-pair-row:first-of-type{border-top:none;}
+.conflict-pair-info{font-size:13px;flex:1;min-width:200px;}
+.conflict-reassign{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12.5px;min-width:160px;}
+.workload-badge{display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:8px;margin-left:5px;background:var(--surface-3);color:var(--text-faint);vertical-align:middle;}
+.workload-badge.workload-low{background:var(--teal-dim);color:var(--teal);}
+.workload-badge.workload-med{background:var(--amber-dim);color:var(--amber);}
+.workload-badge.workload-high{background:var(--coral-dim);color:var(--coral);}
 .roster-tag button{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;line-height:1;padding:0;}
 .roster-panel .add-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
 .roster-panel input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-size:13px;font-family:var(--body);flex:1;}
@@ -459,6 +469,7 @@ let state = {
   hideAllNotifCandidates: false,
   hideAllNotifClients: false,
   allReschedulesData: null,
+  absencePatterns: null,
   notifSearchAllResched: '',
   hideAllNotifAllResched: false,
   showSummary: false,
@@ -473,11 +484,15 @@ let state = {
   groupByCompany: false,
   showMoreMenu: false,
   showAllDates: false,
+  showClientSearch: false,
+  clientSearchQuery: '',
+  clientSearchResults: null,
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
   exportedIds: [],
   showStudentsMaster: false,
+  showConflicts: false,
   studentsMaster: [],
   studentsMasterLoaded: false,
   studentsMasterLoading: false,
@@ -2005,6 +2020,37 @@ function computeConflicts(rows){
   });
   return conflictMap;
 }
+// Same double-booking detection as computeConflicts above, but returns the
+// actual conflicting row PAIRS rather than a reason string per id — what
+// the Conflicts quick-fix panel needs to show both calls side by side.
+function computeConflictPairs(rows){
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  const byAssignee = {};
+  rows.forEach(r=>{
+    if(!r.assignee || teamNames.has(r.assignee) || r.woi) return;
+    byAssignee[r.assignee] = byAssignee[r.assignee] || [];
+    byAssignee[r.assignee].push(r);
+  });
+  const pairs = [];
+  Object.entries(byAssignee).forEach(([assignee, calls])=>{
+    for(let i=0;i<calls.length;i++){
+      for(let j=i+1;j<calls.length;j++){
+        const a = calls[i], b = calls[j];
+        const aStart = timeToMinutes(a.time), bStart = timeToMinutes(b.time);
+        let overlap = (aStart === bStart);
+        if(!overlap){
+          const aDur = parseDurationMinutes(a.duration), bDur = parseDurationMinutes(b.duration);
+          if(aDur && bDur){
+            const aEnd = aStart+aDur, bEnd = bStart+bDur;
+            overlap = (aStart < bEnd && bStart < aEnd);
+          }
+        }
+        if(overlap) pairs.push({ assignee, a, b });
+      }
+    }
+  });
+  return pairs;
+}
 
 // Flags anyone carrying a noticeably disproportionate share of today's
 // calls — distinct from computeConflicts() above, which only catches
@@ -2347,6 +2393,56 @@ async function scanAllReschedules(forceRefresh){
   results.sort((a,b)=> b.date.localeCompare(a.date) || String(b.time||'').localeCompare(String(a.time||'')));
   return results;
 }
+const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+// Absences are stored as a per-date note entry (see absentIdsNoteId) holding
+// a JSON array of roster person IDs — this reads that same entry back for
+// every saved date, groups hits by person + day-of-week, and surfaces any
+// person who's been absent on the SAME weekday 2+ times. A manual scan
+// (like the other cross-date checks) rather than something that runs on
+// every load, since it means fetching every date's notes.
+async function scanAbsencePatterns(){
+  const dates = await getAllKnownDates();
+  const perDateNotes = await Promise.all(dates.map(async d=>{
+    if(d === state.date) return state.notes;
+    if(API_BASE_URL){
+      try{ const data = await apiCall('notes', {qs:'date='+d}); return data.rows || []; }catch(e){ return []; }
+    }
+    try{
+      const r = await storageAdapter.get('day:'+d, false);
+      const parsed = r && r.value ? JSON.parse(r.value) : null;
+      return (parsed && !Array.isArray(parsed) && parsed.notes) || [];
+    }catch(e){ return []; }
+  }));
+  const absencesByPersonId = {};
+  dates.forEach((d, i)=>{
+    const notes = perDateNotes[i] || [];
+    const entry = notes.find(n => n && n.id === (d + '-absent-ids'));
+    if(!entry) return;
+    let ids = [];
+    try{ ids = JSON.parse(entry.text) || []; }catch(e){}
+    const dow = new Date(d + 'T00:00:00').getDay();
+    ids.forEach(id=>{
+      absencesByPersonId[id] = absencesByPersonId[id] || [];
+      absencesByPersonId[id].push({ date: d, dow });
+    });
+  });
+  const patterns = [];
+  Object.entries(absencesByPersonId).forEach(([personId, occ])=>{
+    const person = state.roster.find(p=>p.id===personId);
+    const byDow = {};
+    occ.forEach(o=>{ byDow[o.dow] = byDow[o.dow] || []; byDow[o.dow].push(o.date); });
+    Object.entries(byDow).forEach(([dow, dowDates])=>{
+      if(dowDates.length >= 2){
+        patterns.push({
+          personId, name: person ? person.name : '(no longer on the roster)',
+          dow: Number(dow), dowName: DOW_NAMES[Number(dow)], dates: dowDates.sort()
+        });
+      }
+    });
+  });
+  patterns.sort((a,b)=> b.dates.length - a.dates.length);
+  return patterns;
+}
 function buildTeamGroupedExportText(rows){
   // Sort the entire day chronologically FIRST, before any grouping happens.
   // This was missing entirely before — calls were pushed into each team's list
@@ -2498,6 +2594,8 @@ function closeAllPanels(){
   state.showRescheduleImport = false;
   state.rescheduleReview = null;
   state.showStudentsMaster = false;
+  state.showConflicts = false;
+  state.showClientSearch = false;
   state.showMoreMenu = false;
   stopPortalSyncPolling();
 }
@@ -2515,6 +2613,8 @@ function getActivePanelName(){
   if(state.showRescheduleImport) return 'rescheduleImport';
   if(state.rescheduleReview) return 'rescheduleReview';
   if(state.showStudentsMaster) return 'studentsMaster';
+  if(state.showConflicts) return 'conflicts';
+  if(state.showClientSearch) return 'clientSearch';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -2539,6 +2639,8 @@ function renderActivePanel(name){
   if(name === 'rescheduleImport') return renderRescheduleImportPanel();
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
+  if(name === 'conflicts') return renderConflictsPanel();
+  if(name === 'clientSearch') return renderClientSearchPanel();
   return '';
 }
 function panelTitle(name){
@@ -2546,7 +2648,7 @@ function panelTitle(name){
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
-    rescheduleReview:'Confirm Reschedule/Cancel', studentsMaster:'Students Master'
+    rescheduleReview:'Confirm Reschedule/Cancel', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
   };
   return titles[name] || '';
 }
@@ -2635,6 +2737,7 @@ function render(){
             <button class="more-menu-item" id="toggleSummary">📊 Summary</button>
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             <button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>
+            <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
           </div>` : ''}
@@ -2771,6 +2874,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="btn" id="togglePortalSync">📡 Team Sync</button>
       <button class="btn" id="toggleIncentives">💰 Incentives</button>
       <button class="btn" id="toggleBackups">🕐 Backups</button>
+      ${sum.conflicts ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
       <button class="btn ghost" id="removeDuplicatesBtn" style="color:var(--amber)" title="Find and remove duplicate calls — same candidate, time, and round">🧹 Remove Duplicates</button>
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
@@ -2897,7 +3001,9 @@ function renderSummaryPanel(){
   ).join('');
 
   return `<div class="import-panel summary-panel">
-    <div class="strip-title" style="margin-bottom:12px"><span>📊 Daily Summary — ${escapeHtml(state.date)}</span></div>
+    <div class="strip-title" style="margin-bottom:12px"><span>📊 Daily Summary — ${escapeHtml(state.date)}</span>
+      <span style="display:flex;gap:6px"><button class="btn ghost" id="copyDailySummaryBtn" style="font-size:11.5px">📋 Copy Daily</button><button class="btn ghost" id="copyWeeklySummaryBtn" style="font-size:11.5px">📋 Copy Weekly</button></span>
+    </div>
     <div class="summary-big-grid">
       <div class="summary-big-cell"><div class="summary-big-num">${sum.total}</div><div class="summary-big-lbl">Total Calls</div></div>
       <div class="summary-big-cell sbg-teal"><div class="summary-big-num">${sum.assigned}</div><div class="summary-big-lbl">Assigned</div></div>
@@ -2911,7 +3017,81 @@ function renderSummaryPanel(){
     <div class="summary-detail-row"><span>❔ Doubts needing review</span><span>${doubts.length}</span></div>
     <div class="strip-title" style="margin:14px 0 6px;border-top:1px solid var(--border);padding-top:12px"><span>By Team</span></div>
     ${teamRows || '<div class="hint">No assignments yet.</div>'}
+    <div id="summaryCopyToast" class="hint" style="margin-top:10px;display:none"></div>
   </div>`;
+}
+// Plain-text (not WhatsApp-bold-formatted) summary meant for pasting into an
+// email or a status message — distinct from buildTeamGroupedExportText,
+// which is specifically shaped for sharing the call list itself.
+function buildDailySummaryText(dateKey, rows){
+  const conflictIds = computeConflicts(rows);
+  const sum = summarize(rows, conflictIds);
+  const firstRound = rows.filter(r=>!isAdvancedRound(r.round)).length;
+  const advanced = rows.filter(r=>isAdvancedRound(r.round)).length;
+  const doubts = rows.filter(r=>r.doubts && r.doubts.length>0).length;
+  const healthEdu = rows.filter(r=>classifyCompany(r.company)).length;
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  function teamOf(assignee){
+    if(!assignee) return null;
+    if(teamNames.has(assignee)) return assignee;
+    const p = state.roster.find(p=>p.name===assignee);
+    return p ? p.team : null;
+  }
+  const teamCounts = {};
+  rows.forEach(r=>{
+    if(r.woi || !r.assignee) return;
+    const t = teamOf(r.assignee) || r.assignee;
+    teamCounts[t] = (teamCounts[t]||0)+1;
+  });
+  const teamLines = Object.entries(teamCounts).sort((a,b)=>b[1]-a[1]).map(([t,c])=>`  ${t}: ${c}`);
+  return [
+    `Coverage Desk — Daily Summary for ${dateKey}`,
+    `Total calls: ${sum.total}`,
+    `Assigned: ${sum.assigned} | Unassigned: ${sum.unassigned} | WOI: ${sum.woi}`,
+    `Conflicts: ${sum.conflicts}`,
+    `1st Round: ${firstRound} | 2nd Round & Above: ${advanced}`,
+    `Healthcare/Education: ${healthEdu}`,
+    `Doubts needing review: ${doubts}`,
+    '',
+    'By Team:',
+    ...(teamLines.length ? teamLines : ['  No assignments yet.'])
+  ].join('\n');
+}
+async function buildWeeklySummaryText(endDateKey){
+  const dates = [];
+  const end = new Date(endDateKey+'T00:00:00');
+  for(let i=6;i>=0;i--){
+    const d = new Date(end); d.setDate(d.getDate()-i);
+    dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
+  }
+  const perDateRows = await Promise.all(dates.map(async d=>{
+    if(d === state.date) return state.rows;
+    if(API_BASE_URL){
+      try{ const data = await apiCall('calls', {qs:'date='+d}); return data.rows || []; }catch(e){ return []; }
+    }
+    try{
+      const r = await storageAdapter.get('day:'+d, false);
+      const parsed = r && r.value ? JSON.parse(r.value) : null;
+      return Array.isArray(parsed) ? parsed : (parsed && parsed.rows) || [];
+    }catch(e){ return []; }
+  }));
+  let totalAll = 0, totalAssigned = 0, totalUnassigned = 0, totalWoi = 0, totalConflicts = 0;
+  const dayLines = dates.map((d,i)=>{
+    const rows = perDateRows[i] || [];
+    const conflictIds = computeConflicts(rows);
+    const sum = summarize(rows, conflictIds);
+    totalAll += sum.total; totalAssigned += sum.assigned; totalUnassigned += sum.unassigned;
+    totalWoi += sum.woi; totalConflicts += sum.conflicts;
+    return `  ${d}: ${sum.total} calls (${sum.assigned} assigned, ${sum.unassigned} unassigned, ${sum.woi} WOI)`;
+  });
+  return [
+    `Coverage Desk — Weekly Summary (${dates[0]} to ${dates[dates.length-1]})`,
+    `Total calls: ${totalAll}`,
+    `Assigned: ${totalAssigned} | Unassigned: ${totalUnassigned} | WOI: ${totalWoi} | Conflicts: ${totalConflicts}`,
+    '',
+    'By day:',
+    ...dayLines
+  ].join('\n');
 }
 
 function renderUsersPanel(){
@@ -2996,6 +3176,89 @@ function renderLongDurationSection(){
   return `<div class="hint" style="margin-bottom:8px">${flagged.length} 1st round call(s) over 30 min${priorityCount?`, ${priorityCount} at a Healthcare/Education client — flagged first`:''}.</div>${rowsHtml}`;
 }
 
+// Focused view for double-bookings: shows each conflicting pair side by
+// side with a "reassign to" dropdown pre-filled with who's actually free
+// at that exact time — resolving one is a single select-and-done instead
+// of hunting the pair down in the main table and cross-checking the roster
+// by hand.
+function renderConflictsPanel(){
+  const pairs = computeConflictPairs(state.rows);
+  if(!pairs.length){
+    return `<div class="import-panel"><div class="empty-state"><h3>No conflicts right now</h3><p>Nobody on today's list is double-booked.</p></div></div>`;
+  }
+  const rowsHtml = pairs.map((pair, idx)=>{
+    const freeForA = findFreePeopleAtTime(pair.a.time, isAdvancedRound(pair.a.round));
+    const freeForB = findFreePeopleAtTime(pair.b.time, isAdvancedRound(pair.b.round));
+    const optsFor = (free)=> free.length
+      ? free.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')
+      : `<option value="" disabled>No one free right now</option>`;
+    return `<div class="conflict-pair-card" data-pair="${idx}">
+      <div class="conflict-pair-title">⚠ ${escapeHtml(pair.assignee)} is double-booked</div>
+      <div class="conflict-pair-row">
+        <div class="conflict-pair-info">
+          <b>${escapeHtml(pair.a.candidate||'Candidate')}</b> — ${escapeHtml(pair.a.time||'time n/a')}${pair.a.company?' · '+escapeHtml(pair.a.company):''}${pair.a.duration?' · '+escapeHtml(pair.a.duration):''}
+        </div>
+        <select class="conflict-reassign" data-row-id="${pair.a.id}">
+          <option value="">Reassign to…</option>
+          ${optsFor(freeForA)}
+        </select>
+      </div>
+      <div class="conflict-pair-row">
+        <div class="conflict-pair-info">
+          <b>${escapeHtml(pair.b.candidate||'Candidate')}</b> — ${escapeHtml(pair.b.time||'time n/a')}${pair.b.company?' · '+escapeHtml(pair.b.company):''}${pair.b.duration?' · '+escapeHtml(pair.b.duration):''}
+        </div>
+        <select class="conflict-reassign" data-row-id="${pair.b.id}">
+          <option value="">Reassign to…</option>
+          ${optsFor(freeForB)}
+        </select>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:12px">${pairs.length} conflict(s) found. Pick a replacement for either call in each pair — the dropdown only lists people who are actually free at that exact time.</div>
+    ${rowsHtml}
+  </div>`;
+}
+
+// Dedicated client-only search across every saved date — distinct from the
+// candidate-focused "Repeat Candidates" scan and the plain "All Dates"
+// browse list, this is specifically for "has this client ever had a
+// scheduling issue with us before" questions, matched with the same fuzzy
+// company-name normalization used everywhere else (so "Sallie Mae" finds
+// "Salliemae" too).
+function renderClientSearchPanel(){
+  const q = (state.clientSearchQuery||'').trim();
+  let body;
+  if(state.clientSearchResults === null){
+    body = `<div class="hint">Type a client name and search — this checks every date you've ever saved calls for, not just today.</div>`;
+  } else if(state.clientSearchResults.length === 0){
+    body = `<div class="hint">No calls found for a client matching "${escapeHtml(q)}".</div>`;
+  } else {
+    const rowsHtml = state.clientSearchResults.map(r=>`
+      <div class="notif-row">
+        <div class="notif-name">${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</div>
+        <div class="notif-detail">
+          <span class="notif-chip">${escapeHtml(r._date)}</span>
+          <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
+          <span class="notif-chip">${escapeHtml(r.company||'')}</span>
+          <span class="notif-chip">${escapeHtml(r.round||'round n/a')}</span>
+          ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
+        </div>
+      </div>
+    `).join('');
+    const uniqueClients = new Set(state.clientSearchResults.map(r=>r.company)).size;
+    body = `<div class="hint" style="margin-bottom:10px">${state.clientSearchResults.length} call(s) across ${uniqueClients} matching client name(s), most recent first.</div>${rowsHtml}`;
+  }
+  return `<div class="import-panel">
+    <div class="add-row" style="margin-top:0;margin-bottom:12px">
+      <input type="text" id="clientSearchInput" placeholder="Client / company name…" value="${escapeHtml(state.clientSearchQuery||'')}" style="flex:1">
+      <button class="btn primary" id="runClientSearchBtn">🔍 Search</button>
+    </div>
+    ${body}
+  </div>`;
+}
+
+
 function renderNotificationsPanel(){
   const tabs = [
     { key:'absent', label:'🚫 Absent', count: state.absentIds.length },
@@ -3004,7 +3267,8 @@ function renderNotificationsPanel(){
     { key:'clientsToday', label:'🏢 Repeat Clients Today' },
     { key:'candidatesAcross', label:'📅 Repeat Candidates (All Dates)' },
     { key:'clientsAcross', label:'🎯 Same Client, 2nd Round+ (All Dates)' },
-    { key:'allResched', label:'↻ All Rescheduled/Cancelled' }
+    { key:'allResched', label:'↻ All Rescheduled/Cancelled' },
+    { key:'absencePatterns', label:'🔁 Recurring Absences' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>`
@@ -3102,6 +3366,27 @@ function renderNotificationsPanel(){
         </div>
         <input type="text" class="notif-search" id="notifSearchAllResched" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchAllResched||'')}">
         ${rowsHtml || '<div class="hint">No matches.</div>'}`;
+    }
+  } else if(active === 'absencePatterns'){
+    if(state.absencePatterns === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Scans every date you've saved for who's been marked absent on the SAME weekday more than once — a gentle heads-up rather than noticing the pattern by memory and re-entering it manually each time.</div>
+        <button class="btn primary" id="runAbsencePatternScan">🔍 Scan for recurring absence patterns</button>`;
+    } else if(state.absencePatterns.length === 0){
+      content = `<div class="hint">No one has been marked absent on the same weekday more than once yet. <button class="btn ghost" id="runAbsencePatternScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else {
+      const rowsHtml = state.absencePatterns.map(p=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(p.name)} <span class="notif-warn">🔁 ${escapeHtml(p.dowName)}s — ${p.dates.length} time(s)</span></div>
+          <div class="notif-detail">${p.dates.map(d=>`<span class="notif-chip">${escapeHtml(d)}</span>`).join(' ')}</div>
+        </div>
+      `).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.absencePatterns.length} recurring pattern(s) found. If today matches one and that person isn't marked absent, a hint shows next to their name in the Team panel.</div>
+          <button class="btn ghost" id="runAbsencePatternScan">Re-scan</button>
+        </div>
+        ${rowsHtml}`;
     }
   }
 
@@ -3562,6 +3847,14 @@ function renderStudentsMasterPanel(){
   </div>`;
 }
 
+function computePersonCallCounts(rows){
+  const counts = {};
+  rows.forEach(r=>{
+    if(r.woi || !r.assignee) return;
+    counts[r.assignee] = (counts[r.assignee]||0) + 1;
+  });
+  return counts;
+}
 function renderRosterPanel(){
   const isReadOnly = CURRENT_ROLE === 'user';
   const teams = {};
@@ -3572,6 +3865,29 @@ function renderRosterPanel(){
   const customTeams = Object.keys(teams).filter(t=>!knownOrder.includes(t) && t!=="Needs Team Assignment");
   const teamOrder = [...knownOrder, ...customTeams];
   const allTeamNames = [...teamOrder]; // for the datalist / move-to dropdowns
+  // Today's call count per person, colored like a light heatmap — makes it
+  // obvious at a glance who's carrying more than everyone else, right where
+  // you'd actually go to rebalance (rather than only surfacing as a banner
+  // warning after the fact).
+  const personCounts = computePersonCallCounts(state.rows);
+  const countValues = Object.values(personCounts);
+  const avgCount = countValues.length ? countValues.reduce((s,c)=>s+c,0)/countValues.length : 0;
+  function workloadBadge(name){
+    const count = personCounts[name] || 0;
+    if(!count) return '';
+    const heat = count >= Math.max(6, avgCount*1.8) ? 'workload-high' : (count >= avgCount*1.2 ? 'workload-med' : 'workload-low');
+    return `<span class="workload-badge ${heat}" title="${count} call(s) assigned today">${count}</span>`;
+  }
+  // Only shows once someone's actually run the Recurring Absences scan
+  // (Notifications panel) — deliberately not auto-scanned on every load,
+  // since it means fetching every saved date's notes.
+  const todayDow = new Date(state.date + 'T00:00:00').getDay();
+  function absenceHint(personId, isAbsentToday){
+    if(isAbsentToday || !state.absencePatterns) return '';
+    const match = state.absencePatterns.find(p => p.personId === personId && p.dow === todayDow);
+    if(!match) return '';
+    return `<span class="mini-badge mini-badge-resched" title="Often absent on ${escapeHtml(match.dowName)}s (${match.dates.length} time(s) previously) — worth checking before assuming they're in today.">🔁</span>`;
+  }
   const groupsHtml = teamOrder.map(t=>`
     <div style="margin-top:12px">
       <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">${escapeHtml(t)}</div>
@@ -3584,7 +3900,7 @@ function renderRosterPanel(){
             <label class="absent-toggle" title="Mark absent for ${escapeHtml(state.date)} only">
               <input type="checkbox" class="absentCheckbox" data-id="${p.id}" ${isAbsent?'checked':''} ${isReadOnly?'disabled':''}>
             </label>
-            ${p.advanced?'<span style="color:var(--violet)">★</span> ':''}${escapeHtml(p.name)}${isAbsent?' <span class="absent-badge">🚫 Absent</span>':''}
+            ${p.advanced?'<span style="color:var(--violet)">★</span> ':''}${escapeHtml(p.name)}${workloadBadge(p.name)}${absenceHint(p.id, isAbsent)}${isAbsent?' <span class="absent-badge">🚫 Absent</span>':''}
             ${isReadOnly?'':`<button data-id="${p.id}" class="removeRoster">×</button>`}</div>
         `;}).join('') || '<span style="color:var(--text-faint);font-size:12px">No members yet' + (isReadOnly?'.':' — add one below.') + '</span>'}
       </div>
@@ -4177,6 +4493,12 @@ function attachHandlers(conflictIds){
     state.hideAllNotifAllResched = false;
     render();
   };
+  const runAbsencePatternBtn = document.getElementById('runAbsencePatternScan');
+  if(runAbsencePatternBtn) runAbsencePatternBtn.onclick = async ()=>{
+    runAbsencePatternBtn.textContent = 'Scanning…';
+    state.absencePatterns = await scanAbsencePatterns();
+    render();
+  };
   const hideAllReschedBtn = document.getElementById('hideAllResched');
   if(hideAllReschedBtn) hideAllReschedBtn.onclick = ()=>{ state.hideAllNotifAllResched = true; render(); };
   const unhideAllReschedBtn = document.getElementById('unhideAllResched');
@@ -4264,6 +4586,29 @@ function attachHandlers(conflictIds){
   if(toggleDbBtn) toggleDbBtn.onclick = ()=>{ openOnlyPanel('showDbSettings'); render(); };
   const toggleSummaryBtn = document.getElementById('toggleSummary');
   if(toggleSummaryBtn) toggleSummaryBtn.onclick = ()=>{ openOnlyPanel('showSummary'); render(); };
+  const copyDailySummaryBtn = document.getElementById('copyDailySummaryBtn');
+  if(copyDailySummaryBtn) copyDailySummaryBtn.onclick = async ()=>{
+    const text = buildDailySummaryText(state.date, state.rows);
+    const toast = document.getElementById('summaryCopyToast');
+    try{
+      await navigator.clipboard.writeText(text);
+      if(toast){ toast.textContent = 'Copied to clipboard.'; toast.style.display = 'block'; }
+    }catch(e){
+      if(toast){ toast.textContent = "Couldn't copy automatically — here it is to copy manually:\n\n" + text; toast.style.display = 'block'; toast.style.whiteSpace = 'pre-wrap'; }
+    }
+  };
+  const copyWeeklySummaryBtn = document.getElementById('copyWeeklySummaryBtn');
+  if(copyWeeklySummaryBtn) copyWeeklySummaryBtn.onclick = async ()=>{
+    const toast = document.getElementById('summaryCopyToast');
+    if(toast){ toast.textContent = 'Building weekly summary…'; toast.style.display = 'block'; }
+    const text = await buildWeeklySummaryText(state.date);
+    try{
+      await navigator.clipboard.writeText(text);
+      if(toast){ toast.textContent = 'Copied to clipboard.'; toast.style.display = 'block'; }
+    }catch(e){
+      if(toast){ toast.textContent = "Couldn't copy automatically — here it is to copy manually:\n\n" + text; toast.style.display = 'block'; toast.style.whiteSpace = 'pre-wrap'; }
+    }
+  };
   const toggleAllDatesBtn = document.getElementById('toggleAllDates');
   if(toggleAllDatesBtn) toggleAllDatesBtn.onclick = ()=>{
     openOnlyPanel('showAllDates');
@@ -4288,6 +4633,27 @@ function attachHandlers(conflictIds){
     }
     render();
   };
+  const toggleClientSearchBtn = document.getElementById('toggleClientSearch');
+  if(toggleClientSearchBtn) toggleClientSearchBtn.onclick = ()=>{ openOnlyPanel('showClientSearch'); render(); };
+  const runClientSearchBtn = document.getElementById('runClientSearchBtn');
+  if(runClientSearchBtn) runClientSearchBtn.onclick = async ()=>{
+    const input = document.getElementById('clientSearchInput');
+    const q = input ? input.value.trim() : '';
+    state.clientSearchQuery = q;
+    if(!q){ state.clientSearchResults = []; render(); return; }
+    runClientSearchBtn.textContent = 'Searching…';
+    const allRows = await fetchAllRowsAcrossDates(true);
+    const qKey = normalizeCompanyKey(q);
+    const results = allRows
+      .filter(r => r.company && normalizeCompanyKey(r.company).includes(qKey))
+      .sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
+    state.clientSearchResults = results;
+    render();
+  };
+  const clientSearchInput = document.getElementById('clientSearchInput');
+  if(clientSearchInput) clientSearchInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runClientSearchBtn').click(); }
+  });
   document.querySelectorAll('.quick-add-student').forEach(badge=>{
     badge.onclick = async ()=>{
       const candidateName = badge.dataset.candidate;
@@ -4539,6 +4905,18 @@ function attachHandlers(conflictIds){
     state.backingUp = false;
     render();
   };
+  const toggleConflictsBtn = document.getElementById('toggleConflicts');
+  if(toggleConflictsBtn) toggleConflictsBtn.onclick = ()=>{ openOnlyPanel('showConflicts'); render(); };
+  document.querySelectorAll('.conflict-reassign').forEach(sel=>{
+    sel.onchange = ()=>{
+      if(!sel.value) return;
+      const row = state.rows.find(r=>r.id===sel.dataset.rowId);
+      if(!row) return;
+      row.assignee = sel.value;
+      markDirty();
+      render();
+    };
+  });
   const removeDuplicatesBtn = document.getElementById('removeDuplicatesBtn');
   if(removeDuplicatesBtn) removeDuplicatesBtn.onclick = async ()=>{
     const groups = findDuplicateCallGroups(state.rows);
@@ -6108,6 +6486,35 @@ window.addEventListener('keydown', (e)=>{
   if(ctrlOrCmd && e.key.toLowerCase()==='s'){
     e.preventDefault();
     if(state.dirty && !state.saving && CURRENT_ROLE!=='user') saveAllChanges();
+    return;
+  }
+  // Spreadsheet-style row navigation: ArrowUp/ArrowDown while focused in a
+  // plain text cell (Time/Candidate/Company/Round/Duration) jumps to the
+  // same field on the row above/below, instead of doing nothing (a
+  // single-line input has no vertical text to move a cursor through
+  // anyway). Deliberately NOT applied to <select> or checkbox fields —
+  // arrow keys already have real, expected meaning there (cycling the
+  // dropdown's own options), and hijacking that would be a regression,
+  // not an improvement.
+  if((e.key === 'ArrowDown' || e.key === 'ArrowUp') && tag === 'INPUT'){
+    const el = document.activeElement;
+    if(el.classList.contains('cell-input') && el.type !== 'checkbox'){
+      const tr = el.closest('tr[data-id]');
+      const field = el.dataset.field;
+      if(tr && field){
+        const allRows = Array.from(document.querySelectorAll('tbody tr[data-id]'));
+        const idx = allRows.indexOf(tr);
+        const targetIdx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+        if(idx !== -1 && targetIdx >= 0 && targetIdx < allRows.length){
+          const targetInput = allRows[targetIdx].querySelector(`[data-field="${field}"]`);
+          if(targetInput){
+            e.preventDefault();
+            targetInput.focus();
+            if(targetInput.select) targetInput.select();
+          }
+        }
+      }
+    }
     return;
   }
   if(isTyping) return;
