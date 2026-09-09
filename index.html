@@ -121,6 +121,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 .read-only-mode .resolve-doubt{display:none;}
 .read-only-mode .pin-toggle,
 .read-only-mode .pin-interviewer,
+.read-only-mode .pin-technical-poc,
 .read-only-mode .pin-importance{pointer-events:none;opacity:.5;}
 .read-only-badge{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:12px;padding:8px 14px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;}
 .users-list{display:flex;flex-direction:column;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
@@ -368,7 +369,10 @@ const DEFAULT_ROSTER = [
   {id:uid(), name:"Karthik", team:"Pradeep Anna Team", advanced:false},
   {id:uid(), name:"Gopal", team:"Pradeep Anna Team", advanced:false},
   {id:uid(), name:"Sai", team:"Sai Team", advanced:true},
-  {id:uid(), name:"Sandeep Anna", team:"Sandeep Anna Team", advanced:true}
+  {id:uid(), name:"Sandeep Anna", team:"Sandeep Anna Team", advanced:true},
+  {id:uid(), name:"Gopi", team:"Development Team", advanced:true},
+  {id:uid(), name:"Kishore", team:"Development Team", advanced:true},
+  {id:uid(), name:"Vamsi", team:"Development Team", advanced:true}
 ];
 function isAdvancedRound(round){
   // Anything that doesn't start with "1" (optionally "1st") counts as
@@ -1309,6 +1313,20 @@ function normalizeAssigneeText(raw){
   t = t.replace(/^strictly\s+/i,'').trim();
   return t;
 }
+// Names that show up after the arrow in a call line but AREN'T actually the
+// coordinator handling the call — they're technical points-of-contact from
+// the Development Team, pulled in for coding/technical rounds. Hard-coded
+// as an immediate fallback (works even before anyone's added to the roster)
+// AND checked dynamically against the roster's Development Team membership,
+// so this stays correct as the team changes without needing another edit.
+const KNOWN_TECHNICAL_POC_NAMES = ['gopi', 'kishore', 'vamsi'];
+function isTechnicalPOCName(name){
+  const norm = (name||'').trim().toLowerCase();
+  if(!norm) return false;
+  if(KNOWN_TECHNICAL_POC_NAMES.includes(norm)) return true;
+  const person = state.roster.find(p => p.name.toLowerCase() === norm);
+  return !!(person && person.team === 'Development Team');
+}
 function parseDetailedLine(line, defaultRound){
   let clean = line.replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
 
@@ -1437,7 +1455,10 @@ function parseDetailedLine(line, defaultRound){
   // — whether combined with a hyphen ("gopi-Mary Joan Mostrey...") or a
   // second arrow ("Kumar -> Hiring manager") — is the interviewer, which
   // was previously just discarded even though it's stated in most records.
-  let assignee = '', interviewer = '';
+  // But that first name is sometimes actually a Technical POC (Gopi,
+  // Kishore, Vamsi from Development Team), not the coordinator handling the
+  // call — those go in their own field instead of assignee.
+  let assignee = '', interviewer = '', technicalPOC = '';
   if(afterArrowRaw){
     const rest = afterArrowRaw.replace(/^\s*(->|→)\s*/, '');
     const arrowPieces = rest.split(/->|→/).map(s=>s.trim()).filter(Boolean);
@@ -1448,13 +1469,30 @@ function parseDetailedLine(line, defaultRound){
       // a real first name is never followed by that pattern.
       const firstPieceParts = arrowPieces[0].split(/,|[-–—](?=\s*[A-Z])/).map(s=>s.trim()).filter(Boolean);
       const assigneeText = firstPieceParts[0] || '';
-      if(assigneeText) assignee = matchOrCreateRosterName(assigneeText);
+      if(assigneeText){
+        if(isTechnicalPOCName(assigneeText)){
+          technicalPOC = titleCase(assigneeText);
+        } else {
+          assignee = matchOrCreateRosterName(assigneeText);
+        }
+      }
       const interviewerParts = firstPieceParts.slice(1).concat(arrowPieces.slice(1));
       interviewer = interviewerParts.join(' — ').trim();
     }
   }
+  // Same POC name can also show up as a bare trailing segment with no
+  // "->" at all ("...(2nd Round)-vamsi") rather than after an arrow. Only
+  // claims the LAST segment, and only if it's a single bare word matching
+  // a known POC — never touches company/time/duration, which are already
+  // resolved by this point.
+  if(!technicalPOC && !assignee){
+    const lastSeg = (segs[segs.length-1]||'').trim();
+    if(lastSeg && segs.length-1 !== timeIdx && /^[A-Za-z]+$/.test(lastSeg) && isTechnicalPOCName(lastSeg)){
+      technicalPOC = titleCase(lastSeg);
+    }
+  }
 
-  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer };
+  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC };
 }
 function parseImportText(text, baseDate, defaultRound){
   const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')).filter(Boolean);
@@ -3722,7 +3760,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           ${pm.status ? `<div style="color:var(--text-faint);font-size:10.5px">${escapeHtml(pm.status)}${differs?' · differs from local':''}</div>` : ''}
         </div>`;
       })()}</td>
-      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
+      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="11"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
     ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="11"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
@@ -3731,6 +3769,10 @@ function renderTable(rows, conflictIds, clientConflicts){
         <div class="pin-field">
           <label>Interviewer (client-side)</label>
           <input class="pin-interviewer" data-id="${r.id}" placeholder="e.g. Sarah from ITV" value="${escapeHtml(r.interviewer||'')}">
+        </div>
+        <div class="pin-field">
+          <label>Technical POC (Development Team)</label>
+          <input class="pin-technical-poc" data-id="${r.id}" placeholder="e.g. Gopi, Kishore, Vamsi" value="${escapeHtml(r.technicalPOC||'')}">
         </div>
         <div class="pin-field">
           <label>Importance / priority note</label>
@@ -3931,7 +3973,7 @@ function attachHandlers(conflictIds){
   });
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
-    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', importance:''});
+    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:''});
     markDirty(); render();
   };
   const clearAllBtn = document.getElementById('clearAll');
@@ -4890,6 +4932,14 @@ function attachHandlers(conflictIds){
       const row = state.rows.find(r=>r.id===input.dataset.id);
       if(!row) return;
       row.interviewer = input.value;
+      markDirty();
+    });
+  });
+  document.querySelectorAll('.pin-technical-poc').forEach(input=>{
+    input.addEventListener('input', ()=>{
+      const row = state.rows.find(r=>r.id===input.dataset.id);
+      if(!row) return;
+      row.technicalPOC = input.value;
       markDirty();
     });
   });
