@@ -222,10 +222,10 @@ async function handleCalls(req, res, db) {
         const values = rows.map(r => [
           r.id, date, r.time||'', r.candidate||'', r.company||'', r.round||'', r.duration||'',
           r.woi?1:0, r.assignee||'', r.country||'USA', JSON.stringify(r.doubts||[]), r.raw||'',
-          r.interviewer||'', r.importance||''
+          r.interviewer||'', r.importance||'', r.role||'', r.technicalPOC||''
         ]);
         await db.query(
-          `INSERT INTO calls (id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance)
+          `INSERT INTO calls (id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance, role, technical_poc)
            VALUES ?`,
           [values]
         );
@@ -254,6 +254,8 @@ function rowToCall(row) {
     raw: row.raw_text || '',
     interviewer: row.interviewer || '',
     importance: row.importance || '',
+    role: row.role || '',
+    technicalPOC: row.technical_poc || '',
     status: row.cs_status || row.status || '',
     statusFields: safeParse(row.cs_status_fields_json || row.status_fields_json, []),
   };
