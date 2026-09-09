@@ -252,6 +252,9 @@ table{width:100%;min-width:1050px;table-layout:fixed;border-collapse:collapse;ba
 }
 th,td{overflow:hidden;text-overflow:ellipsis;}
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px;}
+.table-scroll-top{overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px;}
+.table-scroll-top::-webkit-scrollbar{height:10px;}
+#tableScrollTopInner{height:1px;}
 .table-scroll::-webkit-scrollbar{height:8px;}
 thead th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);padding:10px 10px;border-bottom:1px solid var(--border);background:var(--surface-2);font-weight:600;}
 tbody tr{border-bottom:1px solid var(--border-soft);}
@@ -313,6 +316,7 @@ td input.cell-input, td select.cell-input{width:100%;background:transparent;bord
 td input.cell-input:hover, td select.cell-input:hover{border-color:var(--border);}
 td input.cell-input:focus, td select.cell-input:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
 select.cell-input{cursor:pointer;}
+select.cell-input option, select.cell-input optgroup{background:var(--surface-2);color:var(--text);}
 select.cell-input.empty{color:var(--coral);}
 select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .badge{display:inline-block;font-size:10.5px;font-family:var(--mono);padding:2px 7px;border-radius:5px;white-space:nowrap;}
@@ -2696,8 +2700,12 @@ function renderBulkBar(){
     </select>
     <button class="btn" id="distributeApplyBtn" title="Spreads the selected calls one-by-one across that team's available (non-absent) members">🔀 Distribute</button>
     <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+    <button class="btn" id="bulkMarkOnsiteBtn" style="color:var(--onsite);border-color:var(--onsite)" title="Mark all selected calls as Onsite Interview">🏢 Mark Onsite</button>
+    <button class="btn" id="bulkMarkWoiBtn" style="color:var(--amber);border-color:var(--amber)" title="Mark all selected calls as Waiting for Invite (clears their assignee)">⏳ Mark WOI</button>
+    <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
     <input type="date" id="moveToDateInput" class="cell-input" style="background:var(--surface-2);border:1px solid var(--border);width:auto">
     <button class="btn" id="moveToDateBtn" title="Move the selected calls to a different date entirely — fixes calls that got saved under the wrong date without losing any data">📅 Move to date</button>
+    <button class="btn ghost" id="bulkDeleteBtn" style="color:var(--coral);border-color:var(--coral)" title="Delete all selected calls — a backup is saved first">🗑 Delete Selected</button>
     <button class="btn ghost" id="bulkClearBtn">Clear selection</button>
   </div>`;
 }
@@ -3343,7 +3351,8 @@ function renderBackupsPanel(){
     'pre-import': '📥 Before an import',
     'pre-clear-all': '🗑️ Before Clear All',
     'pre-finalize': '✅ Before Finalize',
-    'pre-dedupe': '🧹 Before removing duplicates'
+    'pre-dedupe': '🧹 Before removing duplicates',
+    'pre-bulk-delete': '🗑 Before bulk delete'
   };
   const body = state.backupsLoading
     ? `<div class="hint"><span class="spinner"></span>Loading backups…</div>`
@@ -3719,6 +3728,11 @@ function findLongFirstRoundCalls(rows){
 
 function renderTable(rows, conflictIds, clientConflicts){
   clientConflicts = clientConflicts || new Map();
+  // Onsite only means something for 2nd Round & Above calls in practice —
+  // showing an empty checkbox on every 1st round row was just noise, so
+  // the column (and its cell) only render while that tab is active.
+  const showOnsiteColumn = state.view === '2nd';
+  const colCount = showOnsiteColumn ? 12 : 11;
   const rowsHtml = rows.map(r=>{
     const isConflict = conflictIds.has(r.id);
     const conflictReason = conflictIds.get(r.id) || '';
@@ -3767,12 +3781,12 @@ function renderTable(rows, conflictIds, clientConflicts){
           <span>WOI</span>
         </label>
       </td>
-      <td data-label="Onsite">
+      ${showOnsiteColumn ? `<td data-label="Onsite">
         <label class="woi-toggle onsite-toggle" title="On-site / in-person interview">
           <input type="checkbox" data-field="onsite" ${r.onsite?'checked':''}>
           <span>Onsite</span>
         </label>
-      </td>
+      </td>` : ''}
       <td data-label="Assigned to">
         ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
@@ -3790,9 +3804,9 @@ function renderTable(rows, conflictIds, clientConflicts){
       })()}</td>
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
-    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="12"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
-    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="12"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
-    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="12">
+    ${hasDoubts?`<tr class="doubt-note-row"><td colspan="${colCount}"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
+    ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="${colCount}"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
+    ${state.expandedDetailIds.has(r.id)?`<tr class="pin-detail-row"><td colspan="${colCount}">
       <div class="pin-detail-fields">
         <div class="pin-field">
           <label>Interviewer (client-side)</label>
@@ -3817,7 +3831,7 @@ function renderTable(rows, conflictIds, clientConflicts){
   }).join('');
 
   const allSelected = rows.length>0 && rows.every(r=>state.selectedIds.has(r.id));
-  return `<div class="table-scroll"><table>
+  return `<div class="table-scroll-top" id="tableScrollTop"><div id="tableScrollTopInner"></div></div><div class="table-scroll" id="tableScrollMain"><table>
     <thead><tr>
       <th style="width:34px"><input type="checkbox" id="selectAllRows" ${allSelected?'checked':''}></th>
       <th style="width:100px">Time</th>
@@ -3827,7 +3841,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:104px">Round</th>
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
-      <th style="width:60px">Onsite</th>
+      ${showOnsiteColumn ? `<th style="width:60px">Onsite</th>` : ''}
       <th style="width:140px">Assigned to</th>
       <th style="width:120px">📡 Portal</th>
       <th style="width:96px"></th>
@@ -3861,6 +3875,31 @@ function escapeHtml(s){
 
 // ---------- handlers ----------
 function attachHandlers(conflictIds){
+  // Mirrors the calls table's horizontal scrollbar at the TOP as well as
+  // the bottom, so dragging it back left doesn't require scrolling all the
+  // way down to the table's bottom edge first. The top strip has no real
+  // content — it's just a spacer sized to match the table's actual scroll
+  // width, with its scroll position kept in sync with the real table below.
+  const scrollTop = document.getElementById('tableScrollTop');
+  const scrollTopInner = document.getElementById('tableScrollTopInner');
+  const scrollMain = document.getElementById('tableScrollMain');
+  if(scrollTop && scrollTopInner && scrollMain){
+    const tableEl = scrollMain.querySelector('table');
+    if(tableEl) scrollTopInner.style.width = tableEl.scrollWidth + 'px';
+    let syncingScroll = false;
+    scrollTop.addEventListener('scroll', ()=>{
+      if(syncingScroll) return;
+      syncingScroll = true;
+      scrollMain.scrollLeft = scrollTop.scrollLeft;
+      syncingScroll = false;
+    });
+    scrollMain.addEventListener('scroll', ()=>{
+      if(syncingScroll) return;
+      syncingScroll = true;
+      scrollTop.scrollLeft = scrollMain.scrollLeft;
+      syncingScroll = false;
+    });
+  }
   // Shows a fade edge on the tabs row only when it's actually scrollable —
   // otherwise it's easy to never notice Doubts exists off-screen on
   // narrow/mobile widths.
@@ -4913,6 +4952,36 @@ function attachHandlers(conflictIds){
     state.selectedIds.clear();
     markDirty();
     render();
+  };
+  const bulkMarkOnsiteBtn = document.getElementById('bulkMarkOnsiteBtn');
+  if(bulkMarkOnsiteBtn) bulkMarkOnsiteBtn.onclick = ()=>{
+    state.rows.forEach(r=>{ if(state.selectedIds.has(r.id)) r.onsite = true; });
+    state.selectedIds.clear();
+    markDirty();
+    render();
+  };
+  const bulkMarkWoiBtn = document.getElementById('bulkMarkWoiBtn');
+  if(bulkMarkWoiBtn) bulkMarkWoiBtn.onclick = ()=>{
+    state.rows.forEach(r=>{
+      if(!state.selectedIds.has(r.id)) return;
+      r.woi = true;
+      r.assignee = ''; // same rule as the per-row WOI toggle — WOI calls have no assignee
+    });
+    state.selectedIds.clear();
+    markDirty();
+    render();
+  };
+  const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+  if(bulkDeleteBtn) bulkDeleteBtn.onclick = async ()=>{
+    const count = state.selectedIds.size;
+    if(!count) return;
+    if(!confirm(`Delete ${count} selected call(s)? A backup is saved first, so this can be undone from 🕐 Backups if needed.`)) return;
+    await createBackup('pre-bulk-delete', state.date, state.rows);
+    state.rows = state.rows.filter(r => !state.selectedIds.has(r.id));
+    state.selectedIds.clear();
+    markDirty();
+    render();
+    await saveAllChanges();
   };
   // Coverage graph bars are clickable — jump straight to the matching
   // calls in the table below instead of manually scrolling up to check
