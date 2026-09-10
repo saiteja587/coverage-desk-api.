@@ -6262,6 +6262,12 @@ async function startApp(){
   registerServiceWorker();
   await loadRoster();
   await loadDay(state.date);
+  // Fetches the ACTUAL role for whatever credentials are stored (admin
+  // master password, or a specific username/password) before the first
+  // render — without this, CURRENT_ROLE never reflected reality and every
+  // account effectively had full admin access no matter what role they
+  // were actually assigned in Manage Users.
+  await refreshRole();
   // Demo/seed data disabled — see note at the other call sites.
   // await maybeSeedMaster(); await maybeSeedAug11(); await maybeSeedAug12(); await maybeSeedAug13();
   render();
@@ -6592,9 +6598,11 @@ window.addEventListener('keydown', (e)=>{
   }
 });
 (async function init(){
-  // Login temporarily disabled — app opens directly, no password gate, full access.
+  // Login temporarily disabled — app opens directly, no password gate.
   // To turn it back on later, restore: if(!CLIENT_AUTHED){ renderClientLoginScreen(); return; }
-  CURRENT_ROLE = 'admin';
+  // CURRENT_ROLE is no longer hardcoded here — startApp() calls
+  // refreshRole() to fetch the real role for whatever credentials are
+  // stored, so an account actually gets the permissions it was assigned.
   await startApp();
 })();
 </script>
