@@ -91,8 +91,8 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
 }
 
 /* HEADER */
-.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;gap:16px;flex-wrap:wrap;}
-.account-chip{position:fixed;top:14px;right:16px;z-index:60;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 8px 6px 14px;box-shadow:var(--shadow-md);font-size:12.5px;}
+.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;gap:16px;flex-wrap:wrap;position:relative;padding-top:30px;}
+.account-chip{position:absolute;top:0;right:0;z-index:5;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 8px 6px 14px;box-shadow:var(--shadow-sm);font-size:12.5px;}
 .account-chip .account-name{color:var(--text);font-weight:600;white-space:nowrap;}
 .account-chip .account-role{color:var(--text-faint);font-size:11px;white-space:nowrap;}
 .account-chip .account-logout-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--coral);font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:14px;cursor:pointer;white-space:nowrap;}
@@ -100,6 +100,9 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
 @media (max-width:640px){
   .account-chip{position:static;margin:0 0 12px;justify-content:space-between;box-shadow:none;}
 }
+.scroll-to-top-btn{position:fixed;bottom:22px;right:20px;z-index:70;width:44px;height:44px;border-radius:50%;background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-size:20px;line-height:1;cursor:pointer;box-shadow:var(--shadow-md);display:none;align-items:center;justify-content:center;transition:border-color .12s,opacity .12s;}
+.scroll-to-top-btn:hover{border-color:var(--teal);}
+.scroll-to-top-btn.visible{display:flex;}
 .header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;}
 .header .sub{color:var(--text-muted);font-size:13px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
@@ -386,6 +389,7 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 </head>
 <body>
 <div class="app" id="app"><div class="loading-block"><span class="spinner spinner-lg"></span><div>Loading Coverage Desk…</div></div></div>
+<button id="scrollToTopBtn" class="scroll-to-top-btn" title="Scroll to top" aria-label="Scroll to top">↑</button>
 
 <script>
 const STATUS_COLORS = { assigned: 'var(--teal)', woi: 'var(--amber)', unassigned: 'var(--coral)' };
@@ -6552,6 +6556,20 @@ function findPortalMatch(row){
 }
 
 // ---------- init ----------
+// Scroll-to-top button — lives OUTSIDE #app (see the static HTML), so it
+// survives every re-render untouched; wired up exactly once here rather
+// than inside attachHandlers(), which would otherwise stack a fresh
+// duplicate listener on the same element every single render.
+(function setupScrollToTop(){
+  const btn = document.getElementById('scrollToTopBtn');
+  if(!btn) return;
+  window.addEventListener('scroll', ()=>{
+    btn.classList.toggle('visible', window.scrollY > 400);
+  }, { passive: true });
+  btn.addEventListener('click', ()=>{
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+})();
 window.addEventListener('beforeunload', (e)=>{
   if(state.dirty){
     e.preventDefault();
