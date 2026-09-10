@@ -349,6 +349,9 @@ select.cell-input{cursor:pointer;}
 .driving-person-select:hover{border-color:var(--border);}
 .driving-person-select:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
 .driving-person-select:disabled{cursor:default;opacity:.6;}
+.driving-person-select.driving-person-saving{border-color:var(--amber);}
+.driving-person-select.driving-person-saved{border-color:var(--teal);background:var(--teal-dim);transition:background .3s, border-color .3s;}
+.driving-person-select.driving-person-save-error{border-color:var(--coral);}
 .driving-person-select option, .driving-person-select optgroup{background:var(--surface-2);color:var(--text);}
 select.cell-input option, select.cell-input optgroup{background:var(--surface-2);color:var(--text);}
 select.cell-input.empty{color:var(--coral);}
@@ -5542,10 +5545,29 @@ function attachHandlers(conflictIds){
       const row = state.rows.find(r=>r.id===sel.dataset.id);
       if(!row) return;
       row.drivingPerson = sel.value;
-      markDirty();
-      render();
-      try{ await saveDrivingPersons(); }
-      catch(e){ alert('Driving Person was updated locally, but saving to the server failed: ' + (e && e.message ? e.message : e)); }
+      // Deliberately NOT markDirty(), and deliberately NOT calling render()
+      // here. This field saves itself immediately via its own dedicated
+      // endpoint (saveDrivingPersons), completely separate from the batched
+      // "Save changes" flow — tying it to the general dirty flag would
+      // leave that flag stuck on forever for a Team Lead account, since
+      // their Save button is hidden entirely, and the browser's "unsaved
+      // changes" warning would fire on every page leave even though
+      // nothing was actually unsaved. Skipping render() means the select
+      // element itself survives long enough to show the brief "saved"
+      // confirmation below — a full re-render would destroy and recreate
+      // it before that timeout ever fires.
+      sel.classList.remove('driving-person-saved', 'driving-person-save-error');
+      sel.classList.add('driving-person-saving');
+      try{
+        await saveDrivingPersons();
+        sel.classList.remove('driving-person-saving');
+        sel.classList.add('driving-person-saved');
+        setTimeout(()=>sel.classList.remove('driving-person-saved'), 1200);
+      }catch(e){
+        sel.classList.remove('driving-person-saving');
+        sel.classList.add('driving-person-save-error');
+        alert('Driving Person was updated locally, but saving to the server failed: ' + (e && e.message ? e.message : e));
+      }
     };
   });
 
