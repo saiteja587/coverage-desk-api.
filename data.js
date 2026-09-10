@@ -110,10 +110,17 @@ module.exports = async (req, res) => {
     const auth = await authenticate(req, db);
     if (!auth.ok) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Read-only users can GET anything, but any write (POST) — including
-    // managing other users — requires the admin role.
-    if (req.method === 'POST' && auth.role !== 'admin') {
-      return res.status(403).json({ error: 'Read-only account — admin permission required to save changes.' });
+    // Read-only users can GET anything. Writes (POST) normally require the
+    // admin role — with ONE deliberate exception: the driving_person
+    // resource, which a team_lead account is also allowed to write to.
+    // That's the only field a team_lead can ever touch; every other
+    // resource (including calls itself) stays admin-only, enforced here
+    // server-side rather than just hidden in the UI.
+    if (req.method === 'POST') {
+      const allowedForTeamLead = resource === 'driving_person';
+      if (auth.role !== 'admin' && !(auth.role === 'team_lead' && allowedForTeamLead)) {
+        return res.status(403).json({ error: 'You do not have permission to save changes to this.' });
+      }
     }
 
     if (resource === 'whoami') {
@@ -128,9 +135,10 @@ module.exports = async (req, res) => {
     if (resource === 'call_status') return await handleCallStatus(req, res, db);
     if (resource === 'call_backups') return await handleCallBackups(req, res, db);
     if (resource === 'students') return await handleStudents(req, res, db);
+    if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|driving_person|users|whoami' });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
@@ -149,12 +157,16 @@ async function handleUsers(req, res, db) {
   }
   if (req.method === 'POST') {
     const { action, id, username, password, role } = req.body || {};
+    // Only three real role values exist — anything unrecognized falls back
+    // to the safest option, 'user' (read-only), rather than accidentally
+    // granting write access to a typo'd or unexpected value.
+    const safeRole = (r) => (r === 'admin' || r === 'team_lead') ? r : 'user';
     if (action === 'create') {
       if (!username || !password) return res.status(400).json({ error: 'username and password required' });
       try {
         await db.query(
           'INSERT INTO users (id, username, password_hash, role) VALUES (?,?,?,?)',
-          [newId(), username, hashPw(password), role === 'admin' ? 'admin' : 'user']
+          [newId(), username, hashPw(password), safeRole(role)]
         );
         return res.status(200).json({ ok: true });
       } catch (e) {
@@ -163,7 +175,7 @@ async function handleUsers(req, res, db) {
       }
     }
     if (action === 'setRole') {
-      await db.query('UPDATE users SET role = ? WHERE id = ?', [role === 'admin' ? 'admin' : 'user', id]);
+      await db.query('UPDATE users SET role = ? WHERE id = ?', [safeRole(role), id]);
       return res.status(200).json({ ok: true });
     }
     if (action === 'resetPassword') {
@@ -187,20 +199,25 @@ async function handleCalls(req, res, db) {
     if (!date) return res.status(400).json({ error: 'date query param required' });
     let rows;
     try {
-      // Left-joins in the reschedule/cancel tag from the separate call_status
-      // table, if it's been created (see call_status_table.sql).
+      // Left-joins in the reschedule/cancel tag AND the driving person —
+      // both live in their own dedicated tables (see call_status_table.sql
+      // and call_driving_person_table.sql) specifically so a routine full-
+      // day resave of `calls` (which deletes and reinserts every row) can
+      // never wipe either of them out.
       [rows] = await db.query(
-        `SELECT c.*, cs.status AS cs_status, cs.status_fields_json AS cs_status_fields_json
+        `SELECT c.*, cs.status AS cs_status, cs.status_fields_json AS cs_status_fields_json,
+                cdp.driving_person AS cdp_driving_person
          FROM calls c
          LEFT JOIN call_status cs ON cs.call_id = c.id
+         LEFT JOIN call_driving_person cdp ON cdp.call_id = c.id
          WHERE c.call_date = ?
          ORDER BY c.created_at`,
         [date]
       );
     } catch (e) {
-      // call_status table doesn't exist yet — fall back so the app still
-      // works; reschedule tags just won't appear until the migration has
-      // been run once.
+      // One or both join tables don't exist yet — fall back so the app
+      // still works; those fields just won't appear until the migration
+      // has been run once.
       [rows] = await db.query('SELECT * FROM calls WHERE call_date = ? ORDER BY created_at', [date]);
     }
     const mapped = rows.map(rowToCall);
@@ -259,6 +276,7 @@ function rowToCall(row) {
     technicalPOC: row.technical_poc || '',
     onsite: !!row.is_onsite,
     candidateFirstInterview: !!row.is_candidate_first_interview,
+    drivingPerson: row.cdp_driving_person || '',
     status: row.cs_status || row.status || '',
     statusFields: safeParse(row.cs_status_fields_json || row.status_fields_json, []),
   };
@@ -562,6 +580,41 @@ async function handleCallBackups(req, res, db) {
       [date, reason, JSON.stringify(rows), rows.length]
     );
     return res.status(200).json({ ok: true });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- driving_person: the ONE field a Team Lead account can write ----------
+// Its own dedicated table, keyed by call_id — same reasoning as
+// call_status: living in the main `calls` table would mean a routine
+// full-day resave (which deletes and reinserts every row for that date)
+// could silently wipe out whatever a Team Lead had set, if the admin
+// doing that resave had stale data loaded. Keeping it separate means that
+// can never happen, no matter which account saves what, in which order.
+async function handleDrivingPerson(req, res, db) {
+  if (req.method === 'POST') {
+    const { date, rows } = req.body;
+    if (!date || !Array.isArray(rows)) return res.status(400).json({ error: 'date and rows[] required' });
+    try {
+      await db.beginTransaction();
+      // Full replace for the date — same delete-then-insert pattern as
+      // call_status/notes/roster. The frontend always sends the complete
+      // current set of driving-person values for this date.
+      await db.query('DELETE FROM call_driving_person WHERE call_date = ?', [date]);
+      const withValue = rows.filter(r => r.callId && r.drivingPerson);
+      if (withValue.length) {
+        const values = withValue.map(r => [r.callId, date, r.drivingPerson]);
+        await db.query(
+          'INSERT INTO call_driving_person (call_id, call_date, driving_person) VALUES ?',
+          [values]
+        );
+      }
+      await db.commit();
+      return res.status(200).json({ ok: true, count: withValue.length });
+    } catch (e) {
+      await db.rollback();
+      throw e;
+    }
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
