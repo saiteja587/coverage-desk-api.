@@ -334,6 +334,11 @@ td input.cell-input, td select.cell-input{width:100%;background:transparent;bord
 td input.cell-input:hover, td select.cell-input:hover{border-color:var(--border);}
 td input.cell-input:focus, td select.cell-input:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
 select.cell-input{cursor:pointer;}
+.driving-person-select{width:100%;background:transparent;border:1px solid transparent;color:var(--text);font-family:var(--body);font-size:13px;padding:5px 6px;border-radius:6px;cursor:pointer;}
+.driving-person-select:hover{border-color:var(--border);}
+.driving-person-select:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
+.driving-person-select:disabled{cursor:default;opacity:.6;}
+.driving-person-select option, .driving-person-select optgroup{background:var(--surface-2);color:var(--text);}
 select.cell-input option, select.cell-input optgroup{background:var(--surface-2);color:var(--text);}
 select.cell-input.empty{color:var(--coral);}
 select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
@@ -960,6 +965,17 @@ async function saveCallStatuses(){
     statusFields: r.statusFields || [],
   }));
   await apiCall('call_status', {method:'POST', body:{date: state.date, rows: payload}});
+}
+// Deliberately its own narrow resource, separate from the main calls save —
+// a Team Lead account is otherwise fully read-only, and this is the one
+// field they're allowed to write. Keeping it on its own endpoint means the
+// backend can permit exactly this one narrow update for that role without
+// opening up write access to anything else (time, candidate, assignee,
+// etc.) — the restriction is enforced server-side, not just hidden in the UI.
+async function saveDrivingPersons(){
+  if(!API_BASE_URL) return; // local-storage mode: drivingPerson already lives on the row like every other field
+  const payload = state.rows.map(r=>({ callId: r.id, drivingPerson: r.drivingPerson || '' }));
+  await apiCall('driving_person', {method:'POST', body:{date: state.date, rows: payload}});
 }
 // The "note for next shift" box reuses the existing notes table/resource —
 // stored as one special entry per date rather than a whole new backend
@@ -2740,9 +2756,10 @@ function render(){
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
+            ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
-        ${CURRENT_ROLE!=='user' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
+        ${CURRENT_ROLE==='admin' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
       </div>
     </div>
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
@@ -2766,7 +2783,7 @@ function render(){
     ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
     <div class="shift-note-box">
       <label for="shiftNoteInput">📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></label>
-      <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE==='user'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
+      <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE!=='admin'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
     </div>
 
     <div class="tabs-wrap" id="tabsWrap">
@@ -2838,7 +2855,7 @@ function renderDateSwitchSkeleton(){
 }
 
 function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, clientConflicts){
-  const isReadOnly = CURRENT_ROLE === 'user';
+  const isReadOnly = CURRENT_ROLE === 'user' || CURRENT_ROLE === 'team_lead';
   const teamLoad = computeTeamLoadCounts(allRowsToday || sortedRows);
   return `
     <div class="search-row">
@@ -3101,6 +3118,7 @@ function renderUsersPanel(){
       <input type="password" id="newUserPw" placeholder="Password…" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-size:13px">
       <select id="newUserRole" class="cell-input" style="background:var(--surface-2);border:1px solid var(--border);flex:none;width:auto">
         <option value="user">User (read-only)</option>
+        <option value="team_lead">Team Lead (can set Driving Person only)</option>
         <option value="admin">Admin</option>
       </select>
       <button class="btn primary" id="addUserBtn">Create</button>
@@ -3114,6 +3132,7 @@ function renderUsersPanel(){
         <span class="user-name">${escapeHtml(u.username)}</span>
         <select class="cell-input user-role-select" data-id="${u.id}" style="background:var(--surface-2);border:1px solid var(--border);width:auto;flex:none">
           <option value="user" ${u.role==='user'?'selected':''}>User (read-only)</option>
+          <option value="team_lead" ${u.role==='team_lead'?'selected':''}>Team Lead (Driving Person only)</option>
           <option value="admin" ${u.role==='admin'?'selected':''}>Admin (read + write)</option>
         </select>
         <button class="btn ghost user-reset-btn" data-id="${u.id}" data-username="${escapeHtml(u.username)}" style="font-size:11.5px">Reset password</button>
@@ -3154,9 +3173,9 @@ function renderDbSettingsPanel(){
       <button class="btn" id="backupAllBtn" ${state.backingUp?'disabled':''}>${state.backingUp?'⬇ Preparing backup…':'⬇ Backup all data (every date)'}</button>
       <div class="hint" style="margin-top:8px">Downloads every date you've ever saved — calls, roster, notes — as one file, for safekeeping outside this app.</div>
     </div>
-    ${CLIENT_AUTHED ? `<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-      <div class="hint" style="margin-bottom:8px">Logged in as: <strong>${CURRENT_ROLE==='admin'?'Admin':'User (read-only)'}</strong></div>
-      <button class="btn ghost" id="logoutBtn" style="color:var(--coral)">Log out (clear saved password)</button>
+    ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <div class="hint" style="margin-bottom:8px">Logged in as: <strong>${escapeHtml(CURRENT_USERNAME || 'Admin (master password)')} — ${CURRENT_ROLE==='admin'?'Admin':CURRENT_ROLE==='team_lead'?'Team Lead':'User (read-only)'}</strong></div>
+      <button class="btn ghost" id="logoutBtn" style="color:var(--coral)">🚪 Log out</button>
     </div>` : ''}
   </div>`;
 }
@@ -3850,13 +3869,15 @@ function renderStudentsMasterPanel(){
 function computePersonCallCounts(rows){
   const counts = {};
   rows.forEach(r=>{
-    if(r.woi || !r.assignee) return;
-    counts[r.assignee] = (counts[r.assignee]||0) + 1;
+    if(r.woi) return;
+    const person = r.drivingPerson || r.assignee;
+    if(!person) return;
+    counts[person] = (counts[person]||0) + 1;
   });
   return counts;
 }
 function renderRosterPanel(){
-  const isReadOnly = CURRENT_ROLE === 'user';
+  const isReadOnly = CURRENT_ROLE === 'user' || CURRENT_ROLE === 'team_lead';
   const teams = {};
   state.roster.forEach(p=>{ teams[p.team] = teams[p.team]||[]; teams[p.team].push(p); });
   const knownOrder = ["HYD Team","Pradeep Anna Team","Development Team","Marketing Team","Sai Team","Sandeep Anna Team"];
@@ -3999,6 +4020,27 @@ function buildRosterOptions(round, currentAssignee){
   return html;
 }
 const CUSTOM_ASSIGNEE_SENTINEL = '__custom_assignee__';
+// Driving Person is deliberately always an INDIVIDUAL, never a team — unlike
+// the main Assigned-to field, which can be a whole team at the coarse
+// routing stage. This is the finer breakdown a team lead does afterward:
+// "HYD Team has this call, and specifically Karthikeya is the one running it."
+function buildDrivingPersonOptions(currentValue){
+  const teams = {};
+  state.roster.forEach(p=>{ teams[p.team] = teams[p.team]||[]; teams[p.team].push(p); });
+  const knownOrder = ["HYD Team","Pradeep Anna Team","Development Team","Marketing Team","Sai Team","Sandeep Anna Team"];
+  const teamOrder = [...knownOrder, ...Object.keys(teams).filter(t=>!knownOrder.includes(t))];
+  let html = '';
+  teamOrder.filter(t=>teams[t] && teams[t].length).forEach(t=>{
+    html += `<optgroup label="${escapeHtml(t)}">` +
+      teams[t].map(p=>`<option value="${escapeHtml(p.name)}" ${p.name===currentValue?'selected':''}>${escapeHtml(p.name)}</option>`).join('') +
+      `</optgroup>`;
+  });
+  const knownNames = new Set(state.roster.map(p=>p.name));
+  if(currentValue && !knownNames.has(currentValue)){
+    html += `<optgroup label="Custom"><option value="${escapeHtml(currentValue)}" selected>✏️ ${escapeHtml(currentValue)}</option></optgroup>`;
+  }
+  return html;
+}
 
 // Team workload counts (HYD vs Pradeep Anna) across the whole day's calls —
 // shown on the dashboard so it's easy to see at a glance if one team is
@@ -4067,6 +4109,11 @@ function renderTable(rows, conflictIds, clientConflicts){
   // the column (and its cell) only render while that tab is active.
   const showOnsiteColumn = state.view === '2nd';
   const colCount = showOnsiteColumn ? 12 : 11;
+  // Driving Person is the one field a Team Lead account CAN write, even
+  // though they're otherwise read-only just like a plain 'user' account —
+  // this is deliberately checked independently of the general isReadOnly
+  // flag used everywhere else in the table.
+  const canEditDrivingPerson = CURRENT_ROLE === 'admin' || CURRENT_ROLE === 'team_lead';
   const rowsHtml = rows.map(r=>{
     const isConflict = conflictIds.has(r.id);
     const conflictReason = conflictIds.get(r.id) || '';
@@ -4127,16 +4174,18 @@ function renderTable(rows, conflictIds, clientConflicts){
           ${buildRosterOptions(r.round, r.assignee)}
         </select>
       </td>
-      <td data-label="Portal Assignee">${(()=>{
+      <td data-label="Driving Person">
+        <select class="driving-person-select" data-id="${r.id}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
+          <option value="">— none —</option>
+          ${buildDrivingPersonOptions(r.drivingPerson)}
+        </select>
+      </td>
+      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
         const pm = findPortalMatch(r);
-        if(!pm) return `<span style="color:var(--text-faint);font-size:11.5px">—</span>`;
+        if(!pm) return '';
         const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
-        return `<div style="font-size:12px;line-height:1.35" title="From the Interview Portal (${escapeHtml(pm.team||'')})">
-          <div style="font-weight:700;color:${differs?'var(--amber)':'var(--teal)'}">📡 ${pm.handler?escapeHtml(pm.handler):'Unassigned'}</div>
-          ${pm.status ? `<div style="color:var(--text-faint);font-size:10.5px">${escapeHtml(pm.status)}${differs?' · differs from local':''}</div>` : ''}
-        </div>`;
-      })()}</td>
-      <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
+        return `<button class="portal-check-btn" data-id="${r.id}" style="color:${differs?'var(--amber)':'var(--teal)'}" title="Interview Portal shows: ${escapeHtml(pm.handler||'Unassigned')}${pm.status?' — '+escapeHtml(pm.status):''}${differs?' (differs from local assignment)':''}">📡</button>`;
+      })()}${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="${colCount}"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
     ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="${colCount}"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
@@ -4177,7 +4226,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:52px">WOI</th>
       ${showOnsiteColumn ? `<th style="width:60px">Onsite</th>` : ''}
       <th style="width:140px">Assigned to</th>
-      <th style="width:120px">📡 Portal</th>
+      <th style="width:140px">Driving Person</th>
       <th style="width:96px"></th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
@@ -4381,7 +4430,7 @@ function attachHandlers(conflictIds){
   });
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
-    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false});
+    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
     markDirty(); render();
   };
   const clearAllBtn = document.getElementById('clearAll');
@@ -4567,7 +4616,7 @@ function attachHandlers(conflictIds){
   if(syncPortalBtn) syncPortalBtn.onclick = ()=>{ syncPortalData(); };
   const goHomeBtn = document.getElementById('goHomeBtn');
   if(goHomeBtn) goHomeBtn.onclick = async ()=>{
-    if(state.dirty && CURRENT_ROLE!=='user'){
+    if(state.dirty && CURRENT_ROLE==='admin'){
       await saveAllChanges();
     }
     state.showSummary = false;
@@ -4877,16 +4926,21 @@ function attachHandlers(conflictIds){
       ? '<span style="color:var(--teal)">✓ Connected successfully.</span>'
       : `<span style="color:var(--coral)">✗ Couldn't connect: ${escapeHtml(result.error)}</span>`;
   };
-  const logoutBtn = document.getElementById('logoutBtn');
-  if(logoutBtn) logoutBtn.onclick = async ()=>{
+  function doLogout(){
     ADMIN_PASSWORD = '';
+    CURRENT_USERNAME = '';
     try{
       localStorage.removeItem('coverage-desk-admin-pw');
+      localStorage.removeItem('coverage-desk-username');
       localStorage.removeItem('coverage-desk-client-auth');
       localStorage.removeItem('coverage-desk-client-role');
     }catch(e){}
     location.reload();
-  };
+  }
+  const logoutBtn = document.getElementById('logoutBtn');
+  if(logoutBtn) logoutBtn.onclick = doLogout;
+  const headerLogoutBtn = document.getElementById('headerLogoutBtn');
+  if(headerLogoutBtn) headerLogoutBtn.onclick = doLogout;
   const backupAllBtn = document.getElementById('backupAllBtn');
   if(backupAllBtn) backupAllBtn.onclick = async ()=>{
     state.backingUp = true;
@@ -5457,6 +5511,17 @@ function attachHandlers(conflictIds){
       if(!row) return;
       row.candidateFirstInterview = cb.checked;
       markDirty();
+    };
+  });
+  document.querySelectorAll('.driving-person-select').forEach(sel=>{
+    sel.onchange = async ()=>{
+      const row = state.rows.find(r=>r.id===sel.dataset.id);
+      if(!row) return;
+      row.drivingPerson = sel.value;
+      markDirty();
+      render();
+      try{ await saveDrivingPersons(); }
+      catch(e){ alert('Driving Person was updated locally, but saving to the server failed: ' + (e && e.message ? e.message : e)); }
     };
   });
 
@@ -6472,7 +6537,7 @@ window.addEventListener('beforeunload', (e)=>{
 // all. This is a safety net for anyone who forgets to click Save manually
 // for a long stretch, not a replacement for the explicit Save button.
 setInterval(()=>{
-  if(state.dirty && !state.saving && CURRENT_ROLE!=='user'){
+  if(state.dirty && !state.saving && CURRENT_ROLE==='admin'){
     saveAllChanges();
   }
 }, 5*60*1000);
@@ -6485,7 +6550,7 @@ window.addEventListener('keydown', (e)=>{
 
   if(ctrlOrCmd && e.key.toLowerCase()==='s'){
     e.preventDefault();
-    if(state.dirty && !state.saving && CURRENT_ROLE!=='user') saveAllChanges();
+    if(state.dirty && !state.saving && CURRENT_ROLE==='admin') saveAllChanges();
     return;
   }
   // Spreadsheet-style row navigation: ArrowUp/ArrowDown while focused in a
