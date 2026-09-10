@@ -58,8 +58,8 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
 .app{max-width:1180px;margin:0 auto;padding:28px 24px 80px;}
 @media (max-width:480px){
   .app{padding:16px 12px 60px;}
-  .header h1{font-size:21px;}
-  .header .sub{font-size:12px;}
+  .header h1{font-size:21px;margin:0;}
+  .header .sub{display:none;}
   .summary .cell{padding:10px 8px;}
   .summary .cell .num{font-size:18px;}
   .tab-btn{font-size:12px;padding:7px 10px;}
@@ -75,20 +75,52 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
    badges, inputs — a given cell contains. */
 @media (max-width:700px){
   .table-scroll{overflow-x:visible;}
-  table{min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
+  table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
   thead{display:none;}
-  tbody{display:flex;flex-direction:column;gap:10px;}
-  tbody tr{display:block;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:6px 14px;}
+  tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
+  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px 9px;}
   tbody tr.row-unassigned{background:var(--coral-dim);}
-  tbody tr.doubt-note-row{background:var(--amber-dim);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
-  tbody tr.doubt-note-row td{display:block;padding:0;border:none;}
-  td{display:block;padding:9px 0;border-bottom:1px solid var(--border-soft);}
-  tr td:last-child{border-bottom:none;}
-  td::before{content:attr(data-label);display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);font-weight:600;margin-bottom:4px;}
-  td.select-cell::before{content:"Select";}
-  td.actions-cell{display:flex;justify-content:flex-end;gap:6px;}
-  td.actions-cell::before{display:none;}
+  /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
+     full-width blocks, not the flex meta-grid the main data row uses. */
+  tbody tr.doubt-note-row,
+  tbody tr.status-note-row,
+  tbody tr.pin-detail-row{display:block;border-radius:12px;padding:10px 12px;}
+  tbody tr.doubt-note-row{background:var(--amber-dim);border:1px solid var(--border);}
+  tbody tr.pin-detail-row{background:var(--surface-2);}
+  tbody tr.doubt-note-row td,
+  tbody tr.status-note-row td,
+  tbody tr.pin-detail-row td{display:block;padding:0;border:none;}
+
+  td{padding:0 8px 7px 0;border-bottom:none;}
+  td::before{content:attr(data-label);display:block;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);font-weight:600;margin-bottom:2px;}
   td .cell-input{width:100%;text-align:left;}
+
+  /* Compact meta line: select, time, round, duration — explicit percentage
+     widths, not 'auto'. A <select>'s inner width:100% fights with an
+     auto-sized flex item (the select's own content width wins, which is
+     what made Round/Duration balloon wide with a big gap before this). */
+  td.select-cell{order:1;flex:0 0 auto;padding-right:6px;}
+  td.select-cell::before{display:none;}
+  td[data-label="Time"]{order:2;flex:0 0 34%;}
+  td[data-label="Round"]{order:3;flex:0 0 30%;}
+  td[data-label="Duration"]{order:4;flex:0 0 30%;}
+
+  /* Second compact line: country, WOI, onsite. */
+  td[data-label="Country"]{order:5;flex:0 0 34%;}
+  td[data-label="WOI"]{order:6;flex:0 0 30%;}
+  td[data-label="Onsite"]{order:7;flex:0 0 30%;}
+
+  /* Candidate gets its own full-width line — it carries the name plus
+     several small badges, and is the main thing being scanned for. */
+  td[data-label="Candidate"]{order:8;flex:0 0 100%;padding-top:4px;padding-right:0;}
+  td[data-label="Company"]{order:9;flex:0 0 100%;padding-right:0;}
+
+  /* Assigned To / Driving Person share a row when both are present. */
+  td[data-label="Assigned to"]{order:10;flex:1 1 50%;padding-top:2px;}
+  td[data-label="Driving Person"]{order:11;flex:1 1 50%;padding-top:2px;padding-right:0;}
+
+  td.actions-cell{order:12;flex:0 0 100%;display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:7px;padding-right:0;border-top:1px solid var(--border-soft);}
+  td.actions-cell::before{display:none;}
 }
 
 /* HEADER */
@@ -155,6 +187,7 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .undo-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:12px 16px;border-radius:10px;font-size:13px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:100;}
 .undo-toast button{background:var(--teal);color:#FFFFFF;border:none;padding:6px 14px;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer;}
 .shift-note-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px;}
+.mobile-collapse-toggle{display:none;}
 .shift-note-box label{display:block;font-size:11.5px;font-weight:600;color:var(--text-muted);margin-bottom:6px;}
 .shift-note-box textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:vertical;min-height:44px;}
 @keyframes pulse-save{0%,100%{opacity:1;}50%{opacity:.6;}}
@@ -396,6 +429,55 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .empty-state p{font-size:13px;margin:0 0 16px;}
 
 .footer-note{margin-top:14px;font-size:11.5px;color:var(--text-faint);text-align:center;}
+/* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
+   stylesheet (not up near the other mobile card-view rules) so it reliably
+   wins the cascade over the base .shift-note-box/.strip-wrap/etc rules
+   defined further down in this file, regardless of what gets added
+   between here and there later. Equal-specificity CSS rules are decided
+   by source order, not by which one is "more specific in intent" — an
+   earlier override for a later-defined base rule silently loses.
+   The card view above fixes each record's own height, but on a phone the
+   bigger problem was everything ABOVE the list: header, buttons, shift
+   note, a keyboard-shortcut hint (meaningless on a touchscreen), and the
+   coverage graph could together push the first call off the bottom of the
+   screen entirely. This shrinks that stack so the actual list — the
+   reason someone opened the app — shows up right away. */
+@media (max-width:700px){
+  .keyboard-hint{display:none;}
+  .shift-note-box{padding:8px 10px;margin-bottom:10px;}
+  .shift-note-box label{font-size:10.5px;margin-bottom:4px;}
+  .shift-note-box textarea{min-height:32px;font-size:12.5px;padding:7px 9px;}
+  .strip-wrap{padding:10px 12px 8px;margin-bottom:12px;}
+  .strip-title{font-size:10px;margin-bottom:0;flex-wrap:wrap;gap:2px 8px;}
+  .strip{height:44px;}
+  .strip-hint{display:none;}
+  .tabs-wrap{margin-bottom:10px;}
+
+  /* Collapsed by default on mobile — these two sections are useful but
+     secondary to the actual call list, and together with the header/
+     buttons above them were pushing the first real call off the bottom
+     of the screen entirely on a phone. */
+  .shift-note-label-row{display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;}
+  .mobile-collapse-toggle{display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);width:24px;height:24px;border-radius:6px;font-size:12px;cursor:pointer;flex-shrink:0;}
+  .shift-note-collapsible{max-height:0;overflow:hidden;}
+  .shift-note-box.mobile-expanded .shift-note-collapsible{max-height:260px;margin-top:8px;}
+  .mobile-collapsed-preview{font-size:11.5px;color:var(--text-faint);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  .strip-title{position:relative;}
+  .strip-title-legend{display:none;}
+  .strip-title .mobile-collapse-toggle{position:absolute;right:0;top:-2px;}
+  .strip-collapsible{max-height:0;overflow:hidden;}
+  .strip-wrap.mobile-expanded .strip-collapsible{max-height:300px;margin-top:8px;}
+
+  .summary{margin-bottom:10px;}
+  .summary .cell{padding:8px 10px;min-width:66px;}
+  .summary .cell .num{font-size:16px;}
+  .summary .cell .lbl{font-size:9px;margin-top:3px;}
+  .team-load-strip{gap:6px;margin-bottom:10px;}
+  .team-load-cell{padding:6px 10px;font-size:11px;}
+  .toolbar{gap:6px;margin-bottom:10px;}
+  .toolbar .btn{font-size:11.5px;padding:6px 10px;}
+}
 </style>
 </head>
 <body>
@@ -518,6 +600,8 @@ let state = {
   groupByCompany: false,
   showMoreMenu: false,
   showAllDates: false,
+  mobileNoteExpanded: false,
+  mobileStripExpanded: false,
   showClientSearch: false,
   clientSearchQuery: '',
   clientSearchResults: null,
@@ -2815,9 +2899,15 @@ function render(){
     ${renderActivePanel(activePanel)}
     ` : `
     ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
-    <div class="shift-note-box">
-      <label for="shiftNoteInput">📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></label>
-      <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE!=='admin'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
+    <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
+      <label for="shiftNoteInput" class="shift-note-label-row">
+        <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
+        <button type="button" class="mobile-collapse-toggle" id="toggleMobileNote" title="Show/hide on mobile">${state.mobileNoteExpanded?'▴':'▾'}</button>
+      </label>
+      ${(!state.mobileNoteExpanded && state.shiftNote) ? `<div class="mobile-collapsed-preview">${escapeHtml(state.shiftNote.slice(0,60))}${state.shiftNote.length>60?'…':''}</div>` : ''}
+      <div class="shift-note-collapsible">
+        <textarea id="shiftNoteInput" placeholder="e.g. 'Ran out of Marketing Team capacity after 9 PM, overflowed a few to Pradeep Anna' or 'Client X asked to push their whole batch to tomorrow'" ${CURRENT_ROLE!=='admin'?'disabled':''}>${escapeHtml(state.shiftNote||'')}</textarea>
+      </div>
     </div>
 
     <div class="tabs-wrap" id="tabsWrap">
@@ -2829,7 +2919,7 @@ function render(){
         <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5">↻ Rescheduled/Cancelled/No Response <span class="n">${rescheduledRows.length}</span></button>
       </div>
     </div>
-    <div class="hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
+    <div class="hint keyboard-hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
 
     ${state.view!=='notes' ? renderStrip(sortedAll, conflictIds) : ''}
 
@@ -3526,13 +3616,15 @@ function renderStrip(rows, conflictIds){
   }).join('');
   const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':halfHourBucketLabel(k*30)}</div>`).join('');
   const minW = Math.max(keys.length*46, 260);
-  return `<div class="strip-wrap">
-    <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span>● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span></div>
+  return `<div class="strip-wrap ${state.mobileStripExpanded?'mobile-expanded':''}">
+    <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span class="strip-title-legend">● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span><button type="button" class="mobile-collapse-toggle" id="toggleMobileStrip" title="Show/hide on mobile">${state.mobileStripExpanded?'▴':'▾'}</button></div>
+    <div class="strip-collapsible">
     <div class="strip-scroll"><div style="min-width:${minW}px">
     <div class="strip">${barsHtml}</div>
     <div class="strip-hours">${lblsHtml}</div>
     </div></div>
     <div class="strip-hint">Hover a bar for free-slot details, or click it to jump straight to those calls below.</div>
+    </div>
   </div>`;
 }
 
@@ -4630,6 +4722,18 @@ function attachHandlers(conflictIds){
       saveBtn.textContent = '💾 Save changes';
     }
   });
+  const toggleMobileNoteBtn = document.getElementById('toggleMobileNote');
+  if(toggleMobileNoteBtn) toggleMobileNoteBtn.onclick = (e)=>{
+    e.preventDefault();
+    state.mobileNoteExpanded = !state.mobileNoteExpanded;
+    render();
+  };
+  const toggleMobileStripBtn = document.getElementById('toggleMobileStrip');
+  if(toggleMobileStripBtn) toggleMobileStripBtn.onclick = (e)=>{
+    e.preventDefault();
+    state.mobileStripExpanded = !state.mobileStripExpanded;
+    render();
+  };
   const undoDeleteBtn = document.getElementById('undoDeleteBtn');
   if(undoDeleteBtn) undoDeleteBtn.onclick = ()=>{
     if(!state.lastDeleted) return;
