@@ -1,8 +1,20 @@
-// v2 — network-first for the app shell, so pushing a new index.html always
-// reaches every device immediately instead of getting stuck behind an old
-// cached copy. Cache is now purely an offline fallback, not the primary source.
-const CACHE = 'coverage-desk-v2';
-const APP_SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
+// Coverage Desk service worker.
+// Network-first for the app shell (index.html, manifest, icons) — a new
+// deployment always reaches every device immediately rather than getting
+// stuck behind a stale cached copy. The cache only kicks in as an OFFLINE
+// fallback, never as the primary source.
+//
+// Bump CACHE whenever you want to force every device to drop old cached
+// files (rare — the network-first strategy already means this normally
+// isn't needed).
+const CACHE = 'coverage-desk-v3';
+const APP_SHELL = [
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
+];
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -22,10 +34,13 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  if (e.request.url.includes('/api/')) return; // never cache live data
+  // Never cache live data — calls, roster, notes, incentives, everything
+  // under /api/ must always come straight from the network. Serving a
+  // cached API response would show stale coverage data, which is exactly
+  // what the backend's own Cache-Control: no-store headers are already
+  // trying to prevent.
+  if (e.request.url.includes('/api/')) return;
 
-  // Network-first: always try to get the freshest file when online.
-  // Cache only kicks in if the network request fails (offline).
   e.respondWith(
     fetch(e.request)
       .then((resp) => {
