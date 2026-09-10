@@ -92,6 +92,14 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
 
 /* HEADER */
 .header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;gap:16px;flex-wrap:wrap;}
+.account-chip{position:fixed;top:14px;right:16px;z-index:60;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 8px 6px 14px;box-shadow:var(--shadow-md);font-size:12.5px;}
+.account-chip .account-name{color:var(--text);font-weight:600;white-space:nowrap;}
+.account-chip .account-role{color:var(--text-faint);font-size:11px;white-space:nowrap;}
+.account-chip .account-logout-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--coral);font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:14px;cursor:pointer;white-space:nowrap;}
+.account-chip .account-logout-btn:hover{border-color:var(--coral);}
+@media (max-width:640px){
+  .account-chip{position:static;margin:0 0 12px;justify-content:space-between;box-shadow:none;}
+}
 .header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;}
 .header .sub{color:var(--text-muted);font-size:13px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
@@ -2734,6 +2742,11 @@ function render(){
   const activePanel = getActivePanelName();
 
   app.innerHTML = `
+    ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="account-chip">
+      <span class="account-name">👤 ${escapeHtml(CURRENT_USERNAME || 'Admin')}</span>
+      <span class="account-role">${CURRENT_ROLE==='admin'?'Admin':CURRENT_ROLE==='team_lead'?'Team Lead':'Read-only'}</span>
+      <button class="account-logout-btn" id="topLogoutBtn">Log out</button>
+    </div>` : ''}
     <div class="header">
       <div>
         <h1>Coverage Desk</h1>
@@ -2745,14 +2758,14 @@ function render(){
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
         <button class="btn ${(state.notifications && state.notifications.length) || state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="n">${state.notifications.length}</span>` : '')}</button>
-        <button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>
+        ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="More actions">⋯ More</button>
           ${state.showMoreMenu ? `<div class="more-menu-dropdown">
             <button class="more-menu-item" id="loadScrumPrep">📋 Load from Scrum Prep</button>
-            <button class="more-menu-item" id="toggleSummary">📊 Summary</button>
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
-            <button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
@@ -2889,10 +2902,10 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       ${renderFinalizeControls()}`}
       ${isReadOnly ? `<button class="btn" id="toggleRoster">Team (${state.roster.length})</button>` : ''}
       <button class="btn" id="togglePortalSync">📡 Team Sync</button>
-      <button class="btn" id="toggleIncentives">💰 Incentives</button>
-      <button class="btn" id="toggleBackups">🕐 Backups</button>
-      ${sum.conflicts ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
-      <button class="btn ghost" id="removeDuplicatesBtn" style="color:var(--amber)" title="Find and remove duplicate calls — same candidate, time, and round">🧹 Remove Duplicates</button>
+      ${CURRENT_ROLE==='admin' ? `<button class="btn" id="toggleIncentives">💰 Incentives</button>` : ''}
+      ${CURRENT_ROLE==='admin' ? `<button class="btn" id="toggleBackups">🕐 Backups</button>` : ''}
+      ${(CURRENT_ROLE==='admin' && sum.conflicts) ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
+      ${CURRENT_ROLE==='admin' ? `<button class="btn ghost" id="removeDuplicatesBtn" style="color:var(--amber)" title="Find and remove duplicate calls — same candidate, time, and round">🧹 Remove Duplicates</button>` : ''}
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${buildCombinedAssigneeFilterOptions()}
@@ -4108,7 +4121,12 @@ function renderTable(rows, conflictIds, clientConflicts){
   // showing an empty checkbox on every 1st round row was just noise, so
   // the column (and its cell) only render while that tab is active.
   const showOnsiteColumn = state.view === '2nd';
-  const colCount = showOnsiteColumn ? 12 : 11;
+  // Driving Person is for breaking a TEAM-level 1st round assignment down
+  // to a specific individual afterward. On the 2nd Round & Above tab,
+  // Assigned To is already a specific individual directly — the column
+  // has nothing left to add there, so it's hidden on that tab specifically.
+  const showDrivingPersonColumn = state.view !== '2nd';
+  const colCount = 10 + (showOnsiteColumn?1:0) + (showDrivingPersonColumn?1:0);
   // Driving Person is the one field a Team Lead account CAN write, even
   // though they're otherwise read-only just like a plain 'user' account —
   // this is deliberately checked independently of the general isReadOnly
@@ -4174,12 +4192,12 @@ function renderTable(rows, conflictIds, clientConflicts){
           ${buildRosterOptions(r.round, r.assignee)}
         </select>
       </td>
-      <td data-label="Driving Person">
+      ${showDrivingPersonColumn ? `<td data-label="Driving Person">
         <select class="driving-person-select" data-id="${r.id}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
           <option value="">— none —</option>
           ${buildDrivingPersonOptions(r.drivingPerson)}
         </select>
-      </td>
+      </td>` : ''}
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
         const pm = findPortalMatch(r);
         if(!pm) return '';
@@ -4226,7 +4244,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:52px">WOI</th>
       ${showOnsiteColumn ? `<th style="width:60px">Onsite</th>` : ''}
       <th style="width:140px">Assigned to</th>
-      <th style="width:140px">Driving Person</th>
+      ${showDrivingPersonColumn ? `<th style="width:140px">Driving Person</th>` : ''}
       <th style="width:96px"></th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
@@ -4941,6 +4959,8 @@ function attachHandlers(conflictIds){
   if(logoutBtn) logoutBtn.onclick = doLogout;
   const headerLogoutBtn = document.getElementById('headerLogoutBtn');
   if(headerLogoutBtn) headerLogoutBtn.onclick = doLogout;
+  const topLogoutBtn = document.getElementById('topLogoutBtn');
+  if(topLogoutBtn) topLogoutBtn.onclick = doLogout;
   const backupAllBtn = document.getElementById('backupAllBtn');
   if(backupAllBtn) backupAllBtn.onclick = async ()=>{
     state.backingUp = true;
