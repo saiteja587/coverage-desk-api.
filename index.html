@@ -1535,7 +1535,17 @@ function parseDetailedLine(line, defaultRound){
   // pattern used to leave round/duration stuck inside one unsplit chunk,
   // undetectable by either the round or duration regex, silently
   // defaulting the round to 1st even when it was clearly stated.
-  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim()).filter(Boolean);
+  // Adjacent delimiters (e.g. an en-dash immediately followed by "- ", as
+  // in "... – - Phn Interview - Procea Ltd ...") can leave a stray leading
+  // hyphen stuck onto the front of a segment — the en-dash pattern's
+  // trailing \s* greedily eats the space the following hyphen delimiter
+  // needed to be recognized as its own split point. Left uncleaned, that
+  // stray "- " breaks the "is this just a descriptor phrase" check below
+  // (isDescriptorSegment expects the segment to START with the phrase),
+  // which was causing the real company name one segment later to never be
+  // reached — the loop stopped early on "- Phn Interview" instead of
+  // skipping it and continuing on to "Procea Ltd".
+  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean);
   const timeRegex = /(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])/;
   let name = segs[0] || skeleton;
   // Defensive second pass: catches stray leading numbering the first strip
@@ -1568,6 +1578,7 @@ function parseDetailedLine(line, defaultRound){
       || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behavioral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
   }
   let company = '';
+  let companyEndIdx = -1;
   for(let i=1; i<segs.length; i++){
     if(i===timeIdx) continue;
     if(isDescriptorSegment(segs[i])) continue;
@@ -1576,7 +1587,34 @@ function parseDetailedLine(line, defaultRound){
     // source has a double-dash-like gap ("Interview - -Houston...") — a
     // company name should never actually start with a bare hyphen.
     company = segs[i].replace(/^-+\s*/, '');
+    companyEndIdx = i;
     break;
+  }
+  // A hyphen INSIDE the company name itself (e.g. "The Co - operative
+  // Bank") gets split apart by the exact same delimiter that separates
+  // real fields, since the parser can't tell "a dash separating fields"
+  // from "a dash that's part of this client's actual name" just from the
+  // punctuation. If whatever comes right after the detected company is
+  // ALSO not time/duration/round/descriptor, it's almost certainly a
+  // continuation of that same name rather than a distinct new field —
+  // rejoin it instead of silently losing it.
+  if(companyEndIdx !== -1){
+    let j = companyEndIdx + 1;
+    while(
+      j < segs.length && j !== timeIdx &&
+      !isDescriptorSegment(segs[j]) &&
+      !/^duration:?/i.test(segs[j]) &&
+      !/^(final|\d+\w{0,4})\s*rounds?$/i.test(segs[j].trim()) &&
+      !/^\d{1,2}[:.]\d{2}\s*[AaPp][Mm]?$/.test(segs[j].trim()) &&
+      // A single bare word sitting as the very LAST segment in the whole
+      // line, with nothing after it, is the exact shape of a trailing POC
+      // name ("...- vamsi", "...- kumar") — reserved for the separate
+      // trailing-POC check below, not something to absorb into company.
+      !(j === segs.length - 1 && /^[A-Za-z]+$/.test(segs[j].trim()))
+    ){
+      company += ' - ' + segs[j];
+      j++;
+    }
   }
 
   const timeSource = timeIdx>=0 ? segs[timeIdx] : skeleton;
