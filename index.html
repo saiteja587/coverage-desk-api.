@@ -66,62 +66,13 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
   .date-row .btn.primary{font-size:11px;padding:8px 10px;}
 }
 
-/* MOBILE CARD VIEW — transforms the calls table into stacked cards below 700px,
-   so assigning calls on a phone never needs horizontal scrolling. Reuses the
-   exact same <tr>/<td> markup and data-field attributes as the desktop table,
-   so every editing/selection handler keeps working unchanged — only the CSS
-   display mode changes. Label sits above each cell's content (rather than
-   side-by-side) so it stays clean regardless of how many elements — icons,
-   badges, inputs — a given cell contains. */
-@media (max-width:700px){
-  .table-scroll{overflow-x:visible;}
-  table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
-  thead{display:none;}
-  tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
-  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px 9px;}
-  tbody tr.row-unassigned{background:var(--coral-dim);}
-  /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
-     full-width blocks, not the flex meta-grid the main data row uses. */
-  tbody tr.doubt-note-row,
-  tbody tr.status-note-row,
-  tbody tr.pin-detail-row{display:block;border-radius:12px;padding:10px 12px;}
-  tbody tr.doubt-note-row{background:var(--amber-dim);border:1px solid var(--border);}
-  tbody tr.pin-detail-row{background:var(--surface-2);}
-  tbody tr.doubt-note-row td,
-  tbody tr.status-note-row td,
-  tbody tr.pin-detail-row td{display:block;padding:0;border:none;}
-
-  td{padding:0 8px 7px 0;border-bottom:none;}
-  td::before{content:attr(data-label);display:block;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);font-weight:600;margin-bottom:2px;}
-  td .cell-input{width:100%;text-align:left;}
-
-  /* Compact meta line: select, time, round, duration — explicit percentage
-     widths, not 'auto'. A <select>'s inner width:100% fights with an
-     auto-sized flex item (the select's own content width wins, which is
-     what made Round/Duration balloon wide with a big gap before this). */
-  td.select-cell{order:1;flex:0 0 auto;padding-right:6px;}
-  td.select-cell::before{display:none;}
-  td[data-label="Time"]{order:2;flex:0 0 34%;}
-  td[data-label="Round"]{order:3;flex:0 0 30%;}
-  td[data-label="Duration"]{order:4;flex:0 0 30%;}
-
-  /* Second compact line: country, WOI, onsite. */
-  td[data-label="Country"]{order:5;flex:0 0 34%;}
-  td[data-label="WOI"]{order:6;flex:0 0 30%;}
-  td[data-label="Onsite"]{order:7;flex:0 0 30%;}
-
-  /* Candidate gets its own full-width line — it carries the name plus
-     several small badges, and is the main thing being scanned for. */
-  td[data-label="Candidate"]{order:8;flex:0 0 100%;padding-top:4px;padding-right:0;}
-  td[data-label="Company"]{order:9;flex:0 0 100%;padding-right:0;}
-
-  /* Assigned To / Driving Person share a row when both are present. */
-  td[data-label="Assigned to"]{order:10;flex:1 1 50%;padding-top:2px;}
-  td[data-label="Driving Person"]{order:11;flex:1 1 50%;padding-top:2px;padding-right:0;}
-
-  td.actions-cell{order:12;flex:0 0 100%;display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:7px;padding-right:0;border-top:1px solid var(--border-soft);}
-  td.actions-cell::before{display:none;}
-}
+/* MOBILE CARD VIEW — transforms the calls table into stacked cards below
+   700px. Moved to the very end of the stylesheet (see below) so it
+   reliably wins the cascade over base rules like table{min-width:1050px}
+   defined later in this file — a media query doesn't add specificity, so
+   a same-specificity rule appearing later in source order still wins
+   regardless of whether the media query matches. Keeping the actual rules
+   at the end is what makes that guaranteed rather than order-dependent. */
 
 /* HEADER */
 .header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;gap:16px;flex-wrap:wrap;position:relative;padding-top:30px;}
@@ -429,6 +380,72 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .empty-state p{font-size:13px;margin:0 0 16px;}
 
 .footer-note{margin-top:14px;font-size:11.5px;color:var(--text-faint);text-align:center;}
+/* MOBILE CARD VIEW — transforms the calls table into stacked cards below
+   700px, so assigning calls on a phone never needs horizontal scrolling.
+   Placed here at the end of the stylesheet specifically so it reliably
+   overrides table{min-width:1050px} and every other base rule — a media
+   query doesn't add specificity, so a same-specificity base rule appearing
+   later in source order would otherwise still win even while this media
+   query correctly matches (exactly the bug that was silently defeating
+   this entire section before it was moved here). */
+@media (max-width:700px){
+  .table-scroll{overflow-x:visible;}
+  table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
+  thead{display:none;}
+  tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
+  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px 9px;}
+  tbody tr.row-unassigned{background:var(--coral-dim);}
+  /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
+     full-width blocks, not the flex meta-grid the main data row uses. */
+  tbody tr.doubt-note-row,
+  tbody tr.status-note-row,
+  tbody tr.pin-detail-row{display:block;border-radius:12px;padding:10px 12px;}
+  tbody tr.doubt-note-row{background:var(--amber-dim);border:1px solid var(--border);}
+  tbody tr.pin-detail-row{background:var(--surface-2);}
+  tbody tr.doubt-note-row td,
+  tbody tr.status-note-row td,
+  tbody tr.pin-detail-row td{display:block;padding:0;border:none;}
+
+  td{padding:0 8px 7px 0;border-bottom:none;max-width:100%;box-sizing:border-box;}
+  td::before{content:attr(data-label);display:block;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);font-weight:600;margin-bottom:2px;}
+  td .cell-input{width:100%;text-align:left;max-width:100%;box-sizing:border-box;}
+  td select.cell-input, td .driving-person-select{width:100%;max-width:100%;box-sizing:border-box;}
+
+  /* Compact meta line: select, time, round, duration — explicit percentage
+     widths, not 'auto'. A <select>'s inner width:100% fights with an
+     auto-sized flex item (the select's own content width wins, which is
+     what made Round/Duration balloon wide with a big gap before this). */
+  td.select-cell{order:1;flex:0 0 auto;padding-right:6px;}
+  td.select-cell::before{display:none;}
+  td[data-label="Time"]{order:2;flex:0 0 34%;}
+  td[data-label="Round"]{order:3;flex:0 0 30%;}
+  td[data-label="Duration"]{order:4;flex:0 0 30%;}
+
+  /* Second compact line: country, WOI, onsite. */
+  td[data-label="Country"]{order:5;flex:0 0 34%;}
+  td[data-label="WOI"]{order:6;flex:0 0 30%;}
+  td[data-label="Onsite"]{order:7;flex:0 0 30%;}
+
+  /* Candidate gets its own full-width line — it carries the name plus
+     several small badges, and is the main thing being scanned for. */
+  td[data-label="Candidate"]{order:8;flex:0 0 100%;padding-top:4px;padding-right:0;}
+  td[data-label="Company"]{order:9;flex:0 0 100%;padding-right:0;}
+
+  /* Assigned To / Driving Person share a row when both are present. */
+  td[data-label="Assigned to"]{order:10;flex:1 1 50%;padding-top:2px;min-width:0;}
+  td[data-label="Driving Person"]{order:11;flex:1 1 50%;padding-top:2px;padding-right:0;min-width:0;}
+
+  td.actions-cell{order:12;flex:0 0 100%;display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:7px;padding-right:0;border-top:1px solid var(--border-soft);}
+  td.actions-cell::before{display:none;}
+
+  /* The desktop-only top scrollbar helper (for the wide table) has
+     nothing to do once the table is a stack of cards — hide it so it
+     can't leave a phantom wide element behind. */
+  #tableScrollTop{display:none;}
+  .mini-badge{width:22px;height:22px;font-size:11px;}
+  .flag-icon, .cat-badge{padding:2px;}
+}
+
 /* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
    stylesheet (not up near the other mobile card-view rules) so it reliably
    wins the cascade over the base .shift-note-box/.strip-wrap/etc rules
@@ -4845,6 +4862,21 @@ function attachHandlers(conflictIds){
   const clientSearchInput = document.getElementById('clientSearchInput');
   if(clientSearchInput) clientSearchInput.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runClientSearchBtn').click(); }
+  });
+  // These small badges (P, ↻, C, !, ⚕/🎓 category, 📡 portal match, ⏰
+  // conflict, the status pill) put their real information in a hover
+  // tooltip — completely inaccessible on a touchscreen, which has no
+  // hover state at all. A tap now shows the same text directly. The N
+  // (unmatched student) badge already has its own tap action (opens the
+  // add-student form), so it's deliberately excluded here.
+  document.querySelectorAll('.mini-badge:not(.quick-add-student), .flag-icon, .cat-badge, .prior-badge').forEach(badge=>{
+    const info = badge.getAttribute('title');
+    if(!info) return;
+    badge.style.cursor = 'pointer';
+    badge.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      alert(info);
+    });
   });
   document.querySelectorAll('.quick-add-student').forEach(badge=>{
     badge.onclick = async ()=>{
