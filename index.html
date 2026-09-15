@@ -2046,6 +2046,66 @@ function parseRescheduleText(text){
     const time = timeMatch ? normalizeTime(timeMatch[1]) : '';
     results.push({ candidate, time, company, status, side, reason, raw: full });
   });
+
+  // "All calls reschedule from Interviewer side sir @Sashank Bava
+  // @Pradeep Anna" — a single blanket line covering every OTHER call
+  // listed in the same paste, instead of each one stating its own
+  // status. That kind of line has a status word but deliberately no time
+  // of its own, so it never satisfies looksLikeRescheduleLine() above and
+  // was previously skipped with nothing recognized at all — same for
+  // every plain call listing under it, since those have a time but no
+  // status word of their own either.
+  const blanketBlock = blocks.find(blockLines=>{
+    const full = blockLines.join(' ');
+    return /\ball\s+calls?\b/i.test(full) && /\b(reschedul\w*|cancel\w*|not\s*respond\w*|no\s*response)\b/i.test(full);
+  });
+  if(blanketBlock){
+    const blanketFull = blanketBlock.join(' ');
+    let blanketStatus = null;
+    if(/not\s*respond\w*|no\s*response/i.test(blanketFull)) blanketStatus = 'not_responded';
+    else if(/cancel/i.test(blanketFull)) blanketStatus = 'cancelled';
+    else if(/reschedul/i.test(blanketFull)) blanketStatus = 'rescheduled';
+
+    let blanketSide = null;
+    if(/candidate\s*side/i.test(blanketFull)) blanketSide = 'candidate side';
+    else if(/interviewer\s*side/i.test(blanketFull)) blanketSide = 'interviewer side';
+    else if(/client\s*side/i.test(blanketFull)) blanketSide = 'client side';
+    else if(/recruiter\s*(?:'s)?\s*side/i.test(blanketFull)) blanketSide = 'recruiter side';
+
+    let blanketReason = null;
+    const blanketReasonMatch = blanketFull.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
+    if(blanketReasonMatch) blanketReason = blanketReasonMatch[1].trim();
+
+    if(blanketStatus){
+      blocks.forEach(blockLines=>{
+        if(blockLines === blanketBlock) return;
+        const blockFull = blockLines.join(' ');
+        if(looksLikeRescheduleLine(blockFull)) return; // already individually handled above
+
+        const timeM = blockFull.match(timeRe);
+        if(!timeM) return; // no time in this block — not a real call entry
+
+        const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull)
+          .replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
+        const nameM = lineForName.match(/^([A-Za-z][A-Za-z .]+?)\s*[–\-]/);
+        const candidate = nameM ? nameM[1].trim() : null;
+        if(!candidate) return;
+
+        let company = null;
+        const companyM = blockFull.match(/Interview\s*[–\-]\s*([^–\-]+?)\s*[–\-]/i);
+        if(companyM) company = companyM[1].trim();
+
+        const time = normalizeTime(timeM[1]);
+        const alreadyThere = results.some(r =>
+          r.candidate.toLowerCase()===candidate.toLowerCase() && r.time.toUpperCase()===time.toUpperCase()
+        );
+        if(alreadyThere) return;
+
+        results.push({ candidate, time, company, status: blanketStatus, side: blanketSide, reason: blanketReason, raw: blockFull });
+      });
+    }
+  }
+
   return results;
 }
 // Matches a parsed reschedule message to an existing row — by candidate
