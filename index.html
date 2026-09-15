@@ -2106,6 +2106,63 @@ function parseRescheduleText(text){
     }
   }
 
+  // A short "Time – Name" line followed by a separate paragraph
+  // explaining the reschedule/cancel reason (the actual status word only
+  // shows up in that paragraph, not alongside the time) — neither block
+  // is self-contained on its own, so looksLikeRescheduleLine() never
+  // matches either one and the whole message was previously skipped
+  // entirely. Pair an unclaimed time-only block with the very next block
+  // if THAT one carries the status word instead.
+  for(let i=0; i<blocks.length; i++){
+    const blockLines = blocks[i];
+    if(blockLines === blanketBlock) continue;
+    const blockFull = blockLines.join(' ');
+    const hasTimeHere = timeRe.test(blockFull);
+    const hasStatusHere = /\b(reschedul\w*|cancel\w*|not\s*respond\w*|no\s*response)\b/i.test(blockFull);
+    if(!hasTimeHere || hasStatusHere) continue; // only "time but no status word yet" blocks
+
+    const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull).replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
+    let candidate = null;
+    let nm = lineForName.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/);
+    if(nm) candidate = nm[1].trim();
+    if(!candidate){
+      // Also handle the reverse order — "6:30 PM – Pinky Sachdev", time
+      // stated first and the name coming after the dash.
+      nm = lineForName.match(/\d{1,2}[:.]\d{2}\s*(?:[AaPp][Mm])?(?:\s*IST)?\s*[–\-]\s*([A-Za-z][A-Za-z .]+)$/);
+      if(nm) candidate = nm[1].trim();
+    }
+    if(!candidate) continue;
+    if(results.some(r=>r.candidate.toLowerCase()===candidate.toLowerCase())) continue; // already resolved elsewhere
+
+    const nextBlock = blocks[i+1];
+    if(!nextBlock || nextBlock === blanketBlock) continue;
+    const nextFull = nextBlock.join(' ');
+    const nextIsNewEntry = timeRe.test(nextFull) && /[–\-]/.test(nextFull);
+    if(nextIsNewEntry) continue; // that's the START of the next candidate's own block, not a reason paragraph
+    let status = null;
+    if(/not\s*respond\w*|no\s*response/i.test(nextFull)) status = 'not_responded';
+    else if(/cancel/i.test(nextFull)) status = 'cancelled';
+    else if(/reschedul/i.test(nextFull)) status = 'rescheduled';
+    if(!status) continue;
+
+    let side = null;
+    if(/candidate\s*side/i.test(nextFull)) side = 'candidate side';
+    else if(/interviewer\s*side/i.test(nextFull)) side = 'interviewer side';
+    else if(/client\s*side/i.test(nextFull)) side = 'client side';
+    else if(/recruiter\s*(?:'s)?\s*side/i.test(nextFull)) side = 'recruiter side';
+
+    const timeM = blockFull.match(timeRe);
+    const time = timeM ? normalizeTime(timeM[1]) : '';
+
+    // No tidy "due to X" clause in these — the whole paragraph usually IS
+    // the explanation, so that becomes the reason as-is (trimmed to a
+    // sane length rather than truncated to one clause).
+    let reason = nextFull.trim();
+    if(reason.length > 220) reason = reason.slice(0,220) + '…';
+
+    results.push({ candidate, time, company: null, status, side, reason, raw: blockFull + ' — ' + nextFull });
+  }
+
   return results;
 }
 // Matches a parsed reschedule message to an existing row — by candidate
