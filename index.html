@@ -2204,6 +2204,22 @@ function findExistingCallMatch(parsedRow, existingRows){
     }
     return timeMatches[0];
   }
+  // A WOI call ("Waiting for Invite") has no scheduled time yet by
+  // definition — once the invite comes through and this same candidate
+  // is pasted again with an actual time, the times will never match
+  // (empty vs a real time), so the checks above alone would miss it and
+  // create a duplicate instead of updating the WOI row into the now-
+  // scheduled call. If there's exactly one existing WOI row for this
+  // candidate and the new paste isn't itself WOI, that's almost
+  // certainly the same call finally getting its invite.
+  if(!parsedRow.woi){
+    const woiCandidates = candidates.filter(r => r.woi);
+    if(woiCandidates.length === 1) return woiCandidates[0];
+    if(woiCandidates.length > 1 && parsedRow.company){
+      const companyMatch = woiCandidates.find(r => normalizeCompanyKey(r.company) === normalizeCompanyKey(parsedRow.company));
+      if(companyMatch) return companyMatch;
+    }
+  }
   // No exact time match, but if there's exactly one same-name candidate
   // today AND the client also matches, it's still almost certainly the
   // same call with a slightly reworded time — safe enough to merge.
@@ -5425,6 +5441,21 @@ function attachHandlers(conflictIds){
         if(p.company && !existing.company) existing.company = p.company;
         if(p.duration && !existing.duration) existing.duration = p.duration;
         if(p.assignee && !existing.assignee) existing.assignee = p.assignee;
+        if(p.technicalPOC && !existing.technicalPOC) existing.technicalPOC = p.technicalPOC;
+        if(p.onsite && !existing.onsite) existing.onsite = true;
+        if(p.candidateFirstInterview && !existing.candidateFirstInterview) existing.candidateFirstInterview = true;
+        // A WOI call has no time yet by definition — once the invite
+        // comes through and this same candidate is pasted again with an
+        // actual time, that's exactly the update this call was waiting
+        // for: fill in the real time and clear WOI. Otherwise, only fill
+        // in a time that was genuinely missing before — never overwrite
+        // a time that was already stated.
+        if(existing.woi && !p.woi && p.time){
+          existing.time = p.time;
+          existing.woi = false;
+        } else if(p.time && !existing.time){
+          existing.time = p.time;
+        }
         // Only upgrade the round if THIS paste actually stated it explicitly
         // (not a default) — otherwise a vaguer later paste could downgrade
         // an already-correct 2nd Round back to a defaulted 1st.
