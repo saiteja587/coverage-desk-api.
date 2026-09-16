@@ -34,6 +34,10 @@
   --coral:#E8685C;
   --coral-dim:#331E1B;
   --violet:#9B87F5;
+  --green:#6FCF7A;
+  --green-dim:#1B3320;
+  --sky:#5FC9E8;
+  --sky-dim:#173038;
   --blue:#5B9FE8;
   --violet-dim:#251F3D;
   --onsite:#E85CC8;
@@ -171,6 +175,8 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .summary{display:flex;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:var(--shadow-sm);}
 .team-load-strip{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
 .team-load-cell{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--text-muted);}
+.team-load-cell.team-load-full{border-color:var(--amber);background:var(--amber-dim);}
+.team-load-capacity{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-left:1px;}
 .team-load-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
 .team-load-num{font-family:var(--mono);font-size:15px;color:var(--text);margin-left:4px;}
 .summary .cell{flex:1 0 auto;min-width:84px;background:var(--surface);padding:14px 16px;}
@@ -184,14 +190,19 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 
 /* COVERAGE STRIP (signature element) */
 .strip-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 12px;margin-bottom:20px;}
-.strip-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px;display:flex;justify-content:space-between;}
-.strip{display:flex;align-items:flex-end;gap:3px;height:64px;}
-.strip .hour{flex:0 0 46px;display:flex;flex-direction:column-reverse;gap:1px;min-width:46px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;}
+.strip-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+.strip-title-legend{display:flex;flex-wrap:wrap;gap:4px 10px;}
+.legend-chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;text-transform:none;letter-spacing:0;color:var(--text-muted);}
+.legend-chip i{width:8px;height:8px;border-radius:2px;flex-shrink:0;display:inline-block;}
+.strip{display:flex;align-items:flex-end;gap:4px;height:68px;}
+.strip .hour{flex:0 0 46px;display:flex;flex-direction:column-reverse;gap:1.5px;min-width:46px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;transition:transform .12s ease,filter .12s ease;}
+.strip .hour:hover{transform:scaleY(1.03);filter:brightness(1.12);transform-origin:bottom;}
 .hour-free-dot{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;}
 .strip-hint{font-size:10.5px;color:var(--text-faint);margin-top:14px;text-align:center;}
 .strip .hour .seg{width:100%;min-height:3px;}
+.strip .hour .seg:last-child{border-radius:3px 3px 0 0;}
 .hour-lbl{font-family:var(--mono);font-size:8px;color:var(--text-faint);text-align:center;margin-top:6px;flex:0 0 46px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.strip-hours{display:flex;gap:3px;}
+.strip-hours{display:flex;gap:4px;}
 .strip-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;}
 .strip-scroll::-webkit-scrollbar{height:8px;}
 .strip-scroll::-webkit-scrollbar-thumb{background:var(--teal-dim);border-radius:4px;}
@@ -3019,12 +3030,14 @@ function render(){
   else if(state.filter==='recentImport') filtered = sortedRows.filter(r=>state.recentImportIds && state.recentImportIds.has(r.id));
 
   if(state.assigneeFilter){
-    // Matches either Coverage Desk's own local assignee field OR the
-    // Portal-synced handler for that call — a name only visible via
-    // Portal sync should still be findable here. Tolerates spelling
-    // variants (Bharat/Bharath) the same way the Portal column does.
+    // Matches Coverage Desk's own local assignee field, the Driving
+    // Person (the individual actually running the call, separate from a
+    // team-level Assigned To), OR the Portal-synced handler — a name only
+    // visible via one of those should still be findable here. Tolerates
+    // spelling variants (Bharat/Bharath) the same way the Portal column does.
     filtered = filtered.filter(r => {
       if(namesEquivalent(r.assignee, state.assigneeFilter)) return true;
+      if(namesEquivalent(r.drivingPerson, state.assigneeFilter)) return true;
       const pm = findPortalMatch(r);
       return !!(pm && namesEquivalent(pm.handler, state.assigneeFilter));
     });
@@ -3183,6 +3196,16 @@ function renderDateSwitchSkeleton(){
 function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, clientConflicts){
   const isReadOnly = CURRENT_ROLE === 'user' || CURRENT_ROLE === 'team_lead';
   const teamLoad = computeTeamLoadCounts(allRowsToday || sortedRows);
+  const DISPLAY_TEAMS = [
+    { name: 'HYD Team', color: 'var(--teal)' },
+    { name: 'Pradeep Anna Team', color: 'var(--blue)' },
+    { name: 'Development Team', color: 'var(--green)' },
+    { name: 'Marketing Team', color: 'var(--sky)' },
+  ];
+  const teamStats = DISPLAY_TEAMS.map(t => ({
+    name: t.name, color: t.color, count: teamLoad[t.name]||0, capacity: computeTeamCapacity(t.name)
+  }));
+  const teamSuggestion = suggestAlternativeTeam(teamStats);
   return `
     <div class="search-row">
       <span class="search-icon">🔍</span>
@@ -3200,9 +3223,9 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     </div>
 
     <div class="team-load-strip">
-      <div class="team-load-cell"><span class="team-load-dot" style="background:var(--teal)"></span>HYD Team<span class="team-load-num">${teamLoad.hyd}</span></div>
-      <div class="team-load-cell"><span class="team-load-dot" style="background:var(--blue)"></span>Pradeep Anna Team<span class="team-load-num">${teamLoad.pa}</span></div>
+      ${teamStats.map(t => `<div class="team-load-cell ${teamSuggestion && teamSuggestion.full===t.name ? 'team-load-full' : ''}" title="${t.capacity} available today${teamSuggestion && teamSuggestion.full===t.name ? ' — running heavy relative to headcount' : ''}"><span class="team-load-dot" style="background:${t.color}"></span>${escapeHtml(t.name)}<span class="team-load-num">${t.count}</span>${t.capacity?`<span class="team-load-capacity">/${t.capacity}</span>`:''}</div>`).join('')}
     </div>
+    ${teamSuggestion ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:8px 12px;border-radius:8px;margin:-10px 0 16px;font-size:12px">⚠ ${escapeHtml(teamSuggestion.full)} is carrying a heavy load for today's headcount — ${escapeHtml(teamSuggestion.suggest)} has more room right now, worth routing new calls there instead.</div>` : ''}
 
     <div class="toolbar">
       ${isReadOnly ? `<span class="read-only-badge">👁 Read-only — ask an admin for edit access</span>` : `
@@ -3760,6 +3783,8 @@ function renderStrip(rows, conflictIds){
   const paAbsentCount = state.roster.filter(p=>p.team==='Pradeep Anna Team' && state.absentIds.includes(p.id)).length;
   const hydCount = Math.max(hydRaw - hydAbsentCount, 0);
   const paCount = Math.max(paRaw - paAbsentCount, 0);
+  const devCount = computeTeamCapacity('Development Team');
+  const mktCount = computeTeamCapacity('Marketing Team');
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -3772,7 +3797,7 @@ function renderStrip(rows, conflictIds){
     // 30-minute buckets instead of hourly — "how many calls at 10:00 vs
     // 10:30" was previously invisible, both got merged into one "10PM" bar.
     const h = m===9999 ? '?' : Math.floor(m/30);
-    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], mins:businessDayMinutes(r.time), hyd:0, pa:0, hydAssigned:0, paAssigned:0, otherAssigned:0};
+    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], mins:businessDayMinutes(r.time), hyd:0, pa:0, hydAssigned:0, paAssigned:0, devAssigned:0, mktAssigned:0, otherAssigned:0};
     const isAdv = isAdvancedRound(r.round);
     if(isAdv){
       buckets[h].advanced++;
@@ -3785,6 +3810,8 @@ function renderStrip(rows, conflictIds){
         const team = teamOf(r.assignee);
         if(team==='HYD Team') buckets[h].hydAssigned++;
         else if(team==='Pradeep Anna Team') buckets[h].paAssigned++;
+        else if(team==='Development Team') buckets[h].devAssigned++;
+        else if(team==='Marketing Team') buckets[h].mktAssigned++;
         else buckets[h].otherAssigned++;
       }
       else buckets[h].unassigned++;
@@ -3811,12 +3838,16 @@ function renderStrip(rows, conflictIds){
     let tooltip = `${label} \u2014 ${total} call${total===1?'':'s'} \u2014 click to jump to these calls\n`
       + `HYD Team: ${b.hyd}/${hydCount} booked (${hydFree} free)\n`
       + `Pradeep Anna Team: ${b.pa}/${paCount} booked (${paFree} free)`;
+    if(b.devAssigned) tooltip += `\nDevelopment Team: ${b.devAssigned} booked`;
+    if(b.mktAssigned) tooltip += `\nMarketing Team: ${b.mktAssigned} booked`;
     if(b.advanced){
       tooltip += `\n\n2nd Round & Above (${b.advanced}):\n` + b.advancedNames.join('\n');
     }
     return `<div class="hour" data-bucket="${k}" style="height:${total*unit}px;cursor:pointer" title="${escapeHtml(tooltip)}">
       ${b.hydAssigned?`<div class="seg" style="background:var(--teal);height:${b.hydAssigned*unit}px"></div>`:''}
       ${b.paAssigned?`<div class="seg" style="background:var(--blue);height:${b.paAssigned*unit}px"></div>`:''}
+      ${b.devAssigned?`<div class="seg" style="background:var(--green);height:${b.devAssigned*unit}px"></div>`:''}
+      ${b.mktAssigned?`<div class="seg" style="background:var(--sky);height:${b.mktAssigned*unit}px"></div>`:''}
       ${b.otherAssigned?`<div class="seg" style="background:var(--text-faint);height:${b.otherAssigned*unit}px"></div>`:''}
       ${b.woi?`<div class="seg" style="background:var(--amber);height:${b.woi*unit}px"></div>`:''}
       ${b.unassigned?`<div class="seg" style="background:var(--coral);height:${b.unassigned*unit}px"></div>`:''}
@@ -3827,7 +3858,7 @@ function renderStrip(rows, conflictIds){
   const lblsHtml = keys.map(k=>`<div class="hour-lbl">${k==='?'?'?':halfHourBucketLabel(k*30)}</div>`).join('');
   const minW = Math.max(keys.length*46, 260);
   return `<div class="strip-wrap ${state.mobileStripExpanded?'mobile-expanded':''}">
-    <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span class="strip-title-legend">● HYD &nbsp; ● Pradeep Anna &nbsp; ● other team &nbsp; ● WOI &nbsp; ● unassigned &nbsp; ● 2nd round+</span><button type="button" class="mobile-collapse-toggle" id="toggleMobileStrip" title="Show/hide on mobile">${state.mobileStripExpanded?'▴':'▾'}</button></div>
+    <div class="strip-title"><span>Coverage by half hour (IST) \u2014 all rounds combined</span><span class="strip-title-legend"><span class="legend-chip"><i style="background:var(--teal)"></i>HYD</span><span class="legend-chip"><i style="background:var(--blue)"></i>Pradeep Anna</span><span class="legend-chip"><i style="background:var(--green)"></i>Development</span><span class="legend-chip"><i style="background:var(--sky)"></i>Marketing</span><span class="legend-chip"><i style="background:var(--amber)"></i>WOI</span><span class="legend-chip"><i style="background:var(--coral)"></i>Unassigned</span><span class="legend-chip"><i style="background:var(--violet)"></i>2nd round+</span></span><button type="button" class="mobile-collapse-toggle" id="toggleMobileStrip" title="Show/hide on mobile">${state.mobileStripExpanded?'▴':'▾'}</button></div>
     <div class="strip-collapsible">
     <div class="strip-scroll"><div style="min-width:${minW}px">
     <div class="strip">${barsHtml}</div>
@@ -4081,22 +4112,37 @@ function renderPortalSyncPanel(){
       </div>`;
     }).join('') : `<div class="hint" style="margin-bottom:16px">No incentive records found.</div>`;
 
+    // Cross-references each Portal assignment row against today's local
+    // calls by candidate name, so the person syncing can see at a glance
+    // who Coverage Desk has as the Driving Person for that same call —
+    // this column only ever has anything to show once a sync has actually
+    // been run and returned assignment rows to cross-reference against.
+    function localDrivingPersonFor(candidateName){
+      const key = normalizeCandidateForMatch(candidateName);
+      if(!key) return '';
+      const match = state.rows.find(r => normalizeCandidateForMatch(r.candidate) === key);
+      return match ? (match.drivingPerson || '') : '';
+    }
+
     body = `
       <div style="font-weight:600;margin-bottom:8px;font-size:13px">Incentives by team &amp; handler ${d.incentives && d.incentives.month && d.incentives.month!=='ALL' ? '('+escapeHtml(d.incentives.month)+')' : '(all time)'}</div>
       <div style="max-height:320px;overflow:auto;margin-bottom:16px">${incentiveHtml}</div>
       <div style="font-weight:600;margin-bottom:6px;font-size:13px">${state.portalSyncMode==='today' ? `Assignments for ${escapeHtml(state.date)}` : 'Assignments (full history)'} (${todaysAssignments.length})</div>
       <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-          <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Time</th><th style="padding:6px 10px">Candidate</th><th style="padding:6px 10px">Client</th><th style="padding:6px 10px">Assignee</th><th style="padding:6px 10px">Status</th></tr></thead>
+          <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Time</th><th style="padding:6px 10px">Candidate</th><th style="padding:6px 10px">Client</th><th style="padding:6px 10px">Assignee</th><th style="padding:6px 10px">Driving Person</th><th style="padding:6px 10px">Status</th></tr></thead>
           <tbody>
-            ${todaysAssignments.length ? todaysAssignments.map(a=>`<tr style="border-top:1px solid var(--border-soft)">
+            ${todaysAssignments.length ? todaysAssignments.map(a=>{
+              const dp = localDrivingPersonFor(a.candidate);
+              return `<tr style="border-top:1px solid var(--border-soft)">
               <td style="padding:6px 10px">${escapeHtml(a.team)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.time)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.candidate)}</td>
               <td style="padding:6px 10px">${escapeHtml(a.client)}</td>
               <td style="padding:6px 10px;font-weight:600;${a.assignee?'color:var(--teal)':''}">${escapeHtml(a.assignee||'Unassigned')}</td>
+              <td style="padding:6px 10px;${dp?'color:var(--teal);font-weight:600':'color:var(--text-faint)'}">${escapeHtml(dp||'—')}</td>
               <td style="padding:6px 10px">${escapeHtml(a.status)}</td>
-            </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;color:var(--text-faint)">No assignment records found${state.portalSyncMode==='today' ? ' for this date' : ''}.</td></tr>`}
+            </tr>`;}).join('') : `<tr><td colspan="7" style="padding:10px;color:var(--text-faint)">No assignment records found${state.portalSyncMode==='today' ? ' for this date' : ''}.</td></tr>`}
           </tbody>
         </table>
       </div>`;
@@ -4389,14 +4435,36 @@ function computeTeamLoadCounts(rows){
     const p = state.roster.find(p=>p.name===assignee);
     return p ? p.team : null;
   }
-  let hyd = 0, pa = 0;
+  const counts = {};
   rows.forEach(r=>{
     if(r.woi || !r.assignee) return;
     const t = teamOf(r.assignee);
-    if(t==='HYD Team') hyd++;
-    else if(t==='Pradeep Anna Team') pa++;
+    if(t){ counts[t] = (counts[t]||0) + 1; }
   });
-  return { hyd, pa };
+  return counts;
+}
+// Today's available headcount for a team — same "roster minus absent"
+// calculation already used for auto-routing capacity elsewhere.
+function computeTeamCapacity(teamName){
+  const members = state.roster.filter(p=>p.team===teamName);
+  const absentCount = members.filter(p=>state.absentIds.includes(p.id)).length;
+  return Math.max(members.length - absentCount, 0);
+}
+// Flags the busiest team relative to its own headcount, and — only when
+// that load is genuinely lopsided against some other team with real spare
+// capacity — names which team has the most room right now. Deliberately
+// conservative (needs BOTH a high absolute load AND a wide gap against the
+// roomiest team) so it doesn't nag over a normal, expected difference.
+function suggestAlternativeTeam(teamStats){
+  const withCapacity = teamStats.filter(t=>t.capacity>0);
+  if(withCapacity.length < 2) return null;
+  const ranked = withCapacity.map(t=>({...t, ratio: t.count/t.capacity})).sort((a,b)=>b.ratio-a.ratio);
+  const fullest = ranked[0];
+  const roomiest = ranked[ranked.length-1];
+  if(fullest.ratio >= 3 && fullest.name !== roomiest.name && fullest.ratio > roomiest.ratio * 1.4){
+    return { full: fullest.name, suggest: roomiest.name };
+  }
+  return null;
 }
 
 function classifyCompany(company){
