@@ -298,6 +298,7 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .mini-badge-client{color:var(--amber);border:1px solid var(--amber);}
 .mini-badge-resched{color:var(--coral);border:1px solid var(--coral);}
 .mini-badge-newstudent{color:var(--text-muted);border:1px dashed var(--text-faint);cursor:pointer;}
+.mini-badge-recent-import{color:var(--teal);border:1px solid var(--teal);background:var(--teal-dim);}
 .mini-badge-newstudent:hover{color:var(--text);border-color:var(--text-muted);}
 .doubt-icon{color:var(--amber);}
 .doubt-note-row td{background:var(--amber-dim);color:var(--amber);font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
@@ -638,7 +639,8 @@ let state = {
   importDefaultRound: '1st',
   lastImportedIds: null,
   lastImportedCount: 0,
-  lastImportMergedCount: 0
+  lastImportMergedCount: 0,
+  recentImportIds: null,
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -1027,6 +1029,12 @@ function todayDateString(){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 async function loadDay(dateStr){
+  // Scoped to whichever date the import happened on — clearing it here
+  // (the one place every date switch/reload passes through) means it
+  // never lingers and mistakenly labels calls on a DIFFERENT date as
+  // "recently imported".
+  state.recentImportIds = null;
+  state.filter = state.filter === 'recentImport' ? 'all' : state.filter;
   if(API_BASE_URL){
     try{
       const [callsData, notesData, finalData, statusData] = await Promise.all([
@@ -3003,6 +3011,7 @@ function render(){
   if(state.filter==='unassigned') filtered = sortedRows.filter(r=>!r.assignee && !r.woi);
   else if(state.filter==='woi') filtered = sortedRows.filter(r=>r.woi);
   else if(state.filter==='conflict') filtered = sortedRows.filter(r=>conflictIds.has(r.id));
+  else if(state.filter==='recentImport') filtered = sortedRows.filter(r=>state.recentImportIds && state.recentImportIds.has(r.id));
 
   if(state.assigneeFilter){
     // Matches either Coverage Desk's own local assignee field OR the
@@ -3219,6 +3228,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="filter-chip ${state.filter==='unassigned'?'active':''}" data-f="unassigned">Unassigned<span class="n">${sum.unassigned}</span></button>
       <button class="filter-chip ${state.filter==='woi'?'active':''}" data-f="woi">WOI<span class="n">${sum.woi}</span></button>
       <button class="filter-chip ${state.filter==='conflict'?'active':''}" data-f="conflict">Conflicts<span class="n">${sum.conflicts}</span></button>
+      ${(state.recentImportIds && state.recentImportIds.size) ? `<button class="filter-chip ${state.filter==='recentImport'?'active':''}" data-f="recentImport" style="color:var(--teal)" title="Calls added or updated by the most recent import">🆕 Recent Import<span class="n">${state.recentImportIds.size}</span></button>` : ''}
     </div>
 
     ${(!isReadOnly && state.selectedIds.size) ? renderBulkBar() : ''}
@@ -4461,7 +4471,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5432,6 +5442,7 @@ function attachHandlers(conflictIds){
     // weren't in the original message. Only genuinely new candidates/times
     // become new rows; everything else enriches the existing row in place.
     let mergedCount = 0;
+    const mergedIds = [];
     const trulyNewRows = [];
     parsed.forEach(p=>{
       const existing = findExistingCallMatch(p, beforeBatchRows);
@@ -5462,6 +5473,7 @@ function attachHandlers(conflictIds){
         const roundWasExplicit = !(p.doubts||[]).some(d=>/Round wasn.t stated/.test(d));
         if(p.round && roundWasExplicit && p.round !== existing.round) existing.round = p.round;
         mergedCount++;
+        mergedIds.push(existing.id);
       } else {
         trulyNewRows.push(p);
       }
@@ -5471,6 +5483,13 @@ function attachHandlers(conflictIds){
     state.lastImportedIds = trulyNewRows.map(r=>r.id);
     state.lastImportedCount = trulyNewRows.length;
     state.lastImportMergedCount = mergedCount;
+    // Separate from lastImportedIds above (which only covers brand-new
+    // rows and gets cleared as soon as that transient banner is dismissed
+    // or undone) — this persists so the newly-added-or-updated calls stay
+    // findable for the rest of the session on this date, not just for the
+    // few seconds the banner is up. A fresh import replaces this with its
+    // own batch rather than accumulating forever.
+    state.recentImportIds = new Set([...trulyNewRows.map(r=>r.id), ...mergedIds]);
 
     // Save each other date's calls directly — they never touch state.rows
     // (which only ever holds the currently open date), so this happens as
