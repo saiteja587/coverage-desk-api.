@@ -5664,7 +5664,14 @@ function attachHandlers(conflictIds){
       alert('Nothing to save — every message was skipped or has no call selected.');
       return;
     }
-    markDirty();
+    // Deliberately NOT markDirty() here — saveCallStatuses() below is a
+    // complete, independent save through its own dedicated endpoint,
+    // exactly like the Driving Person field. Marking the page dirty here
+    // set state.dirty=true with nothing that ever cleared it back to
+    // false afterward, so the top "Save changes" button kept showing
+    // "unsaved" even though the reschedule tags were already correctly
+    // saved — making it look like nothing actually saved until that
+    // button got clicked too, when in fact it already had.
     state.rescheduleApplying = true;
     render();
     // Save directly to the dedicated call_status table rather than the
