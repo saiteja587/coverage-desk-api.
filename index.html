@@ -200,6 +200,7 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 
 /* TOOLBAR */
 .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;}
+.filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:8px 10px;}
 .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--body);font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm);transition:border-color .12s,box-shadow .12s;}
 .btn:hover{border-color:var(--text-faint);box-shadow:var(--shadow-md);}
 .btn.primary{background:var(--teal-dim);border-color:#1F4A43;color:var(--teal);font-weight:600;}
@@ -494,7 +495,9 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   .team-load-strip{gap:6px;margin-bottom:10px;}
   .team-load-cell{padding:6px 10px;font-size:11px;}
   .toolbar{gap:6px;margin-bottom:10px;}
+  .filter-bar{gap:6px;margin-bottom:10px;padding:6px 8px;}
   .toolbar .btn{font-size:11.5px;padding:6px 10px;}
+  .filter-bar .btn{font-size:11.5px;padding:6px 10px;}
 }
 </style>
 </head>
@@ -617,6 +620,7 @@ let state = {
   clientFilter: '',
   groupByCompany: false,
   showMoreMenu: false,
+  showToolsMenu: false,
   showAllDates: false,
   mobileNoteExpanded: false,
   mobileStripExpanded: false,
@@ -2922,6 +2926,7 @@ function closeAllPanels(){
   state.showConflicts = false;
   state.showClientSearch = false;
   state.showMoreMenu = false;
+  state.showToolsMenu = false;
   stopPortalSyncPolling();
 }
 function getActivePanelName(){
@@ -3205,15 +3210,22 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       ${state.view==='2nd' ? `<button class="btn primary" id="toggleImport2nd" title="Same import textarea, but any call without an explicit round defaults to 2nd Round instead of 1st">＋ Import 2nd Round Calls</button>` : ''}
       <button class="btn" id="toggleRescheduleImport">↻ Import Reschedule/Cancel</button>
       <button class="btn" id="addRow">＋ Add call</button>
-      <button class="btn" id="toggleRoster">Team (${state.roster.length})</button>
-      <button class="btn ghost" id="clearAll" style="color:var(--coral)">Clear all calls</button>
       ${renderFinalizeControls()}`}
-      ${isReadOnly ? `<button class="btn" id="toggleRoster">Team (${state.roster.length})</button>` : ''}
-      <button class="btn" id="togglePortalSync">📡 Team Sync</button>
-      ${CURRENT_ROLE==='admin' ? `<button class="btn" id="toggleIncentives">💰 Incentives</button>` : ''}
-      ${CURRENT_ROLE==='admin' ? `<button class="btn" id="toggleBackups">🕐 Backups</button>` : ''}
       ${(CURRENT_ROLE==='admin' && sum.conflicts) ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
-      ${CURRENT_ROLE==='admin' ? `<button class="btn ghost" id="removeDuplicatesBtn" style="color:var(--amber)" title="Find and remove duplicate calls — same candidate, time, and round">🧹 Remove Duplicates</button>` : ''}
+      <div class="more-menu-wrap">
+        <button class="btn ${state.showToolsMenu?'active':''}" id="toggleToolsMenu" title="Team, sync, incentives, backups, and other less-frequent actions">🔧 Tools</button>
+        ${state.showToolsMenu ? `<div class="more-menu-dropdown">
+          <button class="more-menu-item" id="toggleRoster">👥 Team (${state.roster.length})</button>
+          <button class="more-menu-item" id="togglePortalSync">📡 Team Sync</button>
+          ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleIncentives">💰 Incentives</button>` : ''}
+          ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleBackups">🕐 Backups</button>` : ''}
+          ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
+          ${!isReadOnly ? `<button class="more-menu-item" id="clearAll" style="color:var(--coral)">🗑 Clear all calls</button>` : ''}
+        </div>` : ''}
+      </div>
+    </div>
+
+    <div class="filter-bar">
       <select id="assigneeFilterSelect" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:none;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by person…</option>
         ${buildCombinedAssigneeFilterOptions()}
@@ -4945,13 +4957,23 @@ function attachHandlers(conflictIds){
   const toggleMoreMenuBtn = document.getElementById('toggleMoreMenu');
   if(toggleMoreMenuBtn) toggleMoreMenuBtn.onclick = ()=>{
     state.showMoreMenu = !state.showMoreMenu;
+    state.showToolsMenu = false;
     render();
   };
-  // Closes the dropdown whenever any item inside it is clicked — uses
-  // addEventListener (not .onclick) specifically so it stacks alongside
-  // each item's own existing handler instead of overwriting it.
+  const toggleToolsMenuBtn = document.getElementById('toggleToolsMenu');
+  if(toggleToolsMenuBtn) toggleToolsMenuBtn.onclick = ()=>{
+    state.showToolsMenu = !state.showToolsMenu;
+    state.showMoreMenu = false;
+    render();
+  };
+  // Closes whichever dropdown is open whenever an item inside it is
+  // clicked — uses addEventListener (not .onclick) specifically so it
+  // stacks alongside each item's own existing handler instead of
+  // overwriting it. Tools and More share the same item class/styling, so
+  // one handler closing both flags is simplest — only one is ever open
+  // at a time anyway.
   document.querySelectorAll('.more-menu-item').forEach(item=>{
-    item.addEventListener('click', ()=>{ state.showMoreMenu = false; });
+    item.addEventListener('click', ()=>{ state.showMoreMenu = false; state.showToolsMenu = false; });
   });
   const syncPortalBtn = document.getElementById('syncPortalBtn');
   if(syncPortalBtn) syncPortalBtn.onclick = ()=>{ syncPortalData(); };
