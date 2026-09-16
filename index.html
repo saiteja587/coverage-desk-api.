@@ -3797,7 +3797,8 @@ function renderStrip(rows, conflictIds){
     // 30-minute buckets instead of hourly — "how many calls at 10:00 vs
     // 10:30" was previously invisible, both got merged into one "10PM" bar.
     const h = m===9999 ? '?' : Math.floor(m/30);
-    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], mins:businessDayMinutes(r.time), hyd:0, pa:0, hydAssigned:0, paAssigned:0, devAssigned:0, mktAssigned:0, otherAssigned:0};
+    buckets[h] = buckets[h] || {assigned:0, unassigned:0, woi:0, advanced:0, advancedNames:[], callDetails:[], mins:businessDayMinutes(r.time), hyd:0, pa:0, hydAssigned:0, paAssigned:0, devAssigned:0, mktAssigned:0, otherAssigned:0};
+    buckets[h].callDetails.push({ mins: timeToMinutes(r.time), time: r.time || '(no time)', candidate: r.candidate || 'candidate' });
     const isAdv = isAdvancedRound(r.round);
     if(isAdv){
       buckets[h].advanced++;
@@ -3840,6 +3841,19 @@ function renderStrip(rows, conflictIds){
       + `Pradeep Anna Team: ${b.pa}/${paCount} booked (${paFree} free)`;
     if(b.devAssigned) tooltip += `\nDevelopment Team: ${b.devAssigned} booked`;
     if(b.mktAssigned) tooltip += `\nMarketing Team: ${b.mktAssigned} booked`;
+    // This bar covers a 30-minute window, so a 9:00 call and a 9:15 call
+    // land in the same bar — list the actual distinct times when they
+    // differ, so hovering still shows exactly when within the window
+    // each call really is, not just the rounded-down bucket time.
+    const byExactTime = {};
+    b.callDetails.forEach(c=>{
+      byExactTime[c.time] = byExactTime[c.time] || { mins: c.mins, names: [] };
+      byExactTime[c.time].names.push(c.candidate);
+    });
+    const exactTimeKeys = Object.keys(byExactTime).sort((a,b2)=> byExactTime[a].mins - byExactTime[b2].mins);
+    if(exactTimeKeys.length > 1){
+      tooltip += `\n\nExact times in this slot:\n` + exactTimeKeys.map(t => `${t} \u2014 ${byExactTime[t].names.join(', ')}`).join('\n');
+    }
     if(b.advanced){
       tooltip += `\n\n2nd Round & Above (${b.advanced}):\n` + b.advancedNames.join('\n');
     }
