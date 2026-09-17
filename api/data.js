@@ -135,10 +135,11 @@ module.exports = async (req, res) => {
     if (resource === 'call_status') return await handleCallStatus(req, res, db);
     if (resource === 'call_backups') return await handleCallBackups(req, res, db);
     if (resource === 'students') return await handleStudents(req, res, db);
+    if (resource === 'student_match_decisions') return await handleStudentMatchDecisions(req, res, db);
     if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|driving_person|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|users|whoami' });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
@@ -451,7 +452,45 @@ async function handleStudents(req, res, db) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-// ---------- portal_sync: live read-only pull from the Interview Portal ----------
+// ---------- student_match_decisions: a human's confirm/reject verdict on a
+// fuzzy (non-exact) candidate-name-to-Students-Master match ----------
+// Not date-scoped — a candidate's name and which master-list student they
+// really are doesn't depend on which date their call happened to land on,
+// so this is a single global table. Unlike the other resources here, this
+// is an incremental single-record upsert rather than delete-then-insert:
+// decisions accumulate one at a time over an open-ended period, and
+// resending the whole growing list on every single confirm/reject would
+// only get more wasteful over time.
+async function handleStudentMatchDecisions(req, res, db) {
+  if (req.method === 'GET') {
+    const [rows] = await db.query(
+      'SELECT candidate_key, student_id, decision FROM student_match_decisions'
+    );
+    return res.status(200).json({
+      rows: rows.map(r => ({ candidateKey: r.candidate_key, studentId: r.student_id, decision: r.decision })),
+    });
+  }
+  if (req.method === 'POST') {
+    const { candidateKey, candidateName, studentId, decision } = req.body;
+    if (!candidateKey || !studentId || !decision) {
+      return res.status(400).json({ error: 'candidateKey, studentId, and decision are required' });
+    }
+    if (decision !== 'confirmed' && decision !== 'rejected') {
+      return res.status(400).json({ error: 'decision must be "confirmed" or "rejected"' });
+    }
+    // ON DUPLICATE KEY UPDATE so someone changing their mind later (e.g.
+    // rejected, then later realizes it really was the same person) just
+    // overwrites the earlier verdict rather than erroring or duplicating.
+    await db.query(
+      `INSERT INTO student_match_decisions (candidate_key, candidate_name, student_id, decision)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE decision = VALUES(decision), candidate_name = VALUES(candidate_name)`,
+      [candidateKey, candidateName || '', studentId, decision]
+    );
+    return res.status(200).json({ ok: true });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
 // This proxies a server-to-server call to the existing Apps Script Web App
 // bridge (PortalCoverageDeskExport.gs) — never called from the browser
 // directly, since that would expose the portal secret. GET only; there is
