@@ -49,7 +49,15 @@
   --shadow-md:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px rgba(0,0,0,.5);
 }
 *{box-sizing:border-box;}
-html{scroll-behavior:smooth;}
+/* Removed the blanket html{scroll-behavior:smooth} rule — it animated
+   EVERY scroll on the page, including incidental ones like a browser's
+   own scrollIntoView() during a focus change, not just the two
+   intentional smooth scrolls (the ↑ scroll-to-top button, jump-to-row
+   from the coverage graph). Both of those already explicitly request
+   behavior:'smooth' in their own JS calls, so they're unaffected by
+   removing this — but removing it means an element's position settles
+   immediately everywhere else, instead of visibly drifting for several
+   hundred ms after any scroll, however incidental. */
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 ::-webkit-scrollbar{width:10px;height:10px;}
 ::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:6px;transition:background .15s;}
@@ -196,7 +204,9 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .legend-chip i{width:8px;height:8px;border-radius:2px;flex-shrink:0;display:inline-block;}
 .strip{display:flex;align-items:flex-end;gap:4px;height:68px;}
 .strip .hour{flex:0 0 46px;display:flex;flex-direction:column-reverse;gap:1.5px;min-width:46px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;transition:transform .12s ease,filter .12s ease;}
-.strip .hour:hover{transform:scaleY(1.03);filter:brightness(1.12);transform-origin:bottom;}
+@media (hover:hover){
+  .strip .hour:hover{transform:scaleY(1.03);filter:brightness(1.12);transform-origin:bottom;}
+}
 .hour-free-dot{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;}
 .strip-hint{font-size:10.5px;color:var(--text-faint);margin-top:14px;text-align:center;}
 .strip .hour .seg{width:100%;min-height:3px;}
@@ -4001,7 +4011,8 @@ function renderIncentivesPanel(){
             <div style="font-size:10.5px;color:var(--text-faint)">Promo ₹${teamPromo.toLocaleString('en-IN')} · Selection ₹${teamSelection.toLocaleString('en-IN')}</div>
           </div>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <div style="overflow-x:auto">
+        <table style="width:100%;min-width:480px;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="text-align:left;background:var(--surface)"><th style="padding:6px 14px">Handler</th><th style="padding:6px 14px">Promotion</th><th style="padding:6px 14px">Selection</th><th style="padding:6px 14px">Total</th><th style="padding:6px 14px">Records</th></tr></thead>
           <tbody>
             ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>`<tr style="border-top:1px solid var(--border-soft)">
@@ -4013,6 +4024,7 @@ function renderIncentivesPanel(){
             </tr>`).join('')}
           </tbody>
         </table>
+        </div>
       </div>`;
     }).join('') : `<div class="empty-state"><h3>No incentive records for ${escapeHtml(monthKeyLabel(monthKey))}</h3><p>Nothing has been earned or synced for this month yet.</p></div>`;
 
@@ -4062,7 +4074,7 @@ function renderBackupsPanel(){
     : (!state.backupsList.length
       ? `<div class="empty-state"><h3>No backups yet for ${escapeHtml(state.date)}</h3><p>A backup is taken automatically right before every import, Clear All, or Finalize — nothing to restore until one of those has happened on this date.</p></div>`
       : `<div style="max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:8px">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <table style="width:100%;min-width:480px;border-collapse:collapse;font-size:12.5px">
             <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:8px 12px">When</th><th style="padding:8px 12px">Reason</th><th style="padding:8px 12px">Calls saved</th><th style="padding:8px 12px"></th></tr></thead>
             <tbody>
               ${state.backupsList.map(b=>`<tr style="border-top:1px solid var(--border-soft)">
@@ -4112,7 +4124,8 @@ function renderPortalSyncPanel(){
           <span>${escapeHtml(group.label)}</span>
           <span style="color:var(--teal)">₹${Number(teamTotal||0).toLocaleString('en-IN')}</span>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid var(--border);border-top:none">
+        <div style="overflow-x:auto;border:1px solid var(--border);border-top:none">
+        <table style="width:100%;min-width:420px;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="text-align:left;background:var(--surface)"><th style="padding:6px 10px">Handler</th><th style="padding:6px 10px">Promotion</th><th style="padding:6px 10px">Selection</th><th style="padding:6px 10px">Total</th></tr></thead>
           <tbody>
             ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>`<tr style="border-top:1px solid var(--border-soft)">
@@ -4123,6 +4136,7 @@ function renderPortalSyncPanel(){
             </tr>`).join('')}
           </tbody>
         </table>
+        </div>
       </div>`;
     }).join('') : `<div class="hint" style="margin-bottom:16px">No incentive records found.</div>`;
 
@@ -4143,7 +4157,7 @@ function renderPortalSyncPanel(){
       <div style="max-height:320px;overflow:auto;margin-bottom:16px">${incentiveHtml}</div>
       <div style="font-weight:600;margin-bottom:6px;font-size:13px">${state.portalSyncMode==='today' ? `Assignments for ${escapeHtml(state.date)}` : 'Assignments (full history)'} (${todaysAssignments.length})</div>
       <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <table style="width:100%;min-width:680px;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="text-align:left;background:var(--surface-2)"><th style="padding:6px 10px">Team</th><th style="padding:6px 10px">Time</th><th style="padding:6px 10px">Candidate</th><th style="padding:6px 10px">Client</th><th style="padding:6px 10px">Assignee</th><th style="padding:6px 10px">Driving Person</th><th style="padding:6px 10px">Status</th></tr></thead>
           <tbody>
             ${todaysAssignments.length ? todaysAssignments.map(a=>{
@@ -5931,6 +5945,15 @@ function attachHandlers(conflictIds){
   // the graph, then back down to actually assign something.
   document.querySelectorAll('.hour[data-bucket]').forEach(bar=>{
     bar.onclick = ()=>{
+      // Touch devices have no hover at all, so the rich tooltip (team
+      // booking numbers, the exact times within this slot, 2nd round
+      // names) would otherwise be completely inaccessible there — show
+      // it first, then still jump to the matching calls below.
+      const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+      if(isTouch){
+        const info = bar.getAttribute('title');
+        if(info) alert(info);
+      }
       const bucket = bar.getAttribute('data-bucket');
       const targetRow = document.querySelector(`tr[data-bucket="${CSS.escape(bucket)}"]`);
       if(!targetRow){
