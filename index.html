@@ -320,6 +320,7 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .mini-badge-client{color:var(--amber);border:1px solid var(--amber);}
 .mini-badge-resched{color:var(--coral);border:1px solid var(--coral);}
 .mini-badge-newstudent{color:var(--text-muted);border:1px dashed var(--text-faint);cursor:pointer;}
+.mini-badge-confirm-student{color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-weight:800;}
 .mini-badge-recent-import{color:var(--teal);border:1px solid var(--teal);background:var(--teal-dim);}
 .mini-badge-newstudent:hover{color:var(--text);border-color:var(--text-muted);}
 .doubt-icon{color:var(--amber);}
@@ -666,6 +667,8 @@ let state = {
   lastImportedCount: 0,
   lastImportMergedCount: 0,
   recentImportIds: null,
+  confirmedStudentMatches: new Set(),
+  rejectedStudentMatches: new Set(),
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -948,6 +951,7 @@ async function loadStudentsMaster(){
       }
       state.studentsMasterLoaded = true;
       state.studentsMasterBackendMissing = false;
+      loadStudentMatchDecisions(); // fire-and-forget — badges just stay in "needs confirming" state until this resolves
       return;
     }catch(e){
       // Most likely: this backend doesn't have a 'students' resource yet.
@@ -963,6 +967,27 @@ async function loadStudentsMaster(){
   }
   try{ await storageAdapter.set('students-master', JSON.stringify(state.studentsMaster), false); }catch(e){}
   state.studentsMasterLoaded = true;
+}
+// Pulls every confirm/reject verdict anyone has ever given on a fuzzy
+// name match, so a decision made once — on any device, by any admin —
+// sticks permanently instead of resetting every time someone reloads the
+// page. Silently does nothing if the backend doesn't have this resource
+// yet (e.g. the SQL migration hasn't been run) — badges just fall back to
+// asking again each session, same as before this existed.
+async function loadStudentMatchDecisions(){
+  if(!API_BASE_URL) return;
+  try{
+    const data = await apiCall('student_match_decisions', {});
+    (data.rows||[]).forEach(row=>{
+      const pairKey = row.candidateKey + '|' + row.studentId;
+      if(row.decision === 'confirmed') state.confirmedStudentMatches.add(pairKey);
+      else if(row.decision === 'rejected') state.rejectedStudentMatches.add(pairKey);
+    });
+    render();
+  }catch(e){
+    // Backend doesn't have this resource yet, or the call failed — fine,
+    // the confirm/reject badges still work, they just won't persist.
+  }
 }
 async function saveStudentsMaster(){
   if(API_BASE_URL){
@@ -1005,10 +1030,20 @@ function levenshteinDistance(a, b){
   return prev[n];
 }
 function findStudentMasterMatch(candidateName){
+  const info = findStudentMasterMatchWithConfidence(candidateName);
+  return info ? info.student : null;
+}
+// Same matching logic as before, but reports whether the match was an
+// exact string match or one of the fuzzy heuristics — and if fuzzy, which
+// one and why, so the UI can ask a human to confirm it rather than
+// silently trusting a guess. Returns null (nothing found), or
+// { student, exact: true } for an exact match, or
+// { student, exact: false, reason: '...' } for a fuzzy one.
+function findStudentMasterMatchWithConfidence(candidateName){
   const key = normalizeNameKey(candidateName);
   if(!key || !state.studentsMaster) return null;
   const exact = state.studentsMaster.find(s => normalizeNameKey(s.name) === key);
-  if(exact) return exact;
+  if(exact) return { student: exact, exact: true };
   // WhatsApp messages very often abbreviate to "First L." (e.g. "Sushmitha
   // B" for "Sushmitha Basavaraju"). Only resolve this when it's completely
   // unambiguous — if more than one master-list student shares that exact
@@ -1025,7 +1060,20 @@ function findStudentMasterMatch(candidateName){
       return normalizeNameKey(sParts[0]) === firstNameKey &&
              sParts[sParts.length-1][0].toLowerCase() === initial;
     });
-    if(candidates.length === 1) return candidates[0];
+    if(candidates.length === 1) return { student: candidates[0], exact: false, reason: `"${parts[1]}" looks like a last-name initial` };
+  }
+  // Mirror of the above, but the INITIAL comes first — "S Sricharan" for
+  // a full name like "Sadhu Sricharan". Same unambiguous-only rule.
+  if(parts.length === 2 && /^[A-Za-z]\.?$/.test(parts[0])){
+    const lastNameKey = normalizeNameKey(parts[1]);
+    const initial = parts[0][0].toLowerCase();
+    const candidatesRev = state.studentsMaster.filter(s=>{
+      const sParts = (s.name||'').trim().split(/\s+/);
+      if(sParts.length < 2) return false;
+      return normalizeNameKey(sParts[sParts.length-1]) === lastNameKey &&
+             sParts[0][0].toLowerCase() === initial;
+    });
+    if(candidatesRev.length === 1) return { student: candidatesRev[0], exact: false, reason: `"${parts[0]}" looks like a first-name initial` };
   }
   // Small typo tolerance — catches things like "Chigdhana Hemantharaju"
   // typed in a WhatsApp message vs the master list's actual "Chidghana
@@ -1045,9 +1093,73 @@ function findStudentMasterMatch(candidateName){
         if(closeMatches.length > 1) break; // already ambiguous — stop early
       }
     }
-    if(closeMatches.length === 1) return closeMatches[0];
+    if(closeMatches.length === 1) return { student: closeMatches[0], exact: false, reason: 'spelled slightly differently (a couple of letters off)' };
   }
+  // Same person, name components in a different order — "Sadhu Sri Charan"
+  // vs "Sri Charan Sadhu". Sorting every LETTER (not word) in the
+  // normalized name collapses any word-order difference down to the same
+  // signature, but — critically — two names only produce the same sorted
+  // signature if they're built from the exact same multiset of letters.
+  // That's a much stronger constraint than the typo check above (equality,
+  // not closeness), so real different names essentially never collide
+  // here by chance. Length-gated for the same reason as the typo check,
+  // and still only resolves when it's the sole match.
+  if(key.length >= 8){
+    const sortedKey = key.split('').sort().join('');
+    const reorderMatches = state.studentsMaster.filter(s => normalizeNameKey(s.name).split('').sort().join('') === sortedKey);
+    if(reorderMatches.length === 1) return { student: reorderMatches[0], exact: false, reason: 'same name, words in a different order' };
+  }
+  // "S Sricharan" for "Sadhu Sri Charan" — an initial standing in for one
+  // name component, PLUS a separate component that's really two words
+  // merged together with no space ("Sri Charan" -> "Sricharan"). Checked
+  // in both directions, since either the call or the master list could be
+  // the abbreviated one. Only resolves when exactly one master-list
+  // student fits, and only when the initial and the merged word together
+  // account for ALL THREE components of the fuller name — no partial or
+  // fuzzy credit.
+  const compoundMatches = state.studentsMaster.filter(s => initialPlusCompoundNameMatch(candidateName, s.name));
+  if(compoundMatches.length === 1) return { student: compoundMatches[0], exact: false, reason: 'an initial plus a shortened/merged name' };
   return null;
+}
+// Helper for findStudentMasterMatchWithConfidence — see the call site above for the
+// exact scenario this handles.
+function initialPlusCompoundNameMatch(nameA, nameB){
+  function attempt(shortName, fullName){
+    const shortParts = (shortName||'').trim().split(/\s+/);
+    if(shortParts.length !== 2) return false;
+    const fullParts = (fullName||'').trim().split(/\s+/).map(normalizeNameKey).filter(Boolean);
+    if(fullParts.length !== 3) return false;
+    const isInitial = (s) => /^[A-Za-z]\.?$/.test(s);
+    function tryOrder(initialTok, compoundTok){
+      if(!isInitial(initialTok)) return false;
+      const compoundKey = normalizeNameKey(compoundTok);
+      if(!compoundKey) return false;
+      let matchCount = 0;
+      for(let i=0;i<3;i++){
+        if(fullParts[i][0] !== initialTok[0].toLowerCase()) continue;
+        const others = fullParts.filter((_,idx)=>idx!==i);
+        if(compoundKey === others[0]+others[1] || compoundKey === others[1]+others[0]) matchCount++;
+      }
+      return matchCount === 1; // ambiguous otherwise — don't guess
+    }
+    return tryOrder(shortParts[0], shortParts[1]) || tryOrder(shortParts[1], shortParts[0]);
+  }
+  return attempt(nameA, nameB) || attempt(nameB, nameA);
+}
+// Decides what (if anything) the candidate-name cell should show about
+// Students Master status: nothing (exact match, or a fuzzy match already
+// confirmed this session), a "?" needing a human to confirm a fuzzy guess,
+// or the existing "N" new-student badge (no match at all, OR a fuzzy
+// match that was already explicitly rejected this session).
+function studentMatchBadgeInfo(candidateName){
+  if(!candidateName || !state.studentsMasterLoaded) return null;
+  const info = findStudentMasterMatchWithConfidence(candidateName);
+  if(!info) return { kind: 'new' };
+  if(info.exact) return null;
+  const pairKey = normalizeNameKey(candidateName) + '|' + info.student.id;
+  if(state.confirmedStudentMatches.has(pairKey)) return null;
+  if(state.rejectedStudentMatches.has(pairKey)) return { kind: 'new' };
+  return { kind: 'confirm', student: info.student, reason: info.reason, pairKey };
 }
 function todayDateString(){
   const d = new Date();
@@ -4579,7 +4691,14 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{ if(!r.candidate || !state.studentsMasterLoaded || findStudentMasterMatch(r.candidate)) return ''; return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`; })()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
+  const info = studentMatchBadgeInfo(r.candidate);
+  if(!info) return '';
+  if(info.kind === 'confirm'){
+    return `<span class="mini-badge mini-badge-confirm-student" data-candidate="${escapeHtml(r.candidate)}" data-candidate-key="${escapeHtml(normalizeNameKey(r.candidate))}" data-matched-id="${escapeHtml(info.student.id)}" data-pair-key="${escapeHtml(info.pairKey)}" title="Possibly the same as “${escapeHtml(info.student.name)}” in Students Master (${escapeHtml(info.reason)}) — not an exact match, click to confirm">?</span>`;
+  }
+  return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`;
+})()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5168,13 +5287,43 @@ function attachHandlers(conflictIds){
   // hover state at all. A tap now shows the same text directly. The N
   // (unmatched student) badge already has its own tap action (opens the
   // add-student form), so it's deliberately excluded here.
-  document.querySelectorAll('.mini-badge:not(.quick-add-student), .flag-icon, .cat-badge, .prior-badge').forEach(badge=>{
+  document.querySelectorAll('.mini-badge:not(.quick-add-student):not(.mini-badge-confirm-student), .flag-icon, .cat-badge, .prior-badge').forEach(badge=>{
     const info = badge.getAttribute('title');
     if(!info) return;
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', (e)=>{
       e.stopPropagation();
       alert(info);
+    });
+  });
+  document.querySelectorAll('.mini-badge-confirm-student').forEach(badge=>{
+    badge.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const candidateName = badge.dataset.candidate;
+      const candidateKey = badge.dataset.candidateKey;
+      const matchedId = badge.dataset.matchedId;
+      const pairKey = badge.dataset.pairKey;
+      const student = (state.studentsMaster||[]).find(s=>s.id===matchedId);
+      const matchedName = student ? student.name : '(unknown)';
+      const same = confirm(`Coverage Desk isn't fully sure about this one.\n\nIs "${candidateName}" the same person as "${matchedName}" in Students Master?\n\nClick OK if they're the same person, Cancel if they're different.`);
+      const decision = same ? 'confirmed' : 'rejected';
+      if(same){
+        state.confirmedStudentMatches.add(pairKey);
+      } else {
+        state.rejectedStudentMatches.add(pairKey);
+      }
+      render();
+      // Persisted in the background — the badge already reflects the
+      // decision locally either way, so this failing silently just means
+      // it'll ask again next reload rather than sticking permanently.
+      if(API_BASE_URL){
+        try{
+          await apiCall('student_match_decisions', {
+            method: 'POST',
+            body: { candidateKey, candidateName, studentId: matchedId, decision }
+          });
+        }catch(e){}
+      }
     });
   });
   document.querySelectorAll('.quick-add-student').forEach(badge=>{
