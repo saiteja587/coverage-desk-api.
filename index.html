@@ -1142,15 +1142,36 @@ function findStudentMasterMatch(candidateName){
 // ~316ms total render, the single largest cost in the entire app, because
 // nothing was cached between renders even though the master list itself
 // rarely changes. The cache is keyed by candidate name and invalidated
-// automatically whenever state.studentsMaster is reassigned to a new
-// array (load, import, add/edit/delete a student) — never manually
-// cleared elsewhere, so there's no risk of it silently going stale.
+// whenever state.studentsMaster's reference OR length changes (load,
+// import, add/edit/delete a student). Checking length as well as
+// reference — not reference alone — matters: an earlier version of this
+// comment claimed reference-checking alone made staleness impossible, but
+// a real bug proved otherwise. Two call sites used to add a student via
+// .push() (in-place mutation, same array reference) instead of
+// reassignment — both are now fixed to reassign — but relying solely on
+// "every mutation site remembers to reassign" is a fragile invariant to
+// maintain forever, so the length check is a cheap second signal that
+// catches the realistic case (someone added/removed a student) even if
+// a future change mutates in place again.
 let _studentMatchCache = new Map();
 let _studentMatchCacheForList = null;
+let _studentMatchCacheForLength = -1;
+// Call this from any code path that adds, removes, or edits a Students
+// Master entry — the reference/length checks in
+// findStudentMasterMatchWithConfidence below catch most real mutations,
+// but not one that edits an EXISTING entry's name/country in place
+// (same reference, same length). This is the reliable, explicit fallback
+// for that case — cheap to call defensively even where the reference or
+// length check would have already caught it.
+function invalidateStudentMatchCache(){
+  _studentMatchCache = new Map();
+}
 function findStudentMasterMatchWithConfidence(candidateName){
-  if(_studentMatchCacheForList !== state.studentsMaster){
+  const currentLength = state.studentsMaster ? state.studentsMaster.length : 0;
+  if(_studentMatchCacheForList !== state.studentsMaster || _studentMatchCacheForLength !== currentLength){
     _studentMatchCache = new Map();
     _studentMatchCacheForList = state.studentsMaster;
+    _studentMatchCacheForLength = currentLength;
   }
   const cacheKey = candidateName || '';
   if(_studentMatchCache.has(cacheKey)) return _studentMatchCache.get(cacheKey);
@@ -1163,13 +1184,27 @@ function computeStudentMasterMatch(candidateName){
   if(!key || !state.studentsMaster) return null;
   const exact = state.studentsMaster.find(s => normalizeNameKey(s.name) === key);
   if(exact) return { student: exact, exact: true };
-  // WhatsApp messages very often abbreviate to "First L." (e.g. "Sushmitha
-  // B" for "Sushmitha Basavaraju"). Only resolve this when it's completely
-  // unambiguous — if more than one master-list student shares that exact
-  // first name AND last-name initial, this returns null rather than guess,
-  // same principle as the Karthik/Karthikeya incident: under-matching is
-  // safe, silently conflating two different real people is not.
+
+  // Every fuzzy pathway below runs unconditionally and contributes its
+  // own (unambiguous-within-itself) result to this shared list, instead
+  // of returning as soon as any ONE pathway finds a unique match. That
+  // early-return approach had a real gap: two DIFFERENT pathways could
+  // each independently find a different "unique" candidate for the same
+  // name (e.g. a word-reorder match pointing at one person, while an
+  // initial+compound match points at someone else) — neither pathway
+  // knows about the other, so neither one's own ambiguity check catches
+  // it. Collecting every pathway's answer here and only resolving when
+  // they all agree closes that gap.
+  const found = []; // { student, reason }
   const parts = (candidateName||'').trim().split(/\s+/);
+
+  // WhatsApp messages very often abbreviate to "First L." (e.g. "Sushmitha
+  // B" for "Sushmitha Basavaraju"). Only contributes a candidate when
+  // it's completely unambiguous on its own — if more than one master-list
+  // student shares that exact first name AND last-name initial, this
+  // pathway contributes nothing, same principle as the Karthik/Karthikeya
+  // incident: under-matching is safe, silently conflating two different
+  // real people is not.
   if(parts.length === 2 && /^[A-Za-z]\.?$/.test(parts[1])){
     const firstNameKey = normalizeNameKey(parts[0]);
     const initial = parts[1][0].toLowerCase();
@@ -1179,7 +1214,7 @@ function computeStudentMasterMatch(candidateName){
       return normalizeNameKey(sParts[0]) === firstNameKey &&
              sParts[sParts.length-1][0].toLowerCase() === initial;
     });
-    if(candidates.length === 1) return { student: candidates[0], exact: false, reason: `"${parts[1]}" looks like a last-name initial` };
+    if(candidates.length === 1) found.push({ student: candidates[0], reason: `"${parts[1]}" looks like a last-name initial` });
   }
   // Mirror of the above, but the INITIAL comes first — "S Sricharan" for
   // a full name like "Sadhu Sricharan". Same unambiguous-only rule.
@@ -1192,16 +1227,15 @@ function computeStudentMasterMatch(candidateName){
       return normalizeNameKey(sParts[sParts.length-1]) === lastNameKey &&
              sParts[0][0].toLowerCase() === initial;
     });
-    if(candidatesRev.length === 1) return { student: candidatesRev[0], exact: false, reason: `"${parts[0]}" looks like a first-name initial` };
+    if(candidatesRev.length === 1) found.push({ student: candidatesRev[0], reason: `"${parts[0]}" looks like a first-name initial` });
   }
   // Small typo tolerance — catches things like "Chigdhana Hemantharaju"
   // typed in a WhatsApp message vs the master list's actual "Chidghana
   // Hemantharaju" (two adjacent letters swapped). Only applied to longer
   // names, since a couple of edits on a short name is far too likely to be
   // a coincidence rather than a typo; capped at 2 edits; and — same rule
-  // as the abbreviation case above — only resolves when exactly one
-  // master-list student is that close. Ambiguous or nothing close enough
-  // means no match, never a guess.
+  // as the abbreviation case above — only contributes when exactly one
+  // master-list student is that close.
   if(key.length >= 10){
     const closeMatches = [];
     for(const s of state.studentsMaster){
@@ -1209,10 +1243,10 @@ function computeStudentMasterMatch(candidateName){
       if(Math.abs(sKey.length - key.length) > 2) continue;
       if(levenshteinDistance(key, sKey) <= 2){
         closeMatches.push(s);
-        if(closeMatches.length > 1) break; // already ambiguous — stop early
+        if(closeMatches.length > 1) break; // already ambiguous within this pathway — stop early
       }
     }
-    if(closeMatches.length === 1) return { student: closeMatches[0], exact: false, reason: 'spelled slightly differently (a couple of letters off)' };
+    if(closeMatches.length === 1) found.push({ student: closeMatches[0], reason: 'spelled slightly differently (a couple of letters off)' });
   }
   // Same person, name components in a different order — "Sadhu Sri Charan"
   // vs "Sri Charan Sadhu". Sorting every LETTER (not word) in the
@@ -1221,27 +1255,30 @@ function computeStudentMasterMatch(candidateName){
   // signature if they're built from the exact same multiset of letters.
   // That's a much stronger constraint than the typo check above (equality,
   // not closeness), so real different names essentially never collide
-  // here by chance. Length-gated for the same reason as the typo check,
-  // and still only resolves when it's the sole match.
+  // here by chance. Length-gated for the same reason as the typo check.
   if(key.length >= 8){
     const sortedKey = key.split('').sort().join('');
     const reorderMatches = state.studentsMaster.filter(s => normalizeNameKey(s.name).split('').sort().join('') === sortedKey);
-    if(reorderMatches.length === 1) return { student: reorderMatches[0], exact: false, reason: 'same name, words in a different order' };
+    if(reorderMatches.length === 1) found.push({ student: reorderMatches[0], reason: 'same name, words in a different order' });
   }
   // "S Sricharan" for "Sadhu Sri Charan" — an initial standing in for one
   // name component, PLUS a separate component that's really two words
   // merged together with no space ("Sri Charan" -> "Sricharan"). Checked
   // in both directions, since either the call or the master list could be
-  // the abbreviated one. Only resolves when exactly one master-list
+  // the abbreviated one. Only contributes when exactly one master-list
   // student fits, and only when the initial and the merged word together
   // account for ALL THREE components of the fuller name — no partial or
   // fuzzy credit.
   const candidateWordCount = (candidateName||'').trim().split(/\s+/).filter(Boolean).length;
-  const compoundMatches = (candidateWordCount === 2 || candidateWordCount === 3)
-    ? state.studentsMaster.filter(s => initialPlusCompoundNameMatch(candidateName, s.name))
-    : [];
-  if(compoundMatches.length === 1) return { student: compoundMatches[0], exact: false, reason: 'an initial plus a shortened/merged name' };
-  return null;
+  if(candidateWordCount === 2 || candidateWordCount === 3){
+    const compoundMatches = state.studentsMaster.filter(s => initialPlusCompoundNameMatch(candidateName, s.name));
+    if(compoundMatches.length === 1) found.push({ student: compoundMatches[0], reason: 'an initial plus a shortened/merged name' });
+  }
+
+  if(!found.length) return null;
+  const uniqueStudentIds = new Set(found.map(f => f.student.id));
+  if(uniqueStudentIds.size > 1) return null; // different pathways disagree — genuinely ambiguous, never guess
+  return { student: found[0].student, exact: false, reason: found[0].reason };
 }
 // Helper for findStudentMasterMatchWithConfidence — see the call site above for the
 // exact scenario this handles.
@@ -5644,10 +5681,17 @@ function attachHandlers(conflictIds){
       render();
       return;
     }
-    state.studentsMaster.push({
+    // Reassigns (rather than .push()) specifically so the Students Master
+    // match-result cache — keyed on the array's reference — correctly
+    // notices the roster changed. An in-place push() left the reference
+    // identical, so a name looked up before this addition could keep
+    // returning its old (possibly now-ambiguous) cached answer even after
+    // the very student that made it ambiguous had just been added.
+    state.studentsMaster = [...state.studentsMaster, {
       id: uid(), name,
       country: countryInput ? countryInput.value.trim() : ''
-    });
+    }];
+    invalidateStudentMatchCache();
     state.studentsAddError = '';
     state.showAddStudentForm = false;
     render();
@@ -5680,6 +5724,7 @@ function attachHandlers(conflictIds){
       if(!student) return;
       if(!confirm(`Remove "${student.name}" from Students Master? This can't be undone from here.`)) return;
       state.studentsMaster = state.studentsMaster.filter(s=>s.id!==btn.dataset.id);
+      invalidateStudentMatchCache();
       render();
       await saveStudentsMaster();
     };
@@ -5694,14 +5739,21 @@ function attachHandlers(conflictIds){
       const sheetName = wb.SheetNames[0];
       const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {defval:''});
       let added = 0, updated = 0, skipped = 0;
+      const newEntries = [];
       json.forEach(row=>{
         const name = (row['Candidate Name'] || row['Name'] || '').toString().trim();
         if(!name){ skipped++; return; }
         const country = (row['Location'] || row['Country'] || '').toString().trim();
         const existing = findStudentMasterMatch(name);
-        if(existing){ existing.name = name; existing.country = country; updated++; }
-        else { state.studentsMaster.push({ id: uid(), name, country }); added++; }
+        if(existing){ existing.name = name; existing.country = country; updated++; invalidateStudentMatchCache(); }
+        else { newEntries.push({ id: uid(), name, country }); added++; }
       });
+      // Reassigned once here (not pushed per-row above) so the Students
+      // Master match-result cache — keyed on the array's reference —
+      // correctly invalidates for every lookup after this import, the
+      // same reasoning as the quick-add-student fix above.
+      if(newEntries.length) state.studentsMaster = [...state.studentsMaster, ...newEntries];
+      invalidateStudentMatchCache();
       render();
       await saveStudentsMaster();
       alert(`Students Master updated from "${file.name}": ${added} new, ${updated} updated${skipped?`, ${skipped} row(s) skipped (no name)`:''}.`);
