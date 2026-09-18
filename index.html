@@ -1718,7 +1718,12 @@ function parseDetailedLine(line, defaultRound){
   // reached — the loop stopped early on "- Phn Interview" instead of
   // skipping it and continuing on to "Procea Ltd".
   const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean);
-  const timeRegex = /(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])/;
+  // Minutes are optional here ("11pm", no ":00") — a common shorthand in
+  // real messages that previously meant the time (and therefore the row's
+  // whole time field) was silently left blank. AM/PM stays mandatory,
+  // which is what keeps this safe from matching an unrelated bare number
+  // like "Round 2" as if it were a time.
+  const timeRegex = /(\d{1,2})(?:[:.](\d{2}))?\s*([AaPp][Mm])/;
   let name = segs[0] || skeleton;
   // Defensive second pass: catches stray leading numbering the first strip
   // missed (different punctuation, extra spaces, etc.) so no "1. " ever
@@ -1791,7 +1796,7 @@ function parseDetailedLine(line, defaultRound){
 
   const timeSource = timeIdx>=0 ? segs[timeIdx] : skeleton;
   const tm = timeSource.match(timeRegex);
-  const time = tm ? tm[0].trim() : '';
+  const time = tm ? `${tm[1]}:${tm[2] || '00'} ${tm[3].toUpperCase()}` : '';
 
   // round: usually a parenthetical mentioning "round", but real messages
   // sometimes just tack "1st Round" or "3RD Round" on as plain trailing text
@@ -2130,11 +2135,12 @@ function parseDurationMinutes(text){
 // often split across a couple of lines with @mentions and "sir" mixed in.
 function looksLikeRescheduleLine(line){
   // Broadened to also catch "not responding"/"no response" messages (a
-  // genuinely distinct status from reschedule/cancel), and to allow a
-  // bare time like "7:00" with no AM/PM — very common in these real
-  // messages and previously required explicit AM/PM to even be recognized.
+  // genuinely distinct status from reschedule/cancel), to allow a bare
+  // time like "7:00" with no AM/PM, and to allow a bare-HOUR time like
+  // "11pm" with no minutes at all — a very common shorthand in these real
+  // messages that previously required an explicit ":00" to be recognized.
   const hasStatusWord = /\b(reschedul\w*|cancel\w*|not\s*respond\w*|no\s*response)\b/i.test(line);
-  const hasTime = /\d{1,2}[:.]\d{2}(\s*[AaPp][Mm])?/.test(line);
+  const hasTime = /\d{1,2}([:.]\d{2})?\s*[AaPp][Mm]/.test(line) || /\d{1,2}[:.]\d{2}/.test(line);
   return hasStatusWord && hasTime;
 }
 function parseRescheduleText(text){
@@ -2143,7 +2149,11 @@ function parseRescheduleText(text){
   // Bare times (no AM/PM) default to PM — matches the app's existing
   // convention elsewhere for bare times, and these real messages very
   // often drop the AM/PM since it's understood to be an evening shift.
-  const timeRe = /(\d{1,2}[:.]\d{2}\s*([AaPp][Mm])?)/;
+  // Minutes are also optional now — "11pm" (no ":00") is a very common
+  // shorthand in these messages and was previously invisible to this
+  // parser entirely, since it required an explicit ":mm" to recognize
+  // anything as a time at all.
+  const timeRe = /(\d{1,2}(?:[:.]\d{2})?\s*[AaPp][Mm]|\d{1,2}[:.]\d{2})/;
   const blocks = [];
   let current = [];
   for(const line of lines){
@@ -2156,10 +2166,11 @@ function parseRescheduleText(text){
   if(current.length) blocks.push(current);
 
   function normalizeTime(raw){
-    const tm = raw.match(/(\d{1,2})[:.](\d{2})\s*([AaPp][Mm])?/);
+    const tm = raw.match(/(\d{1,2})(?:[:.](\d{2}))?\s*([AaPp][Mm])?/);
     if(!tm) return raw.trim();
+    const mins = tm[2] || '00'; // a bare-hour time like "11pm" implies :00
     const ampm = tm[3] ? tm[3].toUpperCase() : 'PM'; // default when omitted, e.g. "7:00" alone
-    return `${tm[1]}:${tm[2]} ${ampm}`;
+    return `${tm[1]}:${mins} ${ampm}`;
   }
 
   blocks.forEach(blockLines=>{
