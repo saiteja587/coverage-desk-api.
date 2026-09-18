@@ -112,18 +112,51 @@ function setCors(req, res) {
 // missing ADMIN_PASSWORD fails CLOSED (denies everything) instead, and
 // logs a clear one-line signal server-side so a misconfigured deployment
 // is loud instead of silently wide open.
+// Rate limiting for both login paths (the shared admin password AND
+// per-user accounts). A serverless function has no memory that persists
+// between invocations — each request can land on a totally different
+// underlying instance — so an in-memory attempt counter wouldn't work;
+// this has to be tracked in the database instead. Deliberately simple:
+// count recent failures for this identifier, block if there are too many.
+// Fails OPEN on a database error here specifically (not the same
+// direction as the ADMIN_PASSWORD check above) — a rate-limit check that
+// can't run shouldn't be the reason a legitimate login gets rejected;
+// the password check itself is still the real gate.
+const RATE_LIMIT_WINDOW_MINUTES = 15;
+const RATE_LIMIT_MAX_ATTEMPTS = 10;
+async function isRateLimited(db, identifier) {
+  try {
+    const [rows] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM login_attempts WHERE identifier = ? AND attempted_at > (NOW() - INTERVAL ? MINUTE)`,
+      [identifier, RATE_LIMIT_WINDOW_MINUTES]
+    );
+    return rows[0].cnt >= RATE_LIMIT_MAX_ATTEMPTS;
+  } catch (e) {
+    return false; // table missing or a transient DB error — don't block real logins over it
+  }
+}
+async function recordFailedAttempt(db, identifier) {
+  try { await db.query('INSERT INTO login_attempts (identifier) VALUES (?)', [identifier]); }
+  catch (e) { /* best-effort — a logging failure should never break the response */ }
+}
+
 async function authenticate(req, db) {
   if (!process.env.ADMIN_PASSWORD) {
     console.error('ADMIN_PASSWORD is not set — denying all requests until this is configured.');
     return { ok: false };
   }
   const adminPw = req.headers['x-admin-password'];
-  if (adminPw && adminPw === process.env.ADMIN_PASSWORD) {
-    return { ok: true, username: 'admin', role: 'admin' };
+  if (adminPw) {
+    if (await isRateLimited(db, '__admin__')) return { ok: false, rateLimited: true };
+    if (adminPw === process.env.ADMIN_PASSWORD) {
+      return { ok: true, username: 'admin', role: 'admin' };
+    }
+    await recordFailedAttempt(db, '__admin__');
   }
   const username = req.headers['x-username'];
   const password = req.headers['x-password'];
   if (username && password) {
+    if (await isRateLimited(db, username)) return { ok: false, rateLimited: true };
     try {
       const [rows] = await db.query(
         'SELECT id, username, role, password_hash FROM users WHERE username = ?',
@@ -141,6 +174,7 @@ async function authenticate(req, db) {
         }
       }
     } catch (e) { /* fall through to unauthorized */ }
+    await recordFailedAttempt(db, username);
   }
   return { ok: false };
 }
@@ -171,6 +205,7 @@ module.exports = async (req, res) => {
     }
 
     const auth = await authenticate(req, db);
+    if (auth.rateLimited) return res.status(429).json({ error: `Too many failed login attempts. Please wait ${RATE_LIMIT_WINDOW_MINUTES} minutes and try again.` });
     if (!auth.ok) return res.status(401).json({ error: 'Unauthorized' });
 
     // Read-only users can GET anything. Writes (POST) normally require the
@@ -205,7 +240,11 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|users|whoami' });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: err.message });
+    // The full error (including internal details like table/column names,
+    // or MySQL connection specifics) goes to the server log above, not to
+    // the client — a generic message here avoids handing that detail to
+    // anyone who happens to trigger an error, intentionally or not.
+    return res.status(500).json({ error: 'Something went wrong on the server. Please try again, and check the Vercel function logs if it persists.' });
   } finally {
     // Always closes, no matter which branch above ran or whether it threw —
     // this is the piece that actually prevents connections from piling up.
