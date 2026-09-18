@@ -516,13 +516,14 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   }
 }
 
-/* SWIPE GESTURES (mobile card view) — swipe a call card right to quickly
-   assign it to yourself, or left to delete it (with the existing undo
-   toast). The hint label is a separate floating element positioned over
-   the card during the gesture, NOT part of the table's own markup — a
-   <tr> can only validly contain <td>/<th> children, so layering a
-   reveal-behind-the-content hint the usual way would mean inserting an
-   invalid child and risking inconsistent rendering across browsers. */
+/* SWIPE GESTURES (mobile card view) — swipe a call card right to open a
+   quick "assign to…" picker (teams + everyone on the roster), or left to
+   delete it (with the existing undo toast). The hint label is a separate
+   floating element positioned over the card during the gesture, NOT part
+   of the table's own markup — a <tr> can only validly contain <td>/<th>
+   children, so layering a reveal-behind-the-content hint the usual way
+   would mean inserting an invalid child and risking inconsistent
+   rendering across browsers. */
 .swipe-hint{position:fixed;z-index:60;display:flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:700;font-size:13px;pointer-events:none;opacity:0;}
 .swipe-hint.right{background:var(--teal-dim);color:var(--teal);justify-content:flex-start;}
 .swipe-hint.left{background:var(--coral-dim);color:var(--coral);justify-content:flex-end;}
@@ -535,6 +536,8 @@ tbody tr[data-id]{touch-action:pan-y;}
 .my-name-picker-list{display:flex;flex-direction:column;gap:2px;}
 .my-name-picker-item{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
 .my-name-picker-team{color:var(--text-faint);font-size:11px;}
+.swipe-assign-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);font-weight:600;margin:12px 2px 6px;}
+.swipe-assign-group-label:first-child{margin-top:0;}
 
 /* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
    stylesheet (not up near the other mobile card-view rules) so it reliably
@@ -735,7 +738,7 @@ let state = {
   recentImportIds: null,
   loadError: null,
   confirmedStudentMatches: new Set(),
-  showMyNamePicker: false,
+  showSwipeAssignPicker: false,
   pendingSwipeAssignRowId: null,
   rejectedStudentMatches: new Set(),
 };
@@ -3409,16 +3412,19 @@ function render(){
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
     ${state.lastDeleted ? `<div class="undo-toast">Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}" <button id="undoDeleteBtn">Undo</button></div>` : ''}
-    ${state.showMyNamePicker ? `<div class="my-name-picker-overlay" id="myNamePickerOverlay">
+    ${state.showSwipeAssignPicker ? (()=>{
+      const pendingRow = state.rows.find(r=>r.id===state.pendingSwipeAssignRowId);
+      return `<div class="my-name-picker-overlay" id="myNamePickerOverlay">
       <div class="my-name-picker-card">
-        <div class="my-name-picker-title">Who are you?</div>
-        <div class="my-name-picker-sub">Pick your name once — swipe-to-assign will remember it on this device from now on.</div>
+        <div class="my-name-picker-title">Assign to…</div>
+        <div class="my-name-picker-sub">${pendingRow ? escapeHtml(pendingRow.candidate||'This call') : 'This call'} — tap a team or person.</div>
         <div class="my-name-picker-list">
-          ${state.roster.map(p=>`<button class="my-name-picker-item" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}<span class="my-name-picker-team">${escapeHtml(p.team)}</span></button>`).join('')}
+          ${renderSwipeAssignGroups(pendingRow ? pendingRow.round : '1st')}
         </div>
         <button class="btn ghost" id="myNamePickerCancel" style="margin-top:10px;width:100%">Cancel</button>
       </div>
-    </div>` : ''}
+    </div>`;
+    })() : ''}
   `;
 
   attachHandlers(conflictIds);
@@ -4704,6 +4710,35 @@ function buildRosterOptions(round, currentAssignee){
   return html;
 }
 const CUSTOM_ASSIGNEE_SENTINEL = '__custom_assignee__';
+// Same grouping logic as buildRosterOptions above (teams first, then an
+// advanced-round group when relevant, then each team's people with ★ for
+// advanced-eligible ones) — but rendered as a tappable list of buttons
+// for the swipe-assign picker instead of <option> tags for a <select>.
+function renderSwipeAssignGroups(round){
+  const advancedRound = isAdvancedRound(round);
+  const teams = {};
+  state.roster.forEach(p=>{ teams[p.team] = teams[p.team]||[]; teams[p.team].push(p); });
+  const knownOrder = ["HYD Team","Pradeep Anna Team","Development Team","Marketing Team","Sai Team","Sandeep Anna Team"];
+  const teamOrder = [...knownOrder, ...Object.keys(teams).filter(t=>!knownOrder.includes(t))];
+  const teamsWithPeople = teamOrder.filter(t=>teams[t] && teams[t].length);
+  let html = '';
+  if(teamsWithPeople.length){
+    html += `<div class="swipe-assign-group-label">Assign whole team</div>` +
+      teamsWithPeople.map(t=>`<button class="my-name-picker-item" data-name="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+  }
+  if(advancedRound){
+    const advancedPeople = state.roster.filter(p=>p.advanced);
+    if(advancedPeople.length){
+      html += `<div class="swipe-assign-group-label">2nd round + above</div>` +
+        advancedPeople.map(p=>`<button class="my-name-picker-item" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}<span class="my-name-picker-team">${escapeHtml(p.team)}</span></button>`).join('');
+    }
+  }
+  teamOrder.filter(t=>teams[t]).forEach(t=>{
+    html += `<div class="swipe-assign-group-label">${escapeHtml(t)}</div>` +
+      teams[t].map(p=>`<button class="my-name-picker-item" data-name="${escapeHtml(p.name)}">${p.advanced?'★ ':''}${escapeHtml(p.name)}</button>`).join('');
+  });
+  return html;
+}
 // Driving Person is deliberately always an INDIVIDUAL, never a team — unlike
 // the main Assigned-to field, which can be a whole team at the coarse
 // routing stage. This is the finer breakdown a team lead does afterward:
@@ -7511,12 +7546,16 @@ function findPortalMatch(row){
 }
 
 // ---------- init ----------
-// Swipe-to-assign / swipe-to-delete for mobile call cards. Touch-only
-// (checked via 'ontouchstart' in window — desktop mice never fire touch
-// events at all, so this is naturally a no-op there). Wired up exactly
-// once, delegated on #app (which persists across every re-render, unlike
-// its contents), rather than per-row inside attachHandlers() — the same
-// reasoning as every other delegated handler in this file.
+// Swipe-right-to-assign / swipe-left-to-delete for mobile call cards.
+// Swiping right opens a quick picker (teams + everyone on the roster) to
+// assign that call to whoever it should go to — not a fixed "me" person,
+// since a coordinator is usually routing calls to the right team member,
+// not just claiming them for themselves. Touch-only (checked via
+// 'ontouchstart' in window — desktop mice never fire touch events at all,
+// so this is naturally a no-op there). Wired up exactly once, delegated
+// on #app (which persists across every re-render, unlike its contents),
+// rather than per-row inside attachHandlers() — the same reasoning as
+// every other delegated handler in this file.
 //
 // The swipe-hint label is a separate floating element positioned over the
 // card during the gesture, deliberately NOT inserted into the table's own
@@ -7580,7 +7619,7 @@ function findPortalMatch(row){
     hint.style.opacity = Math.min(Math.abs(clamped) / THRESHOLD, 1).toFixed(2);
     if(clamped > 0){
       hint.className = 'swipe-hint right';
-      hint.textContent = '✓ Assign to me';
+      hint.textContent = '→ Assign to…';
       hint.style.left = rect.left + 'px';
       hint.style.width = Math.max(clamped, 40) + 'px';
     } else if(clamped < 0){
@@ -7599,7 +7638,7 @@ function findPortalMatch(row){
     if(dx > THRESHOLD){
       tr.style.transform = `translateX(${MAX_DRAG}px)`;
       hapticTap(20);
-      setTimeout(()=>{ swipeAssignToSelf(id); }, 120);
+      setTimeout(()=>{ swipeShowAssignPicker(id); }, 120);
     } else if(dx < -THRESHOLD){
       tr.style.transform = `translateX(-${MAX_DRAG}px)`;
       hapticTap(20);
@@ -7619,12 +7658,12 @@ function findPortalMatch(row){
     swipe = null;
   });
 
-  // The one-time "who are you" picker this triggers — a separate,
-  // independent delegated click listener on the same #app element (fine
-  // to have more than one listener for the same event type on one node).
+  // The assign-to picker this triggers — a separate, independent
+  // delegated click listener on the same #app element (fine to have more
+  // than one listener for the same event type on one node).
   appEl.addEventListener('click', (e)=>{
     if(e.target.id === 'myNamePickerCancel' || e.target.id === 'myNamePickerOverlay'){
-      state.showMyNamePicker = false;
+      state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
       render();
       return;
@@ -7632,25 +7671,18 @@ function findPortalMatch(row){
     const item = e.target.closest('.my-name-picker-item');
     if(item){
       const name = item.dataset.name;
-      try{ localStorage.setItem('coverage-desk-my-name', name); }catch(e){}
       const rowId = state.pendingSwipeAssignRowId;
-      state.showMyNamePicker = false;
+      state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
       if(rowId) applySwipeAssignment(rowId, name);
       else render();
     }
   });
 })();
-function swipeAssignToSelf(rowId){
-  let myName = null;
-  try{ myName = localStorage.getItem('coverage-desk-my-name'); }catch(e){}
-  if(myName){
-    applySwipeAssignment(rowId, myName);
-  } else {
-    state.pendingSwipeAssignRowId = rowId;
-    state.showMyNamePicker = true;
-    render();
-  }
+function swipeShowAssignPicker(rowId){
+  state.pendingSwipeAssignRowId = rowId;
+  state.showSwipeAssignPicker = true;
+  render();
 }
 function applySwipeAssignment(rowId, name){
   const row = state.rows.find(r=>r.id===rowId);
