@@ -106,6 +106,12 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .install-banner-action{background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
 .install-banner-dismiss{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:4px 6px;flex-shrink:0;}
 .install-banner-dismiss:hover{color:var(--text);}
+/* Bottom nav is a mobile-only pattern — desktop keeps the header/toolbar
+   navigation it already has. Full styling lives in the mobile media
+   query at the end of the stylesheet (same reasoning as every other
+   mobile-specific rule in this file: placed last so it reliably wins the
+   cascade over base rules defined later, rather than being order-dependent). */
+.bottom-nav{display:none;}
 .header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;}
 .header .sub{color:var(--text-muted);font-size:13px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
@@ -589,7 +595,67 @@ tbody tr[data-id]{touch-action:pan-y;}
   .filter-bar{gap:6px;margin-bottom:10px;padding:6px 8px;}
   .toolbar .btn{font-size:11.5px;padding:6px 10px;}
   .filter-bar .btn{font-size:11.5px;padding:6px 10px;}
+  /* The Tools/More dropdown anchors left:0 from its own button, which
+     works fine on desktop but on a narrow phone screen — where that
+     button sits well toward the right side of the toolbar — pushed the
+     dropdown off the right edge entirely. That horizontal overflow was
+     the actual root cause of a much stranger-looking symptom: opening
+     the dropdown was making window.innerHeight (and innerWidth) balloon
+     upward, which turned out to be Chromium's mobile viewport reacting
+     to the overflow by resizing to fit it, in turn pushing the fixed
+     bottom nav off-screen. Anchoring from the right edge instead — with
+     room to breathe via max-width and a safety clamp — fixes the actual
+     cause rather than working around the symptom.
+  */
+  .more-menu-dropdown{left:auto;right:0;max-width:calc(100vw - 24px);}
 }
+
+/* BOTTOM NAVIGATION (mobile only) — the single most recognizable pattern
+   that makes an app feel native rather than like a scaled-down website.
+   Lives outside #app (see the static HTML) so it survives every
+   re-render untouched, same reasoning as the scroll-to-top button and
+   install banner. Coordinates with both of those: they're bumped up
+   above this bar's height instead of sitting underneath it, and the
+   page body gets bottom padding so the last card in a scrolled list is
+   never hidden behind the bar. */
+@media (max-width:700px){
+  body{padding-bottom:64px;}
+  .bottom-nav{
+    display:flex;position:fixed;left:0;right:0;bottom:0;z-index:75;
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    box-shadow:0 -4px 20px rgba(0,0,0,.35);
+  }
+  .bottom-nav-item{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:none;border:none;color:var(--text-faint);padding:6px 2px;border-radius:10px;
+    position:relative;cursor:pointer;
+  }
+  .bottom-nav-item.active{color:var(--teal);}
+  .bottom-nav-icon{font-size:19px;line-height:1;}
+  .bottom-nav-label{font-size:9.5px;font-weight:600;letter-spacing:.01em;}
+  .bottom-nav-dot{position:absolute;top:2px;right:22%;width:7px;height:7px;border-radius:50%;background:var(--coral);border:1.5px solid var(--surface);}
+  /* The center Add button is deliberately raised above the bar itself
+     (a circular accent button breaking the top edge) — the same visual
+     trick Instagram/PhonePe-style apps use to make the primary action
+     stand out from the row of destination icons around it. */
+  .bottom-nav-fab{flex:0 0 54px;}
+  .bottom-nav-fab-icon{
+    width:46px;height:46px;border-radius:50%;
+    background:var(--teal);color:#06110F;font-size:24px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+    margin-top:-26px;box-shadow:0 4px 14px rgba(79,209,197,.45);
+    border:3px solid var(--surface);
+  }
+
+  /* Stack above the bottom nav instead of underneath it. */
+  .scroll-to-top-btn{bottom:76px;}
+  body.has-install-banner .scroll-to-top-btn{bottom:128px;}
+  .install-banner{bottom:64px;}
+  body{padding-bottom:64px;} /* always reserve room for the nav bar */
+  body.has-install-banner{padding-bottom:124px;} /* nav bar + install banner both showing at once */
+}
+
 </style>
 </head>
 <body>
@@ -601,6 +667,24 @@ tbody tr[data-id]{touch-action:pan-y;}
   <button id="installBannerActionBtn" class="install-banner-action">Install</button>
   <button id="installBannerDismissBtn" class="install-banner-dismiss" title="Dismiss" aria-label="Dismiss">✕</button>
 </div>
+<nav class="bottom-nav" id="bottomNav">
+  <button class="bottom-nav-item" id="navHome" data-nav="home">
+    <span class="bottom-nav-icon">🏠</span><span class="bottom-nav-label">Calls</span>
+  </button>
+  <button class="bottom-nav-item" id="navAlerts" data-nav="alerts">
+    <span class="bottom-nav-icon">🔔</span><span class="bottom-nav-label">Alerts</span>
+    <span class="bottom-nav-dot" id="navAlertsDot" style="display:none"></span>
+  </button>
+  <button class="bottom-nav-item bottom-nav-fab" id="navAdd" data-nav="add" title="Add a call">
+    <span class="bottom-nav-fab-icon">＋</span>
+  </button>
+  <button class="bottom-nav-item" id="navTools" data-nav="tools">
+    <span class="bottom-nav-icon">🔧</span><span class="bottom-nav-label">Tools</span>
+  </button>
+  <button class="bottom-nav-item" id="navMore" data-nav="more">
+    <span class="bottom-nav-icon">⋯</span><span class="bottom-nav-label">More</span>
+  </button>
+</nav>
 
 <script>
 const STATUS_COLORS = { assigned: 'var(--teal)', woi: 'var(--amber)', unassigned: 'var(--coral)' };
@@ -6447,11 +6531,11 @@ function attachHandlers(conflictIds){
         if(state.view !== 'all'){ state.view = 'all'; render(); }
         setTimeout(()=>{
           const retry = document.querySelector(`tr[data-bucket="${CSS.escape(bucket)}"]`);
-          if(retry){ retry.scrollIntoView({behavior:'smooth', block:'center'}); retry.classList.add('row-jump-highlight'); setTimeout(()=>retry.classList.remove('row-jump-highlight'), 3000); }
+          if(retry){ retry.scrollIntoView({behavior:'instant', block:'center'}); retry.classList.add('row-jump-highlight'); setTimeout(()=>retry.classList.remove('row-jump-highlight'), 3000); }
         }, 50);
         return;
       }
-      targetRow.scrollIntoView({behavior:'smooth', block:'center'});
+      targetRow.scrollIntoView({behavior:'instant', block:'center'});
       targetRow.classList.add('row-jump-highlight');
       setTimeout(()=>targetRow.classList.remove('row-jump-highlight'), 3000);
     };
@@ -7744,6 +7828,93 @@ function applySwipeAssignment(rowId, name){
   hapticTap();
   render();
 }
+
+// Bottom nav — lives OUTSIDE #app (see the static HTML), so it survives
+// every re-render untouched; wired up exactly once here rather than
+// inside attachHandlers(). Reuses the same global helpers the header
+// buttons already call (openOnlyPanel, addBlankCallRow, closeAllPanels)
+// instead of duplicating their logic, so there's only ever one "go home"
+// or "add a call" behavior to keep correct, not two copies that could
+// drift apart.
+(function setupBottomNav(){
+  const nav = document.getElementById('bottomNav');
+  if(!nav) return;
+
+  function setActive(name){
+    nav.querySelectorAll('.bottom-nav-item').forEach(el=>{
+      el.classList.toggle('active', el.dataset.nav === name);
+    });
+  }
+  // Reflects which destination is "current" based on actual state, not
+  // just which button was last tapped — so it's still correct if a panel
+  // was opened some other way (e.g. the header's own Notifications button).
+  function syncActiveState(){
+    if(state.showNotifications) setActive('alerts');
+    else if(state.showToolsMenu) setActive('tools');
+    else if(state.showMoreMenu || getActivePanelName()) setActive('more');
+    else setActive('home');
+  }
+  const origRender = window.render;
+  window.render = function(...args){
+    const result = origRender.apply(this, args);
+    syncActiveState();
+    const dot = document.getElementById('navAlertsDot');
+    if(dot) dot.style.display = ((state.notifications && state.notifications.length) || state.absentIds.length) ? 'block' : 'none';
+    return result;
+  };
+
+  document.getElementById('navHome').onclick = async ()=>{
+    if(state.dirty && CURRENT_ROLE==='admin') await saveAllChanges();
+    closeAllPanels();
+    state.filter = 'all';
+    state.search = '';
+    state.view = '1st';
+    state.selectedIds.clear();
+    hapticTap();
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  document.getElementById('navAlerts').onclick = ()=>{
+    openOnlyPanel('showNotifications');
+    hapticTap();
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  document.getElementById('navAdd').onclick = ()=>{
+    closeAllPanels();
+    hapticTap();
+    addBlankCallRow();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  // Tools/More are small dropdowns anchored to their OWN toolbar button
+  // (not full panels), which may be scrolled out of view when triggered
+  // from a bottom-fixed nav instead. Bringing the dropdown into view
+  // after it renders keeps this a one-tap action regardless of scroll
+  // position, without needing a parallel bottom-sheet version of the
+  // same menu just for this entry point. Instant, not smooth — this is
+  // correcting position, not a a user-facing scroll gesture worth
+  // animating.
+  document.getElementById('navTools').onclick = ()=>{
+    state.showMoreMenu = false;
+    state.showToolsMenu = true;
+    hapticTap();
+    render();
+    requestAnimationFrame(()=>{
+      const dropdown = document.querySelector('#toggleToolsMenu')?.parentElement?.querySelector('.more-menu-dropdown');
+      if(dropdown) dropdown.scrollIntoView({ behavior:'instant', block:'center' });
+    });
+  };
+  document.getElementById('navMore').onclick = ()=>{
+    state.showToolsMenu = false;
+    state.showMoreMenu = true;
+    hapticTap();
+    render();
+    requestAnimationFrame(()=>{
+      const dropdown = document.querySelector('#toggleMoreMenu')?.parentElement?.querySelector('.more-menu-dropdown');
+      if(dropdown) dropdown.scrollIntoView({ behavior:'instant', block:'center' });
+    });
+  };
+})();
 
 // Scroll-to-top button — lives OUTSIDE #app (see the static HTML), so it
 // survives every re-render untouched; wired up exactly once here rather
