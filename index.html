@@ -1931,6 +1931,16 @@ function parseDetailedLine(line, defaultRound){
   else {
     const durParen = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
     if(durParen) duration = durParen.replace(/([0-9])\s*([a-z])/i,'$1 $2');
+    else{
+      // Neither an explicit "Duration:" label nor a standalone parenthetical
+      // — some messages just drop a bare "25mins" (no space, no label) as
+      // plain trailing text instead. Only tried as a last resort, after
+      // both stricter patterns above have already failed, so this can
+      // never override a more explicit duration stated elsewhere in the
+      // same line.
+      const bareDurMatch = mainPart.match(/\b([0-9]+)\s*(mins?|minutes?|hrs?|hours?)\b/i);
+      if(bareDurMatch) duration = `${bareDurMatch[1]} ${bareDurMatch[2]}`;
+    }
   }
 
   // Broadened from the literal "waiting for invite" to the word stem
