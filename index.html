@@ -1039,7 +1039,31 @@ function findStudentMasterMatch(candidateName){
 // silently trusting a guess. Returns null (nothing found), or
 // { student, exact: true } for an exact match, or
 // { student, exact: false, reason: '...' } for a fuzzy one.
+//
+// MEMOIZED: this cascade (especially the Levenshtein and initial+compound
+// checks) is expensive, and was being recomputed from scratch for every
+// row on every single render — profiling a realistic-scale render (120
+// rows, 506 master-list students) showed this costing ~145ms out of a
+// ~316ms total render, the single largest cost in the entire app, because
+// nothing was cached between renders even though the master list itself
+// rarely changes. The cache is keyed by candidate name and invalidated
+// automatically whenever state.studentsMaster is reassigned to a new
+// array (load, import, add/edit/delete a student) — never manually
+// cleared elsewhere, so there's no risk of it silently going stale.
+let _studentMatchCache = new Map();
+let _studentMatchCacheForList = null;
 function findStudentMasterMatchWithConfidence(candidateName){
+  if(_studentMatchCacheForList !== state.studentsMaster){
+    _studentMatchCache = new Map();
+    _studentMatchCacheForList = state.studentsMaster;
+  }
+  const cacheKey = candidateName || '';
+  if(_studentMatchCache.has(cacheKey)) return _studentMatchCache.get(cacheKey);
+  const result = computeStudentMasterMatch(candidateName);
+  _studentMatchCache.set(cacheKey, result);
+  return result;
+}
+function computeStudentMasterMatch(candidateName){
   const key = normalizeNameKey(candidateName);
   if(!key || !state.studentsMaster) return null;
   const exact = state.studentsMaster.find(s => normalizeNameKey(s.name) === key);
@@ -1117,7 +1141,10 @@ function findStudentMasterMatchWithConfidence(candidateName){
   // student fits, and only when the initial and the merged word together
   // account for ALL THREE components of the fuller name — no partial or
   // fuzzy credit.
-  const compoundMatches = state.studentsMaster.filter(s => initialPlusCompoundNameMatch(candidateName, s.name));
+  const candidateWordCount = (candidateName||'').trim().split(/\s+/).filter(Boolean).length;
+  const compoundMatches = (candidateWordCount === 2 || candidateWordCount === 3)
+    ? state.studentsMaster.filter(s => initialPlusCompoundNameMatch(candidateName, s.name))
+    : [];
   if(compoundMatches.length === 1) return { student: compoundMatches[0], exact: false, reason: 'an initial plus a shortened/merged name' };
   return null;
 }
@@ -3278,9 +3305,17 @@ function render(){
       }
     }
   }
-  if(window.scrollY !== savedScrollY){
-    window.scrollTo({ top: savedScrollY, behavior: 'instant' });
-  }
+  // Deferred for the same reason as the two fixes above — window.scrollY
+  // forces the identical whole-document layout flush. Safe to defer
+  // without introducing a visible jump: requestAnimationFrame runs before
+  // the browser's next paint, so this correction still lands before the
+  // user ever sees the wrong scroll position, exactly as it did running
+  // synchronously — it just no longer blocks the rest of render() first.
+  requestAnimationFrame(()=>{
+    if(window.scrollY !== savedScrollY){
+      window.scrollTo({ top: savedScrollY, behavior: 'instant' });
+    }
+  });
 }
 
 function renderBulkBar(){
@@ -4663,6 +4698,34 @@ function renderTable(rows, conflictIds, clientConflicts){
   // this is deliberately checked independently of the general isReadOnly
   // flag used everywhere else in the table.
   const canEditDrivingPerson = CURRENT_ROLE === 'admin' || CURRENT_ROLE === 'team_lead';
+  // PERFORMANCE: buildRosterOptions/buildDrivingPersonOptions rebuild the
+  // entire roster-derived <option>/<optgroup> markup from scratch on every
+  // call — fine for a one-off dropdown, but this was being regenerated
+  // once per ROW (each row called it with its own assignee baked in via
+  // `selected`), so a busy day meant dozens of full roster rebuilds
+  // redoing the exact same work. The roster doesn't change between rows
+  // within a single render — only which option should start selected —
+  // so the option markup is built WITHOUT any selected marking just twice
+  // total here (once for a normal round, once for an advanced one), reused
+  // for every row, and the select's actual value gets set afterward via
+  // plain DOM assignment in attachHandlers (which already loops over every
+  // row's fields regardless, to wire up their change handlers). A value
+  // the roster doesn't recognize (a manually typed custom assignee) is
+  // rare enough to keep using the original slower-but-always-correct
+  // per-row computation rather than complicate the cache for it.
+  const rosterOptionsCache = { normal: null, advanced: null };
+  function cachedRosterOptions(advanced){
+    const key = advanced ? 'advanced' : 'normal';
+    if(rosterOptionsCache[key] === null) rosterOptionsCache[key] = buildRosterOptions(advanced ? '2nd Round' : '1st', '');
+    return rosterOptionsCache[key];
+  }
+  let drivingPersonOptionsCache = null;
+  function cachedDrivingPersonOptions(){
+    if(drivingPersonOptionsCache === null) drivingPersonOptionsCache = buildDrivingPersonOptions('');
+    return drivingPersonOptionsCache;
+  }
+  const knownAssigneeValues = new Set([...state.roster.map(p=>p.team), ...state.roster.map(p=>p.name)]);
+  const knownDrivingPersonNames = new Set(state.roster.map(p=>p.name));
   const rowsHtml = rows.map(r=>{
     const isConflict = conflictIds.has(r.id);
     const conflictReason = conflictIds.get(r.id) || '';
@@ -4725,15 +4788,15 @@ function renderTable(rows, conflictIds, clientConflicts){
         </label>
       </td>` : ''}
       <td data-label="Assigned to">
-        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" ${r.woi?'disabled':''}>
+        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
-          ${buildRosterOptions(r.round, r.assignee)}
+          ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? buildRosterOptions(r.round, r.assignee) : cachedRosterOptions(advancedRound)}
         </select>
       </td>
       ${showDrivingPersonColumn ? `<td data-label="Driving Person">
-        <select class="driving-person-select" data-id="${r.id}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
+        <select class="driving-person-select" data-id="${r.id}" data-driving-value="${escapeHtml(r.drivingPerson||'')}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
           <option value="">— none —</option>
-          ${buildDrivingPersonOptions(r.drivingPerson)}
+          ${(r.drivingPerson && !knownDrivingPersonNames.has(r.drivingPerson)) ? buildDrivingPersonOptions(r.drivingPerson) : cachedDrivingPersonOptions()}
         </select>
       </td>` : ''}
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
@@ -4824,7 +4887,21 @@ function attachHandlers(conflictIds){
   const scrollMain = document.getElementById('tableScrollMain');
   if(scrollTop && scrollTopInner && scrollMain){
     const tableEl = scrollMain.querySelector('table');
-    if(tableEl) scrollTopInner.style.width = tableEl.scrollWidth + 'px';
+    if(tableEl){
+      // PERFORMANCE: reading .scrollWidth forces the browser to
+      // synchronously compute full layout right here, mid-script — for an
+      // 80+ row table, CPU profiling showed this single property read was
+      // the overwhelming majority of this entire function's cost (not a
+      // guess — confirmed via line-level profiling). Deferring it to
+      // requestAnimationFrame lets the browser's normal paint cycle handle
+      // the layout instead of forcing it early and synchronously; the top
+      // scrollbar mirror ends up sized one frame later, which is
+      // imperceptible, in exchange for taking this off render's critical
+      // path entirely.
+      requestAnimationFrame(()=>{
+        scrollTopInner.style.width = tableEl.scrollWidth + 'px';
+      });
+    }
     let syncingScroll = false;
     scrollTop.addEventListener('scroll', ()=>{
       if(syncingScroll) return;
@@ -4852,7 +4929,11 @@ function attachHandlers(conflictIds){
         tabsWrap.classList.remove('is-overflowing');
       }
     };
-    updateOverflow();
+    // Deferred for the same reason as the table scrollWidth fix above —
+    // reading scrollWidth/clientWidth here forces the SAME whole-document
+    // layout flush, just attributed to whichever property read happens to
+    // run first; fixing one without the other just moves the cost here.
+    requestAnimationFrame(updateOverflow);
     mainTabs.addEventListener('scroll', ()=>{
       // hide the fade once scrolled near the end, so it doesn't look stuck
       const atEnd = mainTabs.scrollLeft + mainTabs.clientWidth >= mainTabs.scrollWidth - 2;
@@ -6179,6 +6260,9 @@ function attachHandlers(conflictIds){
     };
   });
   document.querySelectorAll('.driving-person-select').forEach(sel=>{
+    // The cached (common-case) option markup this select was built from
+    // has no 'selected' baked in — apply the real value here instead.
+    sel.value = sel.dataset.drivingValue || '';
     sel.onchange = async ()=>{
       const row = state.rows.find(r=>r.id===sel.dataset.id);
       if(!row) return;
@@ -6209,100 +6293,144 @@ function attachHandlers(conflictIds){
     };
   });
 
-  document.querySelectorAll('tbody tr').forEach(tr=>{
-    const id = tr.dataset.id;
-    tr.querySelectorAll('[data-field]').forEach(input=>{
+  // PERFORMANCE: this used to be document.querySelectorAll('tbody tr')
+  // .forEach(...) with its own nested per-field loop — on a busy day (80+
+  // rows × up to 8 fields each, plus 5 more per-row button lookups) that
+  // was 700+ individual addEventListener calls happening on EVERY single
+  // render, each creating a fresh closure. Delegation fixes this at the
+  // root: one listener per event type, attached to #app ONCE ever (guarded
+  // by tableDelegationSetup below), not once per render — it keeps working
+  // after every future re-render because #app itself is never replaced,
+  // only its innerHTML contents are; the listener just keeps bubbling
+  // events up from whatever is in there now. Row/field identity is read
+  // fresh from the DOM (closest tr[data-id], dataset.field) at the moment
+  // each event fires, so it's never stale even though the DOM nodes
+  // underneath get rebuilt on every render.
+  if(!window.__tableDelegationSetup){
+    window.__tableDelegationSetup = true;
+    const appEl = document.getElementById('app');
+
+    function handleFieldEvent(e){
+      const input = e.target;
+      if(!input.matches('[data-field]')) return;
       const field = input.dataset.field;
-      const evt = (input.tagName==='SELECT' || input.type==='checkbox' || field==='time') ? 'change' : 'input';
-      input.addEventListener(evt, ()=>{
-        const row = state.rows.find(r=>r.id===id);
-        if(!row) return;
-        if(field==='woi'){
-          row.woi = input.checked;
-          if(row.woi) row.assignee='';
-        } else if(field==='onsite'){
-          row.onsite = input.checked;
-        } else if(field==='assignee'){
-          if(input.value === CUSTOM_ASSIGNEE_SENTINEL){
-            const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', row.assignee && row.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? row.assignee : '');
-            if(typed && typed.trim()){ row.assignee = typed.trim(); }
-            // Cancelled or blank — leave the previous assignee untouched.
-          } else {
-            row.assignee = input.value;
-          }
+      // Exactly replicates the original per-element event-type choice
+      // (SELECT/checkbox/time -> change, everything else -> input) so a
+      // plain text field's blur-triggered 'change' (which also bubbles)
+      // doesn't re-run this a second time right after its own 'input'.
+      const expectedEvt = (input.tagName==='SELECT' || input.type==='checkbox' || field==='time') ? 'change' : 'input';
+      if(e.type !== expectedEvt) return;
+      const tr = input.closest('tr[data-id]');
+      if(!tr) return;
+      const id = tr.dataset.id;
+      const row = state.rows.find(r=>r.id===id);
+      if(!row) return;
+      if(field==='woi'){
+        row.woi = input.checked;
+        if(row.woi) row.assignee='';
+      } else if(field==='onsite'){
+        row.onsite = input.checked;
+      } else if(field==='assignee'){
+        if(input.value === CUSTOM_ASSIGNEE_SENTINEL){
+          const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', row.assignee && row.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? row.assignee : '');
+          if(typed && typed.trim()){ row.assignee = typed.trim(); }
+          // Cancelled or blank — leave the previous assignee untouched.
         } else {
-          row[field] = input.value;
+          row.assignee = input.value;
         }
-        markDirty();
-        if(field==='woi' || field==='assignee' || field==='time' || field==='onsite'){
-          render();
-          // Fast sequential assigning: after picking someone, jump straight to
-          // the next still-unassigned row's dropdown instead of requiring a
-          // manual click each time.
-          if(field==='assignee' && input.value){
-            const selects = Array.from(document.querySelectorAll('select[data-field="assignee"]'));
-            const currentIdx = selects.findIndex(s => s.closest('tr') && s.closest('tr').dataset.id === id);
-            for(let i = currentIdx+1; i < selects.length; i++){
-              if(selects[i].classList.contains('empty')){ selects[i].focus(); break; }
-            }
+      } else {
+        row[field] = input.value;
+      }
+      markDirty();
+      if(field==='woi' || field==='assignee' || field==='time' || field==='onsite'){
+        render();
+        // Fast sequential assigning: after picking someone, jump straight to
+        // the next still-unassigned row's dropdown instead of requiring a
+        // manual click each time.
+        if(field==='assignee' && input.value){
+          const selects = Array.from(document.querySelectorAll('select[data-field="assignee"]'));
+          const currentIdx = selects.findIndex(s => s.closest('tr') && s.closest('tr').dataset.id === id);
+          for(let i = currentIdx+1; i < selects.length; i++){
+            if(selects[i].classList.contains('empty')){ selects[i].focus(); break; }
           }
         }
-      });
+      }
+    }
+    appEl.addEventListener('input', handleFieldEvent);
+    appEl.addEventListener('change', handleFieldEvent);
+
+    appEl.addEventListener('click', async (e)=>{
+      const tr = e.target.closest('tr[data-id]');
+      if(!tr) return;
+      const id = tr.dataset.id;
+
+      const delBtn = e.target.closest('[data-del]');
+      if(delBtn){
+        const idx = state.rows.findIndex(r=>r.id===id);
+        if(idx===-1) return;
+        const removed = state.rows[idx];
+        state.rows = state.rows.filter(r=>r.id!==id);
+        state.lastDeleted = { row: removed, index: idx };
+        clearTimeout(undoToastTimer);
+        undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, 6000);
+        markDirty(); render();
+        return;
+      }
+      const resolveBtn = e.target.closest('.resolve-doubt');
+      if(resolveBtn){
+        const row = state.rows.find(r=>r.id===id);
+        if(row){ row.doubts = []; markDirty(); render(); }
+        return;
+      }
+      const clearStatusBtn = e.target.closest('.clear-status-btn');
+      if(clearStatusBtn){
+        const row = state.rows.find(r=>r.id===id);
+        if(!row || !row.status) return;
+        const label = statusBadgeInfo(row.status).label.toLowerCase();
+        if(!confirm(`Clear the "${label}" tag from "${row.candidate||'this call'}"? The call itself stays exactly where it is (including in the 2nd Round tab) — only the ${label} status is removed.`)) return;
+        row.status = '';
+        row.statusFields = [];
+        render();
+        try{ await saveCallStatuses(); }
+        catch(e){ alert('Cleared locally, but saving to the server failed: ' + (e && e.message ? e.message : e)); }
+        return;
+      }
+      const moveBtn = e.target.closest('.move-2nd');
+      if(moveBtn){
+        const row = state.rows.find(r=>r.id===id);
+        if(row){
+          const teamNames = new Set(state.roster.map(p=>p.team));
+          row.round = '2nd Round';
+          // Only clear a TEAM-level assignment (e.g. "HYD Team") — that
+          // default doesn't carry over to 2nd round & above, which needs a
+          // named person. But if an individual was already assigned, keep
+          // them — clearing it unconditionally was flipping the row to
+          // red/"unassigned" even when someone was already correctly on it.
+          if(teamNames.has(row.assignee)) row.assignee = '';
+          markDirty(); render();
+        }
+        return;
+      }
+      const moveBtn1st = e.target.closest('.move-1st');
+      if(moveBtn1st){
+        const row = state.rows.find(r=>r.id===id);
+        if(row){
+          // Unlike the reverse (→2nd), a 1st round call can be handled by
+          // either a team or an individual just fine — no need to clear the
+          // assignee here, whoever's already on it stays on it.
+          row.round = '1st';
+          markDirty(); render();
+        }
+        return;
+      }
     });
-    const delBtn = tr.querySelector('[data-del]');
-    if(delBtn) delBtn.onclick = ()=>{
-      const idx = state.rows.findIndex(r=>r.id===id);
-      if(idx===-1) return;
-      const removed = state.rows[idx];
-      state.rows = state.rows.filter(r=>r.id!==id);
-      state.lastDeleted = { row: removed, index: idx };
-      clearTimeout(undoToastTimer);
-      undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, 6000);
-      markDirty(); render();
-    };
-    const resolveBtn = tr.querySelector('.resolve-doubt');
-    if(resolveBtn) resolveBtn.onclick = ()=>{
-      const row = state.rows.find(r=>r.id===id);
-      if(row){ row.doubts = []; markDirty(); render(); }
-    };
-    const clearStatusBtn = tr.querySelector('.clear-status-btn');
-    if(clearStatusBtn) clearStatusBtn.onclick = async ()=>{
-      const row = state.rows.find(r=>r.id===id);
-      if(!row || !row.status) return;
-      const label = statusBadgeInfo(row.status).label.toLowerCase();
-      if(!confirm(`Clear the "${label}" tag from "${row.candidate||'this call'}"? The call itself stays exactly where it is (including in the 2nd Round tab) — only the ${label} status is removed.`)) return;
-      row.status = '';
-      row.statusFields = [];
-      render();
-      try{ await saveCallStatuses(); }
-      catch(e){ alert('Cleared locally, but saving to the server failed: ' + (e && e.message ? e.message : e)); }
-    };
-    const moveBtn = tr.querySelector('.move-2nd');
-    if(moveBtn) moveBtn.onclick = ()=>{
-      const row = state.rows.find(r=>r.id===id);
-      if(row){
-        const teamNames = new Set(state.roster.map(p=>p.team));
-        row.round = '2nd Round';
-        // Only clear a TEAM-level assignment (e.g. "HYD Team") — that
-        // default doesn't carry over to 2nd round & above, which needs a
-        // named person. But if an individual was already assigned, keep
-        // them — clearing it unconditionally was flipping the row to
-        // red/"unassigned" even when someone was already correctly on it.
-        if(teamNames.has(row.assignee)) row.assignee = '';
-        markDirty(); render();
-      }
-    };
-    const moveBtn1st = tr.querySelector('.move-1st');
-    if(moveBtn1st) moveBtn1st.onclick = ()=>{
-      const row = state.rows.find(r=>r.id===id);
-      if(row){
-        // Unlike the reverse (→2nd), a 1st round call can be handled by
-        // either a team or an individual just fine — no need to clear the
-        // assignee here, whoever's already on it stays on it.
-        row.round = '1st';
-        markDirty(); render();
-      }
-    };
+  }
+  // The Assigned To select's cached (common-case) option markup has no
+  // 'selected' baked in — apply the real value on every render (this part
+  // genuinely does need to run every render, unlike the listeners above,
+  // since it's populating freshly-inserted DOM with the right value).
+  document.querySelectorAll('select[data-field="assignee"]').forEach(sel=>{
+    sel.value = sel.dataset.assigneeValue || '';
   });
 }
 
