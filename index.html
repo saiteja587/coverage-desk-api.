@@ -417,7 +417,7 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
   thead{display:none;}
   tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
-  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px 9px;}
+  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px 9px;box-shadow:0 2px 8px rgba(0,0,0,.22);}
   tbody tr.row-unassigned{background:var(--coral-dim);}
   /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
      full-width blocks, not the flex meta-grid the main data row uses. */
@@ -450,10 +450,30 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   td[data-label="WOI"]{order:6;flex:0 0 30%;}
   td[data-label="Onsite"]{order:7;flex:0 0 30%;}
 
+  /* A tag/pill look for the short, glanceable fields — reads as a
+     designed group of info chips rather than squeezed table cells, which
+     is what these looked like when they just inherited the plain
+     desktop cell styling verbatim. */
+  td[data-label="Time"] .cell-input,
+  td[data-label="Round"] .cell-input,
+  td[data-label="Duration"] .cell-input,
+  td[data-label="Country"] .cell-input{
+    background:var(--surface-2);border:1px solid var(--border-soft);border-radius:7px;
+    padding:4px 8px;font-size:12px;
+  }
+  /* On mobile specifically, color the round chip by stage — 1st round vs
+     2nd-round-and-later is meaningful at a glance while scanning a stack
+     of cards, in a way desktop's plain-text cell doesn't need (the tabs
+     already separate 1st from 2nd+ there). */
+  td[data-label="Round"] .cell-input.round2{background:var(--violet-dim);border-color:#3A3160;color:var(--violet);}
+  td[data-label="Round"] .cell-input.roundfinal{background:var(--coral-dim);border-color:#4A2420;color:var(--coral);}
+
   /* Candidate gets its own full-width line — it carries the name plus
      several small badges, and is the main thing being scanned for. */
   td[data-label="Candidate"]{order:8;flex:0 0 100%;padding-top:4px;padding-right:0;}
+  td[data-label="Candidate"] .cell-input{font-size:15px;font-weight:600;color:var(--text);}
   td[data-label="Company"]{order:9;flex:0 0 100%;padding-right:0;}
+  td[data-label="Company"] .cell-input{color:var(--text-muted);}
 
   /* Assigned To / Driving Person share a row when both are present. */
   td[data-label="Assigned to"]{order:10;flex:1 1 50%;padding-top:2px;min-width:0;}
@@ -468,6 +488,32 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   #tableScrollTop{display:none;}
   .mini-badge{width:22px;height:22px;font-size:11px;}
   .flag-icon, .cat-badge{padding:2px;}
+}
+
+/* MOBILE TOUCH INTERACTIVITY — scoped to devices with no real hover and a
+   coarse (finger) pointer, so this never touches desktop mouse behavior.
+   A press gives a brief, tactile scale+darken response — the same kind of
+   feedback a native app gives, which a plain :hover-based design (built
+   for a mouse) has no equivalent of on a touchscreen at all. */
+@media (hover:none) and (pointer:coarse){
+  .btn, .tab-btn, .filter-chip, .mini-badge, .more-menu-item, .notif-tab-btn,
+  tbody tr, .scroll-to-top-btn, .install-banner-action{
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active, .tab-btn:active, .filter-chip:active, .more-menu-item:active,
+  .notif-tab-btn:active, .scroll-to-top-btn:active, .install-banner-action:active{
+    transform: scale(0.96);
+    filter: brightness(0.92);
+    transition: transform .08s ease, filter .08s ease;
+  }
+  tbody tr:active{
+    filter: brightness(1.08);
+    transition: filter .1s ease;
+  }
+  .mini-badge:active, .mini-badge-confirm-student:active, .quick-add-student:active{
+    transform: scale(0.88);
+    transition: transform .08s ease;
+  }
 }
 
 /* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
@@ -667,6 +713,7 @@ let state = {
   lastImportedCount: 0,
   lastImportMergedCount: 0,
   recentImportIds: null,
+  loadError: null,
   confirmedStudentMatches: new Set(),
   rejectedStudentMatches: new Set(),
 };
@@ -743,17 +790,40 @@ async function apiCall(resource, opts){
     headers['x-password'] = ADMIN_PASSWORD;        // also tried as this account's own password
   }
   if(CURRENT_USERNAME) headers['x-username'] = CURRENT_USERNAME;
-  const res = await fetch(url, {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-    // Forces the browser to bypass its HTTP cache entirely and always hit
-    // the server fresh — without this, the browser can send a conditional
-    // request (If-None-Match) and reuse a stale cached response (304 Not
-    // Modified) even when the underlying data has genuinely changed, which
-    // would look exactly like "I saved but it still shows the old data."
-    cache: 'no-store'
-  });
+  // Without a timeout, a fetch that never resolves (server accepts the
+  // connection but never answers — a slow-waking serverless function or a
+  // suspended free-tier database are the realistic causes here) leaves
+  // whoever is awaiting this call stuck forever, with no way for their own
+  // try/catch to help — that only handles a promise that actually rejects,
+  // not one that simply never settles. On first load specifically, that's
+  // exactly what would leave someone staring at "Loading Coverage Desk…"
+  // indefinitely, since render() never gets reached. 20s is generous enough
+  // for a genuine cold start while still guaranteeing the app eventually
+  // gives up and falls back instead of hanging forever.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=>controller.abort(), 20000);
+  let res;
+  try{
+    res = await fetch(url, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      // Forces the browser to bypass its HTTP cache entirely and always hit
+      // the server fresh — without this, the browser can send a conditional
+      // request (If-None-Match) and reuse a stale cached response (304 Not
+      // Modified) even when the underlying data has genuinely changed, which
+      // would look exactly like "I saved but it still shows the old data."
+      cache: 'no-store',
+      signal: controller.signal
+    });
+  }catch(e){
+    if(e && e.name === 'AbortError'){
+      throw new Error(`${resource}: the server took too long to respond (over 20s) — it may be waking up from being idle. Try again in a moment.`);
+    }
+    throw e;
+  }finally{
+    clearTimeout(timeoutId);
+  }
   if(res.status === 401){ AUTH_FAILED = true; throw new Error('Unauthorized — wrong or missing credentials'); }
   if(res.status === 403){ throw new Error('Read-only account — admin permission required to save changes.'); }
   AUTH_FAILED = false;
@@ -3255,6 +3325,10 @@ function render(){
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
       </div>
     </div>
+    ${state.loadError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>⚠ Couldn't load today's data: ${escapeHtml(state.loadError)}</span>
+      <button class="btn ghost" id="retryLoadBtn">↻ Retry</button>
+    </div>` : ''}
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
     ${state.lastImportedIds && state.lastImportedIds.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>✅ Last import added ${state.lastImportedIds.length} new call(s)${state.lastImportMergedCount?` and updated ${state.lastImportMergedCount} existing call(s) with role/interviewer/round info`:''}.</span>
@@ -5284,6 +5358,20 @@ function attachHandlers(conflictIds){
   });
   const syncPortalBtn = document.getElementById('syncPortalBtn');
   if(syncPortalBtn) syncPortalBtn.onclick = ()=>{ syncPortalData(); };
+  const retryLoadBtn = document.getElementById('retryLoadBtn');
+  if(retryLoadBtn) retryLoadBtn.onclick = async ()=>{
+    retryLoadBtn.disabled = true;
+    retryLoadBtn.textContent = 'Retrying…';
+    try{
+      await loadRoster();
+      await loadDay(state.date);
+      await refreshRole();
+      state.loadError = null;
+    }catch(e){
+      state.loadError = e && e.message ? e.message : 'Still unable to load — please refresh the page.';
+    }
+    render();
+  };
   const goHomeBtn = document.getElementById('goHomeBtn');
   if(goHomeBtn) goHomeBtn.onclick = async ()=>{
     if(state.dirty && CURRENT_ROLE==='admin'){
@@ -7065,14 +7153,24 @@ function renderClientLoginScreen(){
 
 async function startApp(){
   registerServiceWorker();
-  await loadRoster();
-  await loadDay(state.date);
-  // Fetches the ACTUAL role for whatever credentials are stored (admin
-  // master password, or a specific username/password) before the first
-  // render — without this, CURRENT_ROLE never reflected reality and every
-  // account effectively had full admin access no matter what role they
-  // were actually assigned in Manage Users.
-  await refreshRole();
+  // Wrapped so that ANY unexpected failure in this chain — not just a
+  // timed-out fetch, but literally anything — still reaches render() at
+  // the end rather than leaving the static "Loading Coverage Desk…"
+  // placeholder on screen forever. A partially-loaded app (falling back to
+  // local/default data where needed) is always better than an app that
+  // never renders at all.
+  try{
+    await loadRoster();
+    await loadDay(state.date);
+    // Fetches the ACTUAL role for whatever credentials are stored (admin
+    // master password, or a specific username/password) before the first
+    // render — without this, CURRENT_ROLE never reflected reality and every
+    // account effectively had full admin access no matter what role they
+    // were actually assigned in Manage Users.
+    await refreshRole();
+  }catch(e){
+    state.loadError = e && e.message ? e.message : 'Something went wrong while loading — please refresh the page.';
+  }
   // Demo/seed data disabled — see note at the other call sites.
   // await maybeSeedMaster(); await maybeSeedAug11(); await maybeSeedAug12(); await maybeSeedAug13();
   render();
