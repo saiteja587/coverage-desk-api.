@@ -12,8 +12,45 @@
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
 
-function hashPw(pw) {
+// Passwords used to be hashed with plain unsalted SHA-256 — fast by
+// design, which is exactly the wrong property for a password hash: if the
+// database ever leaked, every password would be crackable via rainbow
+// tables in practice. scrypt is deliberately slow and memory-hard, with a
+// random salt per password so two identical passwords never produce the
+// same stored hash. Stored as "scrypt:<salt-hex>:<hash-hex>" so it's
+// self-describing — verifyPassword below can tell a new-format hash from
+// a legacy one just by looking at it, which is what makes migrating
+// existing accounts without forcing a mass password reset possible.
+function hashPwStrong(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(pw), salt, 64).toString('hex');
+  return `scrypt:${salt}:${hash}`;
+}
+function hashPwLegacySha256(pw) {
   return crypto.createHash('sha256').update(String(pw)).digest('hex');
+}
+// Verifies a password against whichever format the stored hash happens to
+// be. needsUpgrade is true for a legacy hash that just verified correctly
+// — the caller (authenticate() below) uses that signal to transparently
+// re-hash and save the strong version, so an account upgrades itself the
+// next time its real owner logs in with the correct password, with no
+// explicit migration step and no forced password reset for anyone.
+function verifyPassword(pw, storedHash) {
+  if (!storedHash) return { valid: false, needsUpgrade: false };
+  if (storedHash.startsWith('scrypt:')) {
+    const [, salt, hashHex] = storedHash.split(':');
+    const candidate = crypto.scryptSync(String(pw), salt, 64);
+    const stored = Buffer.from(hashHex, 'hex');
+    const valid = candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+    return { valid, needsUpgrade: false };
+  }
+  // Legacy plain-SHA256 hash — compared with a timing-safe check even
+  // though SHA-256 itself offers no real protection here, since there's
+  // no reason to skip that hygiene while it's still in play.
+  const legacy = hashPwLegacySha256(pw);
+  const a = Buffer.from(legacy, 'utf8'), b = Buffer.from(String(storedHash), 'utf8');
+  const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  return { valid, needsUpgrade: valid };
 }
 function newId() {
   return crypto.randomBytes(6).toString('hex');
@@ -42,8 +79,17 @@ function getConnection() {
   });
 }
 
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function setCors(req, res) {
+  // Previously '*' — any website on the internet could call this API from
+  // a visitor's browser. Scoped to a specific allowed origin instead, set
+  // via the ALLOWED_ORIGIN env var (your actual frontend's URL, e.g.
+  // https://coverage-desk-api.vercel.app or a custom domain). If it isn't
+  // set yet, falls back to reflecting the request's own origin — safer
+  // than '*' (a browser still enforces credentials/cookie rules per-origin
+  // even then) but genuinely locking this down means setting ALLOWED_ORIGIN.
+  const allowedOrigin = process.env.ALLOWED_ORIGIN || req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-password, x-username, x-password');
   // Explicitly tells Vercel's CDN/edge network (and any proxy in between)
@@ -55,15 +101,22 @@ function setCors(res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 }
 
-// Checks who's making the request. The ADMIN_PASSWORD env var is a master key
-// that always grants admin access (also used to create the first real user
-// accounts). Beyond that, individual accounts in the `users` table log in with
-// their own username/password and carry their own role ('admin' or 'user').
-// If ADMIN_PASSWORD isn't set at all, the app stays fully open — unchanged
-// from before per-user accounts existed, so nothing breaks for setups that
-// never opted into any of this.
+// Auth: an ADMIN_PASSWORD env var grants full access via the
+// 'x-admin-password' header (shared master password, used for older
+// accounts). Beyond that, individual accounts in the `users` table log in
+// with their own username/password and carry their own role ('admin' or
+// 'user'). ADMIN_PASSWORD must be set for auth to work at all — previously,
+// leaving it unset made the app fall back to granting full admin access to
+// EVERY request with no password required at all, which is the wrong
+// direction to fail in for an app holding real candidate data. Now a
+// missing ADMIN_PASSWORD fails CLOSED (denies everything) instead, and
+// logs a clear one-line signal server-side so a misconfigured deployment
+// is loud instead of silently wide open.
 async function authenticate(req, db) {
-  if (!process.env.ADMIN_PASSWORD) return { ok: true, username: null, role: 'admin' };
+  if (!process.env.ADMIN_PASSWORD) {
+    console.error('ADMIN_PASSWORD is not set — denying all requests until this is configured.');
+    return { ok: false };
+  }
   const adminPw = req.headers['x-admin-password'];
   if (adminPw && adminPw === process.env.ADMIN_PASSWORD) {
     return { ok: true, username: 'admin', role: 'admin' };
@@ -73,17 +126,27 @@ async function authenticate(req, db) {
   if (username && password) {
     try {
       const [rows] = await db.query(
-        'SELECT username, role FROM users WHERE username = ? AND password_hash = ?',
-        [username, hashPw(password)]
+        'SELECT id, username, role, password_hash FROM users WHERE username = ?',
+        [username]
       );
-      if (rows.length) return { ok: true, username: rows[0].username, role: rows[0].role };
+      if (rows.length) {
+        const { valid, needsUpgrade } = verifyPassword(password, rows[0].password_hash);
+        if (valid) {
+          if (needsUpgrade) {
+            // Fire-and-forget — never let a hash upgrade block or fail the
+            // login itself; worst case it just tries again next time.
+            db.query('UPDATE users SET password_hash = ? WHERE id = ?', [hashPwStrong(password), rows[0].id]).catch(()=>{});
+          }
+          return { ok: true, username: rows[0].username, role: rows[0].role };
+        }
+      }
     } catch (e) { /* fall through to unauthorized */ }
   }
   return { ok: false };
 }
 
 module.exports = async (req, res) => {
-  setCors(res);
+  setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const resource = req.query.resource;
@@ -167,7 +230,7 @@ async function handleUsers(req, res, db) {
       try {
         await db.query(
           'INSERT INTO users (id, username, password_hash, role) VALUES (?,?,?,?)',
-          [newId(), username, hashPw(password), safeRole(role)]
+          [newId(), username, hashPwStrong(password), safeRole(role)]
         );
         return res.status(200).json({ ok: true });
       } catch (e) {
@@ -181,7 +244,7 @@ async function handleUsers(req, res, db) {
     }
     if (action === 'resetPassword') {
       if (!password) return res.status(400).json({ error: 'password required' });
-      await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [hashPw(password), id]);
+      await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [hashPwStrong(password), id]);
       return res.status(200).json({ ok: true });
     }
     if (action === 'delete') {
