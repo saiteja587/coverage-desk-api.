@@ -516,6 +516,26 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   }
 }
 
+/* SWIPE GESTURES (mobile card view) — swipe a call card right to quickly
+   assign it to yourself, or left to delete it (with the existing undo
+   toast). The hint label is a separate floating element positioned over
+   the card during the gesture, NOT part of the table's own markup — a
+   <tr> can only validly contain <td>/<th> children, so layering a
+   reveal-behind-the-content hint the usual way would mean inserting an
+   invalid child and risking inconsistent rendering across browsers. */
+.swipe-hint{position:fixed;z-index:60;display:flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:700;font-size:13px;pointer-events:none;opacity:0;}
+.swipe-hint.right{background:var(--teal-dim);color:var(--teal);justify-content:flex-start;}
+.swipe-hint.left{background:var(--coral-dim);color:var(--coral);justify-content:flex-end;}
+tbody tr[data-id]{touch-action:pan-y;}
+
+.my-name-picker-overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;}
+.my-name-picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:18px 16px 22px;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;box-shadow:var(--shadow-md);}
+.my-name-picker-title{font-family:var(--display);font-weight:700;font-size:17px;margin-bottom:4px;}
+.my-name-picker-sub{color:var(--text-muted);font-size:12.5px;margin-bottom:14px;}
+.my-name-picker-list{display:flex;flex-direction:column;gap:2px;}
+.my-name-picker-item{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.my-name-picker-team{color:var(--text-faint);font-size:11px;}
+
 /* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
    stylesheet (not up near the other mobile card-view rules) so it reliably
    wins the cascade over the base .shift-note-box/.strip-wrap/etc rules
@@ -715,6 +735,8 @@ let state = {
   recentImportIds: null,
   loadError: null,
   confirmedStudentMatches: new Set(),
+  showMyNamePicker: false,
+  pendingSwipeAssignRowId: null,
   rejectedStudentMatches: new Set(),
 };
 let saveTimer = null;
@@ -3377,6 +3399,16 @@ function render(){
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
     ${state.lastDeleted ? `<div class="undo-toast">Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}" <button id="undoDeleteBtn">Undo</button></div>` : ''}
+    ${state.showMyNamePicker ? `<div class="my-name-picker-overlay" id="myNamePickerOverlay">
+      <div class="my-name-picker-card">
+        <div class="my-name-picker-title">Who are you?</div>
+        <div class="my-name-picker-sub">Pick your name once — swipe-to-assign will remember it on this device from now on.</div>
+        <div class="my-name-picker-list">
+          ${state.roster.map(p=>`<button class="my-name-picker-item" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}<span class="my-name-picker-team">${escapeHtml(p.team)}</span></button>`).join('')}
+        </div>
+        <button class="btn ghost" id="myNamePickerCancel" style="margin-top:10px;width:100%">Cancel</button>
+      </div>
+    </div>` : ''}
   `;
 
   attachHandlers(conflictIds);
@@ -4961,6 +4993,33 @@ function escapeHtml(s){
 }
 
 // ---------- handlers ----------
+// Shared by the toolbar's "＋ Add call" button and the "Add a call" PWA
+// home-screen shortcut (long-press the installed app icon) — same action,
+// two different entry points into it.
+// Small haptic pulse for a handful of confirm-style mobile actions (swipe
+// actions, picking an assignee). Android Chrome/Samsung Internet support
+// the Vibration API; iOS Safari doesn't expose it at all, so this quietly
+// does nothing there rather than erroring — never gates any actual
+// functionality on whether it worked.
+function hapticTap(ms){
+  try{ if(navigator.vibrate) navigator.vibrate(ms || 15); }catch(e){}
+}
+// Shared by the row's delete button and swipe-to-delete — same action,
+// same undo toast, two different entry points into it.
+function deleteCallRow(id){
+  const idx = state.rows.findIndex(r=>r.id===id);
+  if(idx===-1) return;
+  const removed = state.rows[idx];
+  state.rows = state.rows.filter(r=>r.id!==id);
+  state.lastDeleted = { row: removed, index: idx };
+  clearTimeout(undoToastTimer);
+  undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, 6000);
+  markDirty(); render();
+}
+function addBlankCallRow(){
+  state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
+  markDirty(); render();
+}
 function attachHandlers(conflictIds){
   // Mirrors the calls table's horizontal scrollbar at the TOP as well as
   // the bottom, so dragging it back left doesn't require scrolling all the
@@ -5152,8 +5211,7 @@ function attachHandlers(conflictIds){
   });
   const addRowBtn = document.getElementById('addRow');
   if(addRowBtn) addRowBtn.onclick = ()=>{
-    state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
-    markDirty(); render();
+    addBlankCallRow();
   };
   const clearAllBtn = document.getElementById('clearAll');
   if(clearAllBtn) clearAllBtn.onclick = async ()=>{
@@ -6432,10 +6490,11 @@ function attachHandlers(conflictIds){
       } else if(field==='assignee'){
         if(input.value === CUSTOM_ASSIGNEE_SENTINEL){
           const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', row.assignee && row.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? row.assignee : '');
-          if(typed && typed.trim()){ row.assignee = typed.trim(); }
+          if(typed && typed.trim()){ row.assignee = typed.trim(); hapticTap(); }
           // Cancelled or blank — leave the previous assignee untouched.
         } else {
           row.assignee = input.value;
+          if(input.value) hapticTap();
         }
       } else {
         row[field] = input.value;
@@ -6465,14 +6524,7 @@ function attachHandlers(conflictIds){
 
       const delBtn = e.target.closest('[data-del]');
       if(delBtn){
-        const idx = state.rows.findIndex(r=>r.id===id);
-        if(idx===-1) return;
-        const removed = state.rows[idx];
-        state.rows = state.rows.filter(r=>r.id!==id);
-        state.lastDeleted = { row: removed, index: idx };
-        clearTimeout(undoToastTimer);
-        undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, 6000);
-        markDirty(); render();
+        deleteCallRow(id);
         return;
       }
       const resolveBtn = e.target.closest('.resolve-doubt');
@@ -7174,6 +7226,20 @@ async function startApp(){
   // Demo/seed data disabled — see note at the other call sites.
   // await maybeSeedMaster(); await maybeSeedAug11(); await maybeSeedAug12(); await maybeSeedAug13();
   render();
+  // PWA home-screen shortcuts (long-press the installed app icon) land
+  // here with an ?action= param — handled once, right after the first
+  // real render so there's actual data/state to act on, then the URL is
+  // cleaned up immediately so refreshing the page doesn't redo the action.
+  const shortcutAction = new URLSearchParams(location.search).get('action');
+  if(shortcutAction === 'addcall'){
+    addBlankCallRow();
+  } else if(shortcutAction === 'unassigned'){
+    state.filter = 'unassigned';
+    render();
+  }
+  if(shortcutAction){
+    history.replaceState(null, '', location.pathname);
+  }
   // Fire-and-forget: scans every date for repeat candidates so the "handled
   // this candidate before" hint can show right on the row automatically,
   // without a manual scan click. Runs after the first render so it never
@@ -7435,6 +7501,156 @@ function findPortalMatch(row){
 }
 
 // ---------- init ----------
+// Swipe-to-assign / swipe-to-delete for mobile call cards. Touch-only
+// (checked via 'ontouchstart' in window — desktop mice never fire touch
+// events at all, so this is naturally a no-op there). Wired up exactly
+// once, delegated on #app (which persists across every re-render, unlike
+// its contents), rather than per-row inside attachHandlers() — the same
+// reasoning as every other delegated handler in this file.
+//
+// The swipe-hint label is a separate floating element positioned over the
+// card during the gesture, deliberately NOT inserted into the table's own
+// markup — a <tr> can only validly contain <td>/<th> children, so
+// layering a reveal-behind-the-content hint the usual way would mean an
+// invalid child and inconsistent rendering across browsers.
+(function setupSwipeGestures(){
+  if(!('ontouchstart' in window)) return;
+  const appEl = document.getElementById('app');
+  if(!appEl) return;
+
+  let swipe = null; // { tr, startX, startY, dx, dragging }
+  let hintEl = null;
+  const THRESHOLD = 90;
+  const MAX_DRAG = 140;
+
+  function ensureHint(){
+    if(!hintEl){
+      hintEl = document.createElement('div');
+      hintEl.className = 'swipe-hint';
+      document.body.appendChild(hintEl);
+    }
+    return hintEl;
+  }
+  function removeHint(){
+    if(hintEl){ hintEl.remove(); hintEl = null; }
+  }
+
+  appEl.addEventListener('touchstart', (e)=>{
+    const tr = e.target.closest('tbody tr[data-id]');
+    // Single-cell note/detail rows (doubt, status, pin-detail) have
+    // nothing to swipe — a whole call row is the unit being acted on.
+    if(!tr || tr.classList.contains('doubt-note-row') || tr.classList.contains('status-note-row') || tr.classList.contains('pin-detail-row')) return;
+    const t = e.touches[0];
+    swipe = { tr, startX: t.clientX, startY: t.clientY, dx: 0, dragging: false };
+  }, { passive: true });
+
+  appEl.addEventListener('touchmove', (e)=>{
+    if(!swipe) return;
+    const t = e.touches[0];
+    const dx = t.clientX - swipe.startX;
+    const dy = t.clientY - swipe.startY;
+    if(!swipe.dragging){
+      // Deadzone — only commit to "this is a swipe" once horizontal
+      // movement is clearly dominant, so ordinary vertical scrolling
+      // (and tapping/typing on the card's own fields) is never disrupted.
+      if(Math.abs(dx) < 12) return;
+      if(Math.abs(dx) < Math.abs(dy) * 1.3){ swipe = null; return; }
+      swipe.dragging = true;
+    }
+    e.preventDefault();
+    swipe.dx = dx;
+    const clamped = Math.max(-MAX_DRAG, Math.min(MAX_DRAG, dx));
+    swipe.tr.style.transition = 'none';
+    swipe.tr.style.transform = `translateX(${clamped}px)`;
+
+    const hint = ensureHint();
+    const rect = swipe.tr.getBoundingClientRect();
+    hint.style.top = rect.top + 'px';
+    hint.style.height = rect.height + 'px';
+    hint.style.opacity = Math.min(Math.abs(clamped) / THRESHOLD, 1).toFixed(2);
+    if(clamped > 0){
+      hint.className = 'swipe-hint right';
+      hint.textContent = '✓ Assign to me';
+      hint.style.left = rect.left + 'px';
+      hint.style.width = Math.max(clamped, 40) + 'px';
+    } else if(clamped < 0){
+      hint.className = 'swipe-hint left';
+      hint.textContent = '🗑 Delete';
+      hint.style.left = (rect.right + clamped) + 'px';
+      hint.style.width = Math.max(-clamped, 40) + 'px';
+    }
+  }, { passive: false });
+
+  function endSwipe(){
+    if(!swipe || !swipe.dragging){ swipe = null; removeHint(); return; }
+    const tr = swipe.tr, dx = swipe.dx, id = tr.dataset.id;
+    tr.style.transition = 'transform .18s ease';
+    removeHint();
+    if(dx > THRESHOLD){
+      tr.style.transform = `translateX(${MAX_DRAG}px)`;
+      hapticTap(20);
+      setTimeout(()=>{ swipeAssignToSelf(id); }, 120);
+    } else if(dx < -THRESHOLD){
+      tr.style.transform = `translateX(-${MAX_DRAG}px)`;
+      hapticTap(20);
+      setTimeout(()=>{ deleteCallRow(id); }, 120);
+    } else {
+      tr.style.transform = 'translateX(0)';
+    }
+    swipe = null;
+  }
+  appEl.addEventListener('touchend', endSwipe);
+  appEl.addEventListener('touchcancel', ()=>{
+    if(swipe && swipe.tr){
+      swipe.tr.style.transition = 'transform .18s ease';
+      swipe.tr.style.transform = 'translateX(0)';
+    }
+    removeHint();
+    swipe = null;
+  });
+
+  // The one-time "who are you" picker this triggers — a separate,
+  // independent delegated click listener on the same #app element (fine
+  // to have more than one listener for the same event type on one node).
+  appEl.addEventListener('click', (e)=>{
+    if(e.target.id === 'myNamePickerCancel' || e.target.id === 'myNamePickerOverlay'){
+      state.showMyNamePicker = false;
+      state.pendingSwipeAssignRowId = null;
+      render();
+      return;
+    }
+    const item = e.target.closest('.my-name-picker-item');
+    if(item){
+      const name = item.dataset.name;
+      try{ localStorage.setItem('coverage-desk-my-name', name); }catch(e){}
+      const rowId = state.pendingSwipeAssignRowId;
+      state.showMyNamePicker = false;
+      state.pendingSwipeAssignRowId = null;
+      if(rowId) applySwipeAssignment(rowId, name);
+      else render();
+    }
+  });
+})();
+function swipeAssignToSelf(rowId){
+  let myName = null;
+  try{ myName = localStorage.getItem('coverage-desk-my-name'); }catch(e){}
+  if(myName){
+    applySwipeAssignment(rowId, myName);
+  } else {
+    state.pendingSwipeAssignRowId = rowId;
+    state.showMyNamePicker = true;
+    render();
+  }
+}
+function applySwipeAssignment(rowId, name){
+  const row = state.rows.find(r=>r.id===rowId);
+  if(!row) return;
+  row.assignee = name;
+  markDirty();
+  hapticTap();
+  render();
+}
+
 // Scroll-to-top button — lives OUTSIDE #app (see the static HTML), so it
 // survives every re-render untouched; wired up exactly once here rather
 // than inside attachHandlers(), which would otherwise stack a fresh
