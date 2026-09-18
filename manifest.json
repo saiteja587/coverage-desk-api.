@@ -10,6 +10,22 @@
   "background_color": "#0A0C10",
   "theme_color": "#0A0C10",
   "orientation": "any",
+  "shortcuts": [
+    {
+      "name": "Add a call",
+      "short_name": "Add call",
+      "description": "Jump straight to adding a new call",
+      "url": "./index.html?action=addcall",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Unassigned calls",
+      "short_name": "Unassigned",
+      "description": "Jump straight to today's unassigned calls",
+      "url": "./index.html?action=unassigned",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
