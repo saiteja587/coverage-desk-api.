@@ -235,9 +235,10 @@ module.exports = async (req, res) => {
     if (resource === 'students') return await handleStudents(req, res, db);
     if (resource === 'student_match_decisions') return await handleStudentMatchDecisions(req, res, db);
     if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
+    if (resource === 'closures') return await handleClosures(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|users|whoami' });
   } catch (err) {
     console.error(err);
     // The full error (including internal details like table/column names,
@@ -756,6 +757,43 @@ async function handleDrivingPerson(req, res, db) {
       await db.rollback();
       throw e;
     }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- closures: job-offer / placement outcomes ----------
+// Append-only log, deliberately NOT date-scoped — a closure gets reported
+// whenever the offer actually happens, which is often days or weeks after
+// the interview itself, so it doesn't fit the "one day's data" pattern
+// the rest of this app uses (calls, notes, roster). GET returns
+// everything, newest first, capped at the most recent 500 so the list
+// stays fast to load even after a long history. POST only ever appends —
+// never overwrites — since closures are historical facts, not something
+// meant to be silently replaced by a later save the way a day's calls are.
+async function handleClosures(req, res, db) {
+  if (req.method === 'GET') {
+    const [rows] = await db.query(
+      'SELECT id, candidate, company, salary, raw_text, recorded_by, created_at FROM closures ORDER BY created_at DESC LIMIT 500'
+    );
+    return res.status(200).json({ rows });
+  }
+  if (req.method === 'POST') {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows[] required' });
+    const recordedBy = req.headers['x-username'] || 'admin'; // 'admin' when using the shared master password, which has no per-account username
+    const values = rows.map(r => [
+      (r.candidate || '').trim(),
+      (r.company || '').trim(),
+      (r.salary || '').trim(),
+      r.rawText || '',
+      recordedBy,
+    ]);
+    if (values.some(v => !v[0] || !v[1])) return res.status(400).json({ error: 'Each row needs at least a candidate and a company' });
+    await db.query(
+      'INSERT INTO closures (candidate, company, salary, raw_text, recorded_by) VALUES ?',
+      [values]
+    );
+    return res.status(200).json({ ok: true, count: values.length });
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
