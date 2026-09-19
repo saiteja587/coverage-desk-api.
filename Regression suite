@@ -252,6 +252,18 @@ async function main() {
     out.closedWith = parseClosureText('Alice White is closed with Delta Co\n\nsalary: $70k\n\n@Team');
     out.multiple = parseClosureText('Candidate One got offer letter from CompanyA\n\nsalary: $50,000\n\nCandidate Two received offer from CompanyB\n\nsalary: $55,000\n\n@Team');
     out.noFalsePositive = parseClosureText('1. John Smith – Interview – Acme – 4:00 PM IST – Duration: 30 Mins (1st Round)');
+    // Real messages that surfaced real bugs: "Sir," prefix, WhatsApp
+    // *bold* markdown around company/salary, currency symbol AFTER the
+    // number ("49$/Hr"), and salary glued onto the same line as the offer
+    // with no line break at all.
+    out.realBatch = [
+      parseClosureText(`Sir, Humera Pathan got offer letter from Insight Global \nSalary: 49$/Hr   \n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Vijetha nonwar got offer letter from *First port* \n\nsalary : *£38000* /Per Year\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Janani Priya got offer from *American University.*\n\nSalary: 112,000$ / yr\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Himaja Rao Adirala got offer letter  from Atrium hospitality\nSalary:  $68,000.00/Year`),
+      parseClosureText(`Lahari Beerla got offer from UTM (UTILITY TRAILER MANUFACTURING COMPANY)\n\nSalary: $85,000 / Yr\n\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Sir, Lahari beerla got offer letter from *Novolox* \nSalary: $85,000/ Year  \n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+    ];
     return out;
   });
   check('Closures', 'Exact reported message parses candidate/company/salary correctly',
@@ -273,6 +285,40 @@ async function main() {
   check('Closures', 'No false positives on plain call listings',
     closureCases.noFalsePositive.length === 0,
     JSON.stringify(closureCases.noFalsePositive));
+  const rb = closureCases.realBatch;
+  check('Closures', '"Sir," prefix stripped + dollar-after-number salary ("49$/Hr") extracted, not lost',
+    rb[0][0].candidate === 'Humera Pathan' && rb[0][0].company === 'Insight Global' && rb[0][0].salary === '49$/Hr', JSON.stringify(rb[0]));
+  check('Closures', 'WhatsApp *bold* markdown stripped from company and £ salary',
+    rb[1][0].company === 'First port' && rb[1][0].salary === '£38000 /Per Year', JSON.stringify(rb[1]));
+  check('Closures', 'Stray trailing period inside asterisks stripped ("*American University.*")',
+    rb[2][0].company === 'American University', JSON.stringify(rb[2]));
+  check('Closures', 'Salary glued onto the SAME line as the offer (no line break) still separates from company',
+    rb[3][0].company === 'Atrium hospitality' && rb[3][0].salary === '$68,000.00/Year', JSON.stringify(rb[3]));
+  check('Closures', 'Parenthetical company expansion preserved whole ("UTM (UTILITY TRAILER...)")',
+    rb[4][0].company === 'UTM (UTILITY TRAILER MANUFACTURING COMPANY)', JSON.stringify(rb[4]));
+  check('Closures', '"Sir," + *bold* + glued salary all handled together in one message',
+    rb[5][0].candidate === 'Lahari beerla' && rb[5][0].company === 'Novolox' && rb[5][0].salary === '$85,000/ Year', JSON.stringify(rb[5]));
+
+  // =====================================================================
+  console.log('\n=== 2b. Closure cross-reference against existing call records ===');
+  // =====================================================================
+  const crossRefCases = await page.evaluate(() => {
+    const allRows = [
+      { candidate: 'Himaja Rao Adirala', company: 'Atrium Hospitality', _date: '2026-08-01' },
+      { candidate: 'Vijetha nonwar', company: 'Second Port', _date: '2026-08-10' },
+    ];
+    return {
+      match: crossReferenceClosure('Himaja Rao Adirala', 'Atrium hospitality', allRows),
+      mismatch: crossReferenceClosure('Vijetha nonwar', 'First port', allRows),
+      noMatch: crossReferenceClosure('Nobody Real', 'Some Company', allRows),
+    };
+  });
+  check('Closures', 'Cross-reference: matching candidate+company (case-insensitive) recognized as a match',
+    crossRefCases.match.status === 'match', JSON.stringify(crossRefCases.match));
+  check('Closures', 'Cross-reference: candidate found but company genuinely differs — flagged, not silently trusted',
+    crossRefCases.mismatch.status === 'mismatch' && crossRefCases.mismatch.message.includes('Second Port'), JSON.stringify(crossRefCases.mismatch));
+  check('Closures', 'Cross-reference: no matching candidate at all — flagged as no_match',
+    crossRefCases.noMatch.status === 'no_match', JSON.stringify(crossRefCases.noMatch));
 
   // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
