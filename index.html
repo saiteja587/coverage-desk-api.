@@ -739,6 +739,12 @@ let state = {
   finalized: false,
   showImport: false,
   showRescheduleImport: false,
+  showClosureImport: false,
+  closureReview: null,
+  closureApplying: false,
+  showClosures: false,
+  closures: [],
+  closuresLoaded: false,
   rescheduleReview: null,
   rescheduleApplying: false,
   showPortalSync: false,
@@ -1182,6 +1188,34 @@ async function saveStudentsMaster(){
     return;
   }
   try{ await storageAdapter.set('students-master', JSON.stringify(state.studentsMaster), false); }catch(e){}
+}
+// Loads every closure/job-offer ever recorded, newest first. Silently
+// does nothing if the backend doesn't have this resource yet (e.g. the
+// SQL migration hasn't been run) — same fallback behavior as
+// loadStudentMatchDecisions, since this is equally non-essential to the
+// app's core function.
+async function loadClosures(){
+  if(!API_BASE_URL) return;
+  try{
+    const data = await apiCall('closures', {});
+    state.closures = (data.rows||[]).map(r=>({
+      id: r.id, candidate: r.candidate, company: r.company, salary: r.salary||'', createdAt: r.createdAt
+    }));
+    state.closuresLoaded = true;
+    render();
+  }catch(e){
+    // Backend doesn't have this resource yet, or the call failed — the
+    // Closures panel just shows nothing rather than erroring loudly.
+  }
+}
+// Appends newly-confirmed closures to the backend, then merges them into
+// local state so the list and the More-menu count update immediately
+// without needing a full reload.
+async function saveNewClosures(rows){
+  if(!API_BASE_URL) throw new Error('Closures require the backend to be configured.');
+  const payload = rows.map(r=>({ candidate: r.candidate, company: r.company, salary: r.salary||'', rawText: r.raw||'' }));
+  await apiCall('closures', {method:'POST', body:{rows: payload}});
+  await loadClosures(); // re-fetch rather than guess IDs/timestamps locally — keeps "recorded by" and ordering exactly what the server actually stored
 }
 // Strips everything but letters before comparing — same idea as
 // normalizeCompanyKey — so a name typed slightly differently in a
@@ -2574,6 +2608,76 @@ function parseRescheduleText(text){
 
   return results;
 }
+// Matches one line's closure/job-offer phrasing and pulls out the
+// candidate and company. Tried in order — first pattern that matches
+// wins. Extend this with another `if(m) return {...}` block, same shape,
+// whenever a real message uses a phrasing none of these catch (the
+// nature of parsing free-text messages: new phrasings turn up over time,
+// and each one becomes a permanent case here plus a regression test).
+function matchClosureLine(line){
+  // A trailing inline salary ("...from Acme at $85,000") was getting
+  // swallowed into the company capture below ("Acme at $85,000" instead
+  // of "Acme") — stripped off here before it's ever assigned as the
+  // company, regardless of which pattern below matched.
+  function cleanCompany(company){
+    return company.replace(/\s+at\s+\$[\d,]+.*$/i, '').trim();
+  }
+  // "X got offer letter from Y" / "X got the offer from Y" / "X has
+  // received an offer from Y" / "X received offer from Y" / "X got an
+  // offer with Y"
+  let m = line.match(/^(.+?)\s+(?:got|received|has\s+got|has\s+received)\s+(?:the\s+|an?\s+)?offer(?:\s+letter)?\s+(?:from|with|at)\s+(.+?)[.!]?\s*$/i);
+  if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
+  // "X got selected in/at/by Y" / "X has been selected by Y" / "X is
+  // selected by Y"
+  m = line.match(/^(.+?)\s+(?:got\s+selected|has\s+been\s+selected|is\s+selected)\s+(?:in|at|by|with)\s+(.+?)[.!]?\s*$/i);
+  if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
+  // "X closed with Y" / "X is closed with Y" / "X got closed at Y"
+  m = line.match(/^(.+?)\s+(?:is\s+|got\s+)?closed\s+(?:with|at)\s+(.+?)[.!]?\s*$/i);
+  if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
+  // "X placed at/with Y" / "X got placed at Y"
+  m = line.match(/^(.+?)\s+(?:got\s+|is\s+)?placed\s+(?:at|with|in)\s+(.+?)[.!]?\s*$/i);
+  if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
+  return null;
+}
+// Parses a pasted closure/job-offer message into { candidate, company,
+// salary, raw } entries — same overall shape as parseRescheduleText:
+// blank-line-separated blocks, @mention-only lines ignored entirely. A
+// salary line found on its own (not part of a closure line) attaches to
+// whichever closure was found most recently above it in the same paste,
+// which is the shape real messages actually take — "candidate got offer
+// from company" on one line, "salary: $X" as its own line right after.
+function parseClosureText(text){
+  if(!text || !text.trim()) return [];
+  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''));
+  const blocks = [];
+  let current = [];
+  for(const line of lines){
+    if(!line){ if(current.length){ blocks.push(current); current=[]; } continue; }
+    if(/^@/.test(line)) continue; // pure @mention line, not data
+    current.push(line);
+  }
+  if(current.length) blocks.push(current);
+
+  const results = [];
+  blocks.forEach(blockLines=>{
+    const full = blockLines.join(' ').replace(/^\s*\d{1,3}[\.\)]?\s+/, ''); // strip a leading list number
+    const closureMatch = matchClosureLine(full);
+    if(closureMatch && closureMatch.candidate && closureMatch.company){
+      // A $-amount can appear right in the closure line itself
+      // ("...offer from Acme at $75,000") as well as its own separate
+      // line — checked here so it's not lost if the very next block
+      // isn't actually a salary line at all.
+      const inlineSalary = full.match(/\$\s*[\d,]+(?:\.\d+)?(?:\s*(?:per\s+annum|\/\s*year|\/\s*yr|k))?/i);
+      results.push({ candidate: closureMatch.candidate, company: closureMatch.company, salary: inlineSalary ? inlineSalary[0].trim() : '', raw: full });
+    } else if(results.length){
+      const salaryMatch = full.match(/salary\s*:?\s*(.+)/i);
+      if(salaryMatch && !results[results.length-1].salary){
+        results[results.length-1].salary = salaryMatch[1].trim();
+      }
+    }
+  });
+  return results;
+}
 // Matches a parsed reschedule message to an existing row — by candidate
 // name (fuzzy/case-insensitive) and time. Company is used as a tiebreaker
 // when there are multiple same-name/same-time matches.
@@ -3319,6 +3423,9 @@ function closeAllPanels(){
   state.showImport = false;
   state.showRescheduleImport = false;
   state.rescheduleReview = null;
+  state.showClosureImport = false;
+  state.closureReview = null;
+  state.showClosures = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showClientSearch = false;
@@ -3339,6 +3446,9 @@ function getActivePanelName(){
   if(state.showImport) return 'import';
   if(state.showRescheduleImport) return 'rescheduleImport';
   if(state.rescheduleReview) return 'rescheduleReview';
+  if(state.showClosureImport) return 'closureImport';
+  if(state.closureReview) return 'closureReview';
+  if(state.showClosures) return 'closures';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showClientSearch) return 'clientSearch';
@@ -3365,6 +3475,9 @@ function renderActivePanel(name){
   if(name === 'import') return renderImportPanel();
   if(name === 'rescheduleImport') return renderRescheduleImportPanel();
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
+  if(name === 'closureImport') return renderClosureImportPanel();
+  if(name === 'closureReview') return renderClosureConfirmPanel();
+  if(name === 'closures') return renderClosuresPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'clientSearch') return renderClientSearchPanel();
@@ -3375,7 +3488,8 @@ function panelTitle(name){
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
-    rescheduleReview:'Confirm Reschedule/Cancel', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
+    rescheduleReview:'Confirm Reschedule/Cancel', closureImport:'Import Closure/Job Offer', closureReview:'Confirm Closures',
+    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
   };
   return titles[name] || '';
 }
@@ -3473,6 +3587,7 @@ function render(){
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
+            <button class="more-menu-item" id="toggleClosures">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
@@ -3651,6 +3766,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
         ${state.showToolsMenu ? `<div class="more-menu-dropdown">
           <button class="more-menu-item" id="toggleRoster">👥 Team (${state.roster.length})</button>
           <button class="more-menu-item" id="togglePortalSync">📡 Team Sync</button>
+          <button class="more-menu-item" id="toggleClosureImport">🏆 Import Closure/Job Offer</button>
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleIncentives">💰 Incentives</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleBackups">🕐 Backups</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
@@ -4374,6 +4490,69 @@ function renderRescheduleConfirmPanel(){
         <button class="btn primary" id="confirmRescheduleApply" ${state.rescheduleApplying?'disabled':''}>${state.rescheduleApplying?'<span class="spinner"></span>Saving…':'Confirm & save'}</button>
       </div>
     </div>
+  </div>`;
+}
+
+function renderClosureImportPanel(){
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Paste a closure/job-offer message — a candidate name, a company, and (optionally) a salary line. This creates new closure records; it doesn't touch today's calls.</div>
+    <textarea id="closureImportText" placeholder="Paste closure/offer messages, e.g.:&#10;Rohini sura got offer letter from Capitol bridge&#10;&#10;salary: $75,000 per annum"></textarea>
+    <div class="row">
+      <div class="hint">Recognizes phrasings like "got offer letter from", "received offer from", "selected by", "closed with", "placed at".</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="cancelClosureImport">Cancel</button>
+        <button class="btn primary" id="parseClosureBtn">Parse messages</button>
+      </div>
+    </div>
+  </div>`;
+}
+function renderClosureConfirmPanel(){
+  const items = state.closureReview || [];
+  const itemsHtml = items.map((it, idx)=>`<div class="resched-item" data-idx="${idx}">
+      <div class="resched-raw">${escapeHtml(it.raw)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <div style="flex:1;min-width:160px">
+          <label class="hint" style="display:block;margin-bottom:4px">Candidate</label>
+          <input type="text" class="closure-review-field" data-idx="${idx}" data-field="candidate" value="${escapeHtml(it.candidate)}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <div style="flex:1;min-width:160px">
+          <label class="hint" style="display:block;margin-bottom:4px">Company</label>
+          <input type="text" class="closure-review-field" data-idx="${idx}" data-field="company" value="${escapeHtml(it.company)}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label class="hint" style="display:block;margin-bottom:4px">Salary (optional)</label>
+          <input type="text" class="closure-review-field" data-idx="${idx}" data-field="salary" value="${escapeHtml(it.salary||'')}" placeholder="e.g. $75,000 per annum" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <button class="btn ghost closure-review-remove" data-idx="${idx}" title="Remove this one" style="align-self:flex-end">✕</button>
+      </div>
+    </div>`).join('');
+  return `<div class="import-panel">
+    ${itemsHtml || '<div class="hint">No closure/offer messages were detected in that text.</div>'}
+    <div class="row">
+      <div class="hint">${items.length} closure${items.length===1?'':'s'} ready to save. Edit any field above before confirming.</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="cancelClosureConfirm">Cancel</button>
+        <button class="btn primary" id="confirmClosureApply" ${state.closureApplying || !items.length ? 'disabled':''}>${state.closureApplying?'<span class="spinner"></span>Saving…':'Confirm & save'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+function renderClosuresPanel(){
+  const list = state.closures || [];
+  const rowsHtml = list.map(c=>`<tr>
+      <td>${escapeHtml(c.candidate)}</td>
+      <td>${escapeHtml(c.company)}</td>
+      <td>${escapeHtml(c.salary||'—')}</td>
+      <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
+    </tr>`).join('');
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">${list.length} closure${list.length===1?'':'s'} recorded${list.length ? ', most recent first' : ''}.</div>
+    ${list.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
+        <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th>
+      </tr></thead>
+      <tbody style="font-size:13px">${rowsHtml}</tbody>
+    </table></div>` : '<div class="hint">Nothing recorded yet — use "Import Closure/Job Offer" from the Tools menu to add one.</div>'}
   </div>`;
 }
 
@@ -6383,6 +6562,76 @@ function attachHandlers(conflictIds){
     scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
   };
 
+  // ---------- Closure / Job Offer import ----------
+  const toggleClosureImportBtn = document.getElementById('toggleClosureImport');
+  if(toggleClosureImportBtn) toggleClosureImportBtn.onclick = ()=>{ openOnlyPanel('showClosureImport'); render(); };
+
+  const cancelClosureImport = document.getElementById('cancelClosureImport');
+  if(cancelClosureImport) cancelClosureImport.onclick = ()=>{ closeAllPanels(); render(); };
+
+  const parseClosureBtn = document.getElementById('parseClosureBtn');
+  if(parseClosureBtn) parseClosureBtn.onclick = ()=>{
+    const textEl = document.getElementById('closureImportText');
+    const text = textEl ? textEl.value : '';
+    const parsed = parseClosureText(text);
+    if(!parsed.length){
+      alert('No closure/job-offer messages were recognized in that text. Each message needs a candidate name and a phrase like "got offer letter from", "received offer from", "selected by", or "closed with", followed by a company name.');
+      return;
+    }
+    state.closureReview = parsed;
+    state.showClosureImport = false;
+    render();
+  };
+
+  const cancelClosureConfirm = document.getElementById('cancelClosureConfirm');
+  if(cancelClosureConfirm) cancelClosureConfirm.onclick = ()=>{ state.closureReview = null; render(); };
+
+  document.querySelectorAll('.closure-review-field').forEach(input=>{
+    input.oninput = ()=>{
+      const idx = Number(input.dataset.idx);
+      const field = input.dataset.field;
+      if(state.closureReview && state.closureReview[idx]) state.closureReview[idx][field] = input.value;
+    };
+  });
+  document.querySelectorAll('.closure-review-remove').forEach(btn=>{
+    btn.onclick = ()=>{
+      const idx = Number(btn.dataset.idx);
+      if(state.closureReview){
+        state.closureReview.splice(idx, 1);
+        render();
+      }
+    };
+  });
+
+  const confirmClosureApply = document.getElementById('confirmClosureApply');
+  if(confirmClosureApply) confirmClosureApply.onclick = async ()=>{
+    const items = (state.closureReview || []).filter(it=>it.candidate && it.candidate.trim() && it.company && it.company.trim());
+    if(!items.length){
+      alert('Nothing to save — every row needs at least a candidate and a company.');
+      return;
+    }
+    state.closureApplying = true;
+    render();
+    try{
+      await saveNewClosures(items);
+      state.closureApplying = false;
+      state.closureReview = null;
+      render();
+      alert(`${items.length} closure${items.length===1?'':'s'} saved.`);
+    }catch(e){
+      state.closureApplying = false;
+      render();
+      alert('Failed to save: ' + (e && e.message ? e.message : 'could not reach the server'));
+    }
+  };
+
+  const toggleClosuresBtn = document.getElementById('toggleClosures');
+  if(toggleClosuresBtn) toggleClosuresBtn.onclick = ()=>{
+    openOnlyPanel('showClosures');
+    render();
+    if(!state.closuresLoaded) loadClosures();
+  };
+
   const addRosterBtn = document.getElementById('addRosterBtn');
   const teamSelect = document.getElementById('newRosterTeam');
   if(teamSelect) teamSelect.onchange = ()=>{
@@ -7434,6 +7683,7 @@ async function startApp(){
     render();
   }).catch(()=>{});
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
+  loadClosures().catch(()=>{});
 }
 // Looks up the most recent PRIOR occurrence of this candidate (any date/round
 // other than this exact row) from the repeat-candidate scan results, for the
