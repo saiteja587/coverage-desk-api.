@@ -240,6 +240,41 @@ async function main() {
     JSON.stringify(rescheduleCases.noFalsePositive));
 
   // =====================================================================
+  console.log('\n=== 2a. Closure / job-offer message parser (parseClosureText) ===');
+  // =====================================================================
+  const closureCases = await page.evaluate(() => {
+    const out = {};
+    out.original = parseClosureText(
+      `Rohini sura got offer letter from Capitol bridge\n\nsalary: $75,000 per annum\n\n@Sashank Bava @Sundeep Anna @Phani Anna USA @Pradeep Anna`
+    );
+    out.inlineSalary = parseClosureText('Jane Doe received offer from Beta Inc at $85,000\n\n@Team');
+    out.selectedBy = parseClosureText('Bob Jones has been selected by Gamma LLC\n\nsalary: $60,000/yr\n\n@Team');
+    out.closedWith = parseClosureText('Alice White is closed with Delta Co\n\nsalary: $70k\n\n@Team');
+    out.multiple = parseClosureText('Candidate One got offer letter from CompanyA\n\nsalary: $50,000\n\nCandidate Two received offer from CompanyB\n\nsalary: $55,000\n\n@Team');
+    out.noFalsePositive = parseClosureText('1. John Smith – Interview – Acme – 4:00 PM IST – Duration: 30 Mins (1st Round)');
+    return out;
+  });
+  check('Closures', 'Exact reported message parses candidate/company/salary correctly',
+    closureCases.original.length === 1 && closureCases.original[0].candidate === 'Rohini sura' &&
+    closureCases.original[0].company === 'Capitol bridge' && closureCases.original[0].salary === '$75,000 per annum',
+    JSON.stringify(closureCases.original));
+  check('Closures', 'Inline salary does not get swallowed into the company field',
+    closureCases.inlineSalary.length === 1 && closureCases.inlineSalary[0].company === 'Beta Inc' && closureCases.inlineSalary[0].salary === '$85,000',
+    JSON.stringify(closureCases.inlineSalary));
+  check('Closures', '"selected by" phrasing recognized',
+    closureCases.selectedBy.length === 1 && closureCases.selectedBy[0].company === 'Gamma LLC',
+    JSON.stringify(closureCases.selectedBy));
+  check('Closures', '"closed with" phrasing recognized',
+    closureCases.closedWith.length === 1 && closureCases.closedWith[0].company === 'Delta Co',
+    JSON.stringify(closureCases.closedWith));
+  check('Closures', 'Multiple closures in one paste each get their own salary',
+    closureCases.multiple.length === 2 && closureCases.multiple[0].salary === '$50,000' && closureCases.multiple[1].salary === '$55,000',
+    JSON.stringify(closureCases.multiple));
+  check('Closures', 'No false positives on plain call listings',
+    closureCases.noFalsePositive.length === 0,
+    JSON.stringify(closureCases.noFalsePositive));
+
+  // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
   // =====================================================================
   const matchingCases = await page.evaluate(() => {
