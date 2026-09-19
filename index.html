@@ -2615,12 +2615,21 @@ function parseRescheduleText(text){
 // nature of parsing free-text messages: new phrasings turn up over time,
 // and each one becomes a permanent case here plus a regression test).
 function matchClosureLine(line){
-  // A trailing inline salary ("...from Acme at $85,000") was getting
-  // swallowed into the company capture below ("Acme at $85,000" instead
-  // of "Acme") — stripped off here before it's ever assigned as the
-  // company, regardless of which pattern below matched.
+  // A trailing inline salary or currency amount ("...from Acme at
+  // $85,000", or "...from Acme Salary: 49$/Hr" with no line break at
+  // all) was getting swallowed into the company capture below instead of
+  // being recognized as the salary — stripped off here before company is
+  // ever assigned, regardless of which pattern below matched. WhatsApp's
+  // *bold* markdown around a company name ("*First port*") and a stray
+  // trailing period from an over-eager capture ("*American University.*")
+  // are cleaned up the same way.
   function cleanCompany(company){
-    return company.replace(/\s+at\s+\$[\d,]+.*$/i, '').trim();
+    let c = company;
+    c = c.replace(/\s+at\s+\$[\d,]+.*$/i, '');
+    c = c.replace(/\bsalary\b.*$/i, '');
+    c = c.replace(/\*/g, '');
+    c = c.trim().replace(/\.$/, '');
+    return c.trim();
   }
   // "X got offer letter from Y" / "X got the offer from Y" / "X has
   // received an offer from Y" / "X received offer from Y" / "X got an
@@ -2639,13 +2648,25 @@ function matchClosureLine(line){
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   return null;
 }
+// Currency-agnostic — just grabs everything after "salary" + an optional
+// colon, whatever currency or format it's actually written in ($, £,
+// "49$/Hr" with the symbol AFTER the number, "112,000$ / yr", etc.) —
+// simpler and more robust than trying to pattern-match every currency
+// shape individually, and works whether the marker is on its own line or
+// glued onto the same line as the offer itself.
+function extractSalaryFromText(text){
+  const m = text.match(/\bsalary\s*:?\s*(.+)$/i);
+  return m ? m[1].replace(/\*/g, '').trim() : '';
+}
 // Parses a pasted closure/job-offer message into { candidate, company,
 // salary, raw } entries — same overall shape as parseRescheduleText:
 // blank-line-separated blocks, @mention-only lines ignored entirely. A
 // salary line found on its own (not part of a closure line) attaches to
 // whichever closure was found most recently above it in the same paste,
 // which is the shape real messages actually take — "candidate got offer
-// from company" on one line, "salary: $X" as its own line right after.
+// from company" on one line, "salary: $X" as its own line right after —
+// though it's equally handled when there's no line break between them
+// at all ("...from Acme Salary: $X" all run together).
 function parseClosureText(text){
   if(!text || !text.trim()) return [];
   const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''));
@@ -2660,19 +2681,24 @@ function parseClosureText(text){
 
   const results = [];
   blocks.forEach(blockLines=>{
-    const full = blockLines.join(' ').replace(/^\s*\d{1,3}[\.\)]?\s+/, ''); // strip a leading list number
+    const full = blockLines.join(' ')
+      .replace(/^\s*\d{1,3}[\.\)]?\s+/, '')  // strip a leading list number
+      .replace(/^\s*sir\s*[,:]?\s+/i, '');   // strip a leading "Sir," greeting
     const closureMatch = matchClosureLine(full);
     if(closureMatch && closureMatch.candidate && closureMatch.company){
-      // A $-amount can appear right in the closure line itself
-      // ("...offer from Acme at $75,000") as well as its own separate
-      // line — checked here so it's not lost if the very next block
-      // isn't actually a salary line at all.
-      const inlineSalary = full.match(/\$\s*[\d,]+(?:\.\d+)?(?:\s*(?:per\s+annum|\/\s*year|\/\s*yr|k))?/i);
-      results.push({ candidate: closureMatch.candidate, company: closureMatch.company, salary: inlineSalary ? inlineSalary[0].trim() : '', raw: full });
+      // Salary glued onto this same block, whatever currency/format it's
+      // written in — falls back to a bare $-amount with no "salary:"
+      // label at all, for a message that never uses the word.
+      let salary = extractSalaryFromText(full);
+      if(!salary){
+        const inlineSalary = full.match(/\$\s*[\d,]+(?:\.\d+)?(?:\s*(?:per\s+annum|\/\s*year|\/\s*yr|k))?|£\s*[\d,]+(?:\.\d+)?(?:\s*\/\s*(?:year|yr))?/i);
+        if(inlineSalary) salary = inlineSalary[0].replace(/\*/g, '').trim();
+      }
+      results.push({ candidate: closureMatch.candidate, company: closureMatch.company, salary, raw: full });
     } else if(results.length){
-      const salaryMatch = full.match(/salary\s*:?\s*(.+)/i);
+      const salaryMatch = extractSalaryFromText(full);
       if(salaryMatch && !results[results.length-1].salary){
-        results[results.length-1].salary = salaryMatch[1].trim();
+        results[results.length-1].salary = salaryMatch;
       }
     }
   });
@@ -4508,6 +4534,18 @@ function renderClosureImportPanel(){
 }
 function renderClosureConfirmPanel(){
   const items = state.closureReview || [];
+  function crossRefBadge(cr){
+    if(!cr) return '';
+    const styles = {
+      checking: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'⏳'},
+      match: {bg:'var(--green-dim)', color:'var(--green)', icon:'✓'},
+      mismatch: {bg:'var(--amber-dim)', color:'var(--amber)', icon:'⚠'},
+      no_match: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'ℹ'},
+      error: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'ℹ'},
+    };
+    const s = styles[cr.status] || styles.no_match;
+    return `<div style="background:${s.bg};color:${s.color};border-radius:8px;padding:7px 10px;font-size:12px;margin-top:8px">${s.icon} ${escapeHtml(cr.message)}</div>`;
+  }
   const itemsHtml = items.map((it, idx)=>`<div class="resched-item" data-idx="${idx}">
       <div class="resched-raw">${escapeHtml(it.raw)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -4525,11 +4563,12 @@ function renderClosureConfirmPanel(){
         </div>
         <button class="btn ghost closure-review-remove" data-idx="${idx}" title="Remove this one" style="align-self:flex-end">✕</button>
       </div>
+      ${crossRefBadge(it.crossRef)}
     </div>`).join('');
   return `<div class="import-panel">
     ${itemsHtml || '<div class="hint">No closure/offer messages were detected in that text.</div>'}
     <div class="row">
-      <div class="hint">${items.length} closure${items.length===1?'':'s'} ready to save. Edit any field above before confirming.</div>
+      <div class="hint">${items.length} closure${items.length===1?'':'s'} ready to save. Edit any field above before confirming — a ⚠ flag means the company doesn't match what's on file for that candidate, so double-check it's correct.</div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelClosureConfirm">Cancel</button>
         <button class="btn primary" id="confirmClosureApply" ${state.closureApplying || !items.length ? 'disabled':''}>${state.closureApplying?'<span class="spinner"></span>Saving…':'Confirm & save'}</button>
@@ -4539,6 +4578,13 @@ function renderClosureConfirmPanel(){
 }
 function renderClosuresPanel(){
   const list = state.closures || [];
+  const now = new Date();
+  const monthLabel = now.toLocaleString('en-US', { month: 'long' });
+  const thisMonthCount = list.filter(c=>{
+    if(!c.createdAt) return false;
+    const d = new Date(c.createdAt);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }).length;
   const rowsHtml = list.map(c=>`<tr>
       <td>${escapeHtml(c.candidate)}</td>
       <td>${escapeHtml(c.company)}</td>
@@ -4546,7 +4592,11 @@ function renderClosuresPanel(){
       <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
     </tr>`).join('');
   return `<div class="import-panel">
-    <div class="hint" style="margin-bottom:10px">${list.length} closure${list.length===1?'':'s'} recorded${list.length ? ', most recent first' : ''}.</div>
+    <div class="summary" style="margin-bottom:14px">
+      <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
+      <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
+    </div>
+    <div class="hint" style="margin-bottom:10px">${list.length ? 'Most recent first.' : ''}</div>
     ${list.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
       <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
         <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th>
@@ -5120,6 +5170,36 @@ function classifyCompany(company){
 // longer matter, while still keeping the original text for display.
 function normalizeCompanyKey(company){
   return (company||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+// Checks a parsed closure against every call record on file (any date,
+// not just today) — the whole point being that a closure message and the
+// original interview record are two independently-typed pieces of data,
+// so a mismatch between them (different spelling, or genuinely a
+// different company) is exactly the kind of thing worth a human's eyes
+// before it's trusted, not something to silently paper over or silently
+// reject either.
+function crossReferenceClosure(candidate, company, allRows){
+  const candKey = (candidate||'').trim().toLowerCase();
+  if(!candKey) return { status: 'no_match', message: 'No candidate name to check against.' };
+  const matches = allRows.filter(r => (r.candidate||'').trim().toLowerCase() === candKey);
+  if(!matches.length){
+    return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started.' };
+  }
+  const compKey = normalizeCompanyKey(company);
+  const matchingCall = matches
+    .slice()
+    .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+    .find(r => normalizeCompanyKey(r.company) === compKey);
+  if(matchingCall){
+    return { status: 'match', message: `Matches an existing call — ${matchingCall._date}, "${matchingCall.company}".` };
+  }
+  const companiesOnFile = [...new Set(matches.map(r=>r.company).filter(Boolean))];
+  return {
+    status: 'mismatch',
+    message: companiesOnFile.length
+      ? `Found call(s) for this candidate, but none at "${company}". On file: ${companiesOnFile.join(', ')}.`
+      : `Found call(s) for this candidate, but none had a company on file to compare against.`
+  };
 }
 
 // A 1st round call running longer than 30 minutes is unusual — worth a second
@@ -6570,7 +6650,7 @@ function attachHandlers(conflictIds){
   if(cancelClosureImport) cancelClosureImport.onclick = ()=>{ closeAllPanels(); render(); };
 
   const parseClosureBtn = document.getElementById('parseClosureBtn');
-  if(parseClosureBtn) parseClosureBtn.onclick = ()=>{
+  if(parseClosureBtn) parseClosureBtn.onclick = async ()=>{
     const textEl = document.getElementById('closureImportText');
     const text = textEl ? textEl.value : '';
     const parsed = parseClosureText(text);
@@ -6578,9 +6658,25 @@ function attachHandlers(conflictIds){
       alert('No closure/job-offer messages were recognized in that text. Each message needs a candidate name and a phrase like "got offer letter from", "received offer from", "selected by", or "closed with", followed by a company name.');
       return;
     }
-    state.closureReview = parsed;
+    state.closureReview = parsed.map(p=>Object.assign({crossRef: {status:'checking', message:'Checking existing records…'}}, p));
     state.showClosureImport = false;
     render();
+    // Cross-checked against every call on file (any date), not just
+    // today's — one shared fetch for the whole batch rather than one
+    // per row, then each row's result fills in independently so the
+    // screen doesn't sit blank while this resolves.
+    try{
+      const allRows = await fetchAllRowsAcrossDates();
+      if(!state.closureReview) return; // panel was cancelled while this was in flight
+      state.closureReview.forEach(item=>{
+        item.crossRef = crossReferenceClosure(item.candidate, item.company, allRows);
+      });
+      render();
+    }catch(e){
+      if(!state.closureReview) return;
+      state.closureReview.forEach(item=>{ item.crossRef = { status: 'error', message: 'Could not check existing records.' }; });
+      render();
+    }
   };
 
   const cancelClosureConfirm = document.getElementById('cancelClosureConfirm');
