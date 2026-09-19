@@ -1,0 +1,297 @@
+// Mock database engine for backend-api-tests.js.
+// ---------------------------------------------------------------------
+// Simulates just enough of mysql2/promise's connection interface for
+// data.js's actual queries to run against real in-memory tables — not a
+// general-purpose SQL engine, a pattern-matcher for the specific queries
+// this codebase issues (verified against the real data.js source, same
+// way schema.sql was built). If a future query shape isn't recognized
+// here, it throws clearly rather than silently doing the wrong thing.
+// ---------------------------------------------------------------------
+
+function freshTables() {
+  return {
+    users: [],
+    calls: [],
+    call_status: [],
+    call_driving_person: [],
+    roster: [],
+    notes: [],
+    day_status: [],
+    students: [],
+    student_match_decisions: [],
+    call_backups: [],
+    portal_sync_cache: [],
+    login_attempts: [],
+    closures: [],
+  };
+}
+
+let tables = freshTables();
+let nextAutoId = 1;
+let forcedError = null;
+let forcedErrorPattern = null; // if set, only fires for a query containing this substring
+
+function resetMockDb() {
+  tables = freshTables();
+  nextAutoId = 1;
+  forcedError = null;
+  forcedErrorPattern = null;
+}
+function getTables() { return tables; }
+// pattern is optional — omit it to fire on the very next query regardless
+// of what it is; pass a substring to only fire the first time a query
+// containing that substring runs (so it can target a specific step deep
+// inside a handler, e.g. a transaction's DELETE, without being consumed
+// by an earlier, unrelated query like the rate-limit check every
+// authenticated request now makes first).
+function forceNextQueryError(err, pattern) {
+  forcedError = err;
+  forcedErrorPattern = pattern || null;
+}
+function seed(table, rows) { tables[table] = tables[table].concat(rows); }
+
+function matchWhere(rows, whereClauseSql, params) {
+  // Only handles the simple "col = ?" and "col = ? AND col2 > (...)"
+  // shapes this codebase actually uses.
+  return rows; // narrowed by the specific handlers below instead — see each branch
+}
+
+async function query(sql, params = []) {
+  const s = sql.replace(/\s+/g, ' ').trim();
+  if (forcedError && (!forcedErrorPattern || s.includes(forcedErrorPattern))) {
+    const e = forcedError;
+    forcedError = null;
+    forcedErrorPattern = null;
+    throw e;
+  }
+
+  // ---- ping / trivial ----
+  if (s === 'SELECT 1') return [[{ 1: 1 }]];
+
+  // ---- users ----
+  if (s.startsWith('SELECT id, username, role, password_hash FROM users WHERE username')) {
+    const [username] = params;
+    return [tables.users.filter(u => u.username === username)];
+  }
+  if (s.startsWith('SELECT id, username, role FROM users ORDER BY username')) {
+    return [[...tables.users].sort((a,b)=>a.username.localeCompare(b.username)).map(u=>({id:u.id,username:u.username,role:u.role}))];
+  }
+  if (s.startsWith('INSERT INTO users')) {
+    const [id, username, password_hash, role] = params;
+    if (tables.users.some(u => u.username === username)) {
+      const e = new Error('Duplicate entry'); e.code = 'ER_DUP_ENTRY'; throw e;
+    }
+    tables.users.push({ id, username, password_hash, role });
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('DELETE FROM users WHERE id')) {
+    const [id] = params;
+    tables.users = tables.users.filter(u => u.id !== id);
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('UPDATE users SET password_hash')) {
+    const [password_hash, id] = params;
+    const u = tables.users.find(u => u.id === id);
+    if (u) u.password_hash = password_hash;
+    return [{ affectedRows: u ? 1 : 0 }];
+  }
+
+  // ---- closures ----
+  if (s.startsWith('SELECT id, candidate, company, salary, raw_text, recorded_by, created_at FROM closures')) {
+    return [[...tables.closures].sort((a,b)=>b.id-a.id)];
+  }
+  if (s.startsWith('INSERT INTO closures')) {
+    const values = params[0];
+    values.forEach(row => {
+      const [candidate, company, salary, raw_text, recorded_by] = row;
+      tables.closures.push({ id: nextAutoId++, candidate, company, salary, raw_text, recorded_by, created_at: new Date() });
+    });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- login_attempts / rate limiting ----
+  if (s.startsWith('SELECT COUNT(*) AS cnt FROM login_attempts')) {
+    const [identifier] = params;
+    // Test harness doesn't simulate real time windows — every recorded
+    // attempt for this identifier counts, which is what the rate-limit
+    // tests below actually need (a controlled, deterministic count).
+    const cnt = tables.login_attempts.filter(a => a.identifier === identifier).length;
+    return [[{ cnt }]];
+  }
+  if (s.startsWith('INSERT INTO login_attempts')) {
+    const [identifier] = params;
+    tables.login_attempts.push({ identifier, attempted_at: new Date() });
+    return [{ affectedRows: 1 }];
+  }
+
+  // ---- calls ----
+  if (s.includes('FROM calls c') && s.includes('LEFT JOIN call_status')) {
+    const [date] = params;
+    const rows = tables.calls.filter(c => c.call_date === date).map(c => {
+      const status = tables.call_status.find(cs => cs.call_id === c.id);
+      const dp = tables.call_driving_person.find(d => d.call_id === c.id);
+      return { ...c,
+        cs_status: status ? status.status : null,
+        cs_status_fields_json: status ? status.status_fields_json : null,
+        cdp_driving_person: dp ? dp.driving_person : null,
+      };
+    });
+    return [rows];
+  }
+  if (s.startsWith('SELECT * FROM calls WHERE call_date')) {
+    const [date] = params;
+    return [tables.calls.filter(c => c.call_date === date)];
+  }
+  if (s.startsWith('DELETE FROM calls WHERE call_date')) {
+    const [date] = params;
+    tables.calls = tables.calls.filter(c => c.call_date !== date);
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('INSERT INTO calls')) {
+    const values = params[0]; // batched VALUES ? — array of arrays
+    values.forEach(row => {
+      const [id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance, role, technical_poc, is_onsite, is_candidate_first_interview] = row;
+      tables.calls.push({ id, call_date, time_text, candidate, company, round_text, duration, is_woi, assignee, country, doubts_json, raw_text, interviewer, importance, role, technical_poc, is_onsite, is_candidate_first_interview });
+    });
+    return [{ affectedRows: values.length }];
+  }
+  if (s.startsWith('SELECT DISTINCT call_date FROM calls')) {
+    return [[...new Set(tables.calls.map(c => c.call_date))].sort().map(call_date => ({ call_date }))];
+  }
+
+  // ---- call_status ----
+  if (s.startsWith('SELECT call_id, status, reason, status_fields_json FROM call_status')) {
+    const [date] = params;
+    return [tables.call_status.filter(cs => cs.call_date === date)];
+  }
+  if (s.startsWith('DELETE FROM call_status WHERE call_date')) {
+    const [date] = params;
+    tables.call_status = tables.call_status.filter(cs => cs.call_date !== date);
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('INSERT INTO call_status')) {
+    const values = params[0];
+    values.forEach(row => {
+      const [call_id, call_date, status, reason, status_fields_json] = row;
+      tables.call_status.push({ call_id, call_date, status, reason, status_fields_json });
+    });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- roster ----
+  if (s.startsWith('SELECT * FROM roster')) return [tables.roster];
+  if (s.startsWith('DELETE FROM roster')) { tables.roster = []; return [{ affectedRows: 1 }]; }
+  if (s.startsWith('INSERT INTO roster')) {
+    const values = params[0];
+    values.forEach(row => { const [id, name, team, is_advanced] = row; tables.roster.push({ id, name, team, is_advanced }); });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- notes ----
+  if (s.startsWith('SELECT id, note_text AS text FROM notes')) {
+    const [date] = params;
+    return [tables.notes.filter(n => n.note_date === date).map(n => ({ id: n.id, text: n.note_text }))];
+  }
+  if (s.startsWith('DELETE FROM notes WHERE note_date')) {
+    const [date] = params;
+    tables.notes = tables.notes.filter(n => n.note_date !== date);
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('INSERT INTO notes')) {
+    const values = params[0];
+    values.forEach(row => { const [id, note_date, note_text] = row; tables.notes.push({ id, note_date, note_text }); });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- day_status (finalized) ----
+  if (s.startsWith('INSERT INTO day_status')) {
+    const [the_date, finalized] = params;
+    const existing = tables.day_status.find(d => d.the_date === the_date);
+    if (existing) existing.finalized = finalized;
+    else tables.day_status.push({ the_date, finalized });
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('SELECT finalized FROM day_status') || (s.includes('day_status') && s.startsWith('SELECT'))) {
+    const [the_date] = params;
+    const row = tables.day_status.find(d => d.the_date === the_date);
+    return [row ? [row] : []];
+  }
+
+  // ---- students ----
+  if (s.startsWith('SELECT * FROM students')) return [tables.students];
+  if (s.startsWith('DELETE FROM students')) { tables.students = []; return [{ affectedRows: 1 }]; }
+  if (s.startsWith('INSERT INTO students')) {
+    const values = params[0];
+    values.forEach(row => { const [id, name, country] = row; tables.students.push({ id, name, country }); });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- student_match_decisions ----
+  if (s.startsWith('SELECT candidate_key, student_id, decision FROM student_match_decisions')) {
+    return [tables.student_match_decisions];
+  }
+  if (s.startsWith('INSERT INTO student_match_decisions')) {
+    const [candidate_key, candidate_name, student_id, decision] = params;
+    const existing = tables.student_match_decisions.find(d => d.candidate_key === candidate_key && d.student_id === student_id);
+    if (existing) { existing.decision = decision; existing.candidate_name = candidate_name; }
+    else tables.student_match_decisions.push({ candidate_key, candidate_name, student_id, decision });
+    return [{ affectedRows: 1 }];
+  }
+
+  // ---- call_backups ----
+  if (s.startsWith('SELECT id, call_date, reason, snapshot_json, row_count, created_at FROM call_backups WHERE id')) {
+    const [id] = params;
+    return [tables.call_backups.filter(b => String(b.id) === String(id))];
+  }
+  if (s.startsWith('SELECT id, call_date, reason, row_count, created_at FROM call_backups')) {
+    const [date] = params;
+    return [tables.call_backups.filter(b => b.call_date === date).sort((a,b)=>b.created_at-a.created_at).slice(0,30)];
+  }
+  if (s.startsWith('INSERT INTO call_backups')) {
+    const [call_date, reason, snapshot_json, row_count] = params;
+    const id = nextAutoId++;
+    tables.call_backups.push({ id, call_date, reason, snapshot_json, row_count, created_at: new Date() });
+    return [{ affectedRows: 1, insertId: id }];
+  }
+
+  // ---- call_driving_person ----
+  if (s.startsWith('DELETE FROM call_driving_person WHERE call_date')) {
+    const [date] = params;
+    tables.call_driving_person = tables.call_driving_person.filter(d => d.call_date !== date);
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('INSERT INTO call_driving_person')) {
+    const values = params[0];
+    values.forEach(row => { const [call_id, call_date, driving_person] = row; tables.call_driving_person.push({ call_id, call_date, driving_person }); });
+    return [{ affectedRows: values.length }];
+  }
+
+  // ---- portal_sync_cache ----
+  if (s.startsWith('INSERT INTO portal_sync_cache')) {
+    const [cache_key, data_json] = params;
+    const existing = tables.portal_sync_cache.find(p => p.cache_key === cache_key);
+    if (existing) existing.data_json = data_json;
+    else tables.portal_sync_cache.push({ cache_key, data_json, updated_at: new Date() });
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('SELECT data_json, updated_at FROM portal_sync_cache')) {
+    const [cache_key] = params;
+    const row = tables.portal_sync_cache.find(p => p.cache_key === cache_key);
+    return [row ? [row] : []];
+  }
+
+  throw new Error('Mock DB: unrecognized query shape — add a case for it in mock-db-engine.js: ' + s.slice(0, 120));
+}
+
+function makeConnection() {
+  let inTransaction = false;
+  return {
+    query,
+    beginTransaction: async () => { inTransaction = true; },
+    commit: async () => { inTransaction = false; },
+    rollback: async () => { inTransaction = false; },
+    end: async () => {},
+  };
+}
+
+module.exports = { resetMockDb, getTables, forceNextQueryError, seed, makeConnection };
