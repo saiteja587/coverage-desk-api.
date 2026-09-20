@@ -1,0 +1,646 @@
+// Coverage Desk — Regression Test Suite
+// ---------------------------------------------------------------------
+// WHAT THIS IS: every parser bug, permission bug, and UI bug fixed across
+// the whole development history of this app, captured as a permanent,
+// re-runnable check — instead of the throwaway test scripts that were
+// written once and deleted during each individual fix.
+//
+// WHY IT EXISTS: a single ~7,800-line HTML file with no build system has
+// no automatic way to notice when an unrelated change breaks something
+// that was already fixed. This file is that missing safety net.
+//
+// HOW TO RUN IT:
+//   1. Requires Node.js and Playwright installed:
+//        npm install playwright
+//        npx playwright install chromium
+//   2. Put this file in the same folder as index.html (or edit INDEX_PATH below).
+//   3. Run:  node regression-suite.js
+//   4. Read the summary at the bottom. Exit code is non-zero if anything failed —
+//      safe to wire into a CI step later if you ever want one.
+//
+// HOW TO EXTEND IT: every time a NEW real message format breaks the
+// parser (and it will — that's the nature of free-text parsing, not a
+// flaw that gets "finished"), add the broken example as a new case in
+// the relevant section below, confirm it now passes with the fix, and
+// it's permanently guarded from then on. The whole point is that this
+// list only ever grows, never resets.
+// ---------------------------------------------------------------------
+
+const { chromium } = require('playwright');
+const path = require('path');
+
+const INDEX_PATH = path.join(__dirname, 'index.html');
+
+let pass = 0, fail = 0;
+const failures = [];
+
+function check(section, name, cond, detail) {
+  const ok = !!cond;
+  if (ok) { pass++; }
+  else { fail++; failures.push(`[${section}] ${name}` + (detail ? ` — ${detail}` : '')); }
+  console.log(`  ${ok ? '✓' : '✗ FAIL'}  ${name}`);
+}
+
+async function main() {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  const pageErrors = [];
+  page.on('pageerror', err => pageErrors.push(err.message));
+  page.on('console', msg => {
+    const t = msg.text();
+    if (msg.type() === 'error' && !t.includes('CORS') && !t.includes('Failed to load resource') && !t.includes('Failed to fetch') && !t.includes('net::ERR')) {
+      pageErrors.push('[console] ' + t);
+    }
+  });
+  page.on('dialog', d => d.accept());
+
+  await page.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2000);
+
+  // =====================================================================
+  console.log('\n=== 1. Main call-line parser (parseDetailedLine) ===');
+  // =====================================================================
+  const parserCases = await page.evaluate(() => {
+    const out = {};
+
+    // Company name containing its own hyphen ("Co-operative Bank") must not
+    // be split apart by the same delimiter that separates real fields.
+    out.hyphenatedCompany = parseDetailedLine(
+      "7.\tShree Ramji – Interview – (UK) - Phn Interview - The Co - operative Bank – 3:30 PM IST – Duration: 30 Mins (1st Round)"
+    );
+    // A run of adjacent delimiters (en-dash immediately followed by "- ")
+    // used to leave a stray leading hyphen on the next segment.
+    out.strayHyphenCompany1 = parseDetailedLine(
+      "20.\tSaurabh Singh – Interview – (UK) - Phn Interview - Procea Ltd – 7:00 PM IST – Duration: 30 Mins (1st Round) (Candidate 1st Interview)"
+    );
+    out.strayHyphenCompany2 = parseDetailedLine(
+      "14.\tMathew kodavalli – Interview – (UK) - Phn Interview - Teva – 6:30 PM IST – Duration: 30 Mins (1st Round)"
+    );
+    // Bare-hour time ("11pm", no ":00") must be recognized, and must not
+    // corrupt the company field the way it originally did.
+    out.bareHourTime = parseDetailedLine(
+      "Ruchitha Mandalapu - Interview - Acme - 11pm IST - Duration: 30 Mins (1st Round)"
+    );
+    // Lowercase am/pm should normalize to uppercase for display consistency.
+    out.lowercaseAmPm = parseDetailedLine(
+      "Jane Doe - Interview - Beta - 5:00 pm IST - Duration: 30 Mins (1st Round)"
+    );
+    // A bare "25mins" with no "Duration:" label and no parentheses.
+    out.bareDuration = parseDetailedLine(
+      "68. Sananazneen Shaik —Interview—Fiserv –-11:00PM IST 25mins (1st round)"
+    );
+    // The stricter "Duration:" pattern must still win over the bare fallback.
+    out.explicitDurationPriority = parseDetailedLine(
+      "John Smith - Interview - Acme - 4:00 PM IST - Duration: 45 Mins (1st Round)"
+    );
+    // Technical POC (Gopi/Kishore/Vamsi or anyone on Development Team) must
+    // be captured separately, never treated as the assignee.
+    out.technicalPOC = parseDetailedLine(
+      "1. Surya Teja Gowd Ayinavilli (Ireland) – Interview – Vitalograph – 2:30 PM IST – Duration: 30 Mins (2nd Round) -> gopi"
+    );
+    // Trailing bare-name POC pattern ("-vamsi", no arrow).
+    out.trailingPOC = parseDetailedLine(
+      "10. Paranjay Basa (Phani sir Ref) – Interview – Stripe – 10:30 PM IST – Duration: 90 Mins (2nd Round)-vamsi"
+    );
+    // Onsite detection from free text, and the trailing-POC pattern must
+    // still work even when Onsite is also present in the same line.
+    out.onsiteDetection = parseDetailedLine(
+      "Sardhak Peddapalli-(UK)-Interview – Dukosi – (2nd round)(OnSite Interview)- kumar"
+    );
+    // "Candidate 1st interview" (including the common typo "inteview")
+    // must force round to 1st regardless of any other round signal.
+    out.candidateFirstInterview = parseDetailedLine(
+      "48.\tPavan Kalyan Reddy Pochugari – Interview – RiverWoods – 11:45 PM IST – Duration: Not Provided (1st Round) (Candidate 1st interview)"
+    );
+    // Interviewer arrow-chain extraction.
+    out.interviewerArrow = parseDetailedLine(
+      "18. Shivendra Gupta – Interview – Infinite Computer Solutions – 10:30 PM IST – Duration: 60 Mins (1st Round) → Karthik → Pandi Murugesan (Senior Test Lead)"
+    );
+    // Safety check: "Round 2" as trailing plain text must never be
+    // misread as a duration ("2" + nothing that looks like mins/hrs).
+    out.roundNotMisreadAsDuration = parseDetailedLine(
+      "Alice Smith - Interview - Acme - 4:00 PM IST - Duration: 30 Mins (Round 2)"
+    );
+
+    return out;
+  });
+
+  check('Parser', 'Hyphenated company name stays whole ("The Co - operative Bank")',
+    parserCases.hyphenatedCompany.company === 'The Co - operative Bank',
+    `got "${parserCases.hyphenatedCompany.company}"`);
+  check('Parser', 'Stray-hyphen company fix #1 ("Procea Ltd")',
+    parserCases.strayHyphenCompany1.company === 'Procea Ltd',
+    `got "${parserCases.strayHyphenCompany1.company}"`);
+  check('Parser', 'Stray-hyphen company fix #2 ("Teva")',
+    parserCases.strayHyphenCompany2.company === 'Teva',
+    `got "${parserCases.strayHyphenCompany2.company}"`);
+  check('Parser', 'Bare-hour time "11pm" → "11:00 PM"',
+    parserCases.bareHourTime.time === '11:00 PM',
+    `got "${parserCases.bareHourTime.time}"`);
+  check('Parser', 'Bare-hour time does not corrupt company ("Acme")',
+    parserCases.bareHourTime.company === 'Acme',
+    `got "${parserCases.bareHourTime.company}"`);
+  check('Parser', 'Lowercase am/pm normalizes to uppercase',
+    parserCases.lowercaseAmPm.time === '5:00 PM',
+    `got "${parserCases.lowercaseAmPm.time}"`);
+  check('Parser', 'Bare duration "25mins" (no label, no parens) → "25 mins"',
+    parserCases.bareDuration.duration === '25 mins',
+    `got "${parserCases.bareDuration.duration}"`);
+  check('Parser', 'Explicit "Duration:" label still takes priority',
+    parserCases.explicitDurationPriority.duration === '45 Mins',
+    `got "${parserCases.explicitDurationPriority.duration}"`);
+  check('Parser', 'Technical POC "gopi" captured, not treated as assignee',
+    parserCases.technicalPOC.technicalPOC === 'Gopi',
+    `got "${parserCases.technicalPOC.technicalPOC}"`);
+  check('Parser', 'Trailing bare-name POC "-vamsi" captured',
+    parserCases.trailingPOC.technicalPOC === 'Vamsi',
+    `got "${parserCases.trailingPOC.technicalPOC}"`);
+  check('Parser', 'Onsite detected from free text',
+    parserCases.onsiteDetection.onsite === true);
+  check('Parser', 'Trailing POC still works alongside onsite ("kumar")',
+    parserCases.onsiteDetection.technicalPOC === 'Kumar' || parserCases.onsiteDetection.technicalPOC === '',
+    `got "${parserCases.onsiteDetection.technicalPOC}" (empty is acceptable if "kumar" isn't in the roster/POC list for this run)`);
+  check('Parser', '"Candidate 1st interview" (with typo) forces round to 1st',
+    parserCases.candidateFirstInterview.round === '1st' && parserCases.candidateFirstInterview.candidateFirstInterview === true,
+    `round="${parserCases.candidateFirstInterview.round}" flag=${parserCases.candidateFirstInterview.candidateFirstInterview}`);
+  check('Parser', 'Interviewer arrow-chain extraction',
+    !!parserCases.interviewerArrow.interviewer,
+    `got "${parserCases.interviewerArrow.interviewer}"`);
+  check('Parser', '"Round 2" is never misread as a duration',
+    parserCases.roundNotMisreadAsDuration.duration === '30 Mins',
+    `got duration="${parserCases.roundNotMisreadAsDuration.duration}"`);
+
+  // =====================================================================
+  console.log('\n=== 2. Reschedule/cancel message parser (parseRescheduleText) ===');
+  // =====================================================================
+  const rescheduleCases = await page.evaluate(() => {
+    const out = {};
+    // Original self-contained per-line format.
+    out.perLine = parseRescheduleText(
+      `Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side sir`
+    );
+    // A single "All calls reschedule..." line covering multiple OTHER
+    // calls listed in the same paste, none of which mention reschedule themselves.
+    out.blanket = parseRescheduleText(
+      `Havila Penumaka – Interview – Clearbrook – 8:45 PM IST – Duration: 30 Mins (1st Round)\n\nRakesh gandra – Interview – Catholic Health – 9:30 PM IST – Duration: 30 Mins (1st Round)\n\nAll calls reschedule from Interviewer side sir @Sashank Bava`
+    );
+    // A short "Time – Name" line followed by a SEPARATE paragraph with the
+    // actual reason/status word — neither half is self-contained alone.
+    out.twoPart = parseRescheduleText(
+      `6:30 PM – Pinky Sachdev\n\nThe candidate thought the interview time was in EDT, but it was scheduled in EST. She requested to reschedule the interview.\n\n@Sashank Bava`
+    );
+    // Bare-hour time inside reschedule messages specifically, and
+    // "reschedule no response" correctly resolving to not_responded
+    // rather than rescheduled.
+    out.bareHourReschedule = parseRescheduleText(
+      `Amruth Acharya - 11pm ist interview was reschedule no response from interviewer side sir`
+    );
+    // @mention appearing BEFORE the name (not just after, as a trailing tag).
+    out.leadingMention = parseRescheduleText(
+      `@Sashank Bava Sir, Deepanshu R - 4:30 PM call cancelled from recruiter side`
+    );
+    // Mixed paste: one call states its own status, the blanket line covers
+    // the rest — the individually-stated one must keep its own status,
+    // not get overridden by the blanket.
+    out.mixedIndividualAndBlanket = parseRescheduleText(
+      `Alice Smith – Interview – Acme – 3:00 PM IST – Duration: 30 Mins (1st Round)\nBob Jones – 4:00 PM IST – cancelled due to candidate side sir\nCarol White – Interview – Beta – 5:00 PM IST – Duration: 30 Mins (1st Round)\n\nAll calls reschedule from Interviewer side sir @Team`
+    );
+    // False-positive check: plain numbered call listings with no
+    // reschedule wording anywhere must produce zero matches.
+    out.noFalsePositive = parseRescheduleText(
+      `1. John Smith – Interview – Acme – 4:00 PM IST – Duration: 30 Mins (1st Round)\n\n2. Jane Doe – Interview – Beta – 5:00 PM IST – Duration: 30 Mins (2nd Round)`
+    );
+    return out;
+  });
+
+  check('Reschedule', 'Per-line format still works',
+    rescheduleCases.perLine.length === 1 && rescheduleCases.perLine[0].status === 'rescheduled',
+    JSON.stringify(rescheduleCases.perLine));
+  check('Reschedule', 'Blanket "All calls reschedule..." covers all listed calls',
+    rescheduleCases.blanket.length === 2 && rescheduleCases.blanket.every(r => r.status === 'rescheduled'),
+    JSON.stringify(rescheduleCases.blanket));
+  check('Reschedule', 'Two-part message (time+name, then separate reason paragraph)',
+    rescheduleCases.twoPart.length === 1 && rescheduleCases.twoPart[0].candidate === 'Pinky Sachdev' && rescheduleCases.twoPart[0].time === '6:30 PM',
+    JSON.stringify(rescheduleCases.twoPart));
+  check('Reschedule', 'Bare-hour time + "reschedule no response" → not_responded',
+    rescheduleCases.bareHourReschedule.length === 1 && rescheduleCases.bareHourReschedule[0].status === 'not_responded' && rescheduleCases.bareHourReschedule[0].time === '11:00 PM',
+    JSON.stringify(rescheduleCases.bareHourReschedule));
+  check('Reschedule', 'Leading @mention before the name still parses correctly',
+    rescheduleCases.leadingMention.length === 1 && rescheduleCases.leadingMention[0].candidate === 'Deepanshu R' && rescheduleCases.leadingMention[0].side === 'recruiter side',
+    JSON.stringify(rescheduleCases.leadingMention));
+  check('Reschedule', 'Individually-stated status takes priority over the blanket',
+    (() => {
+      const bob = rescheduleCases.mixedIndividualAndBlanket.find(r => r.candidate === 'Bob Jones');
+      const alice = rescheduleCases.mixedIndividualAndBlanket.find(r => r.candidate === 'Alice Smith');
+      return bob && bob.status === 'cancelled' && alice && alice.status === 'rescheduled';
+    })(),
+    JSON.stringify(rescheduleCases.mixedIndividualAndBlanket));
+  check('Reschedule', 'No false positives on plain call listings',
+    rescheduleCases.noFalsePositive.length === 0,
+    JSON.stringify(rescheduleCases.noFalsePositive));
+
+  // =====================================================================
+  console.log('\n=== 2a. Closure / job-offer message parser (parseClosureText) ===');
+  // =====================================================================
+  const closureCases = await page.evaluate(() => {
+    const out = {};
+    out.original = parseClosureText(
+      `Rohini sura got offer letter from Capitol bridge\n\nsalary: $75,000 per annum\n\n@Sashank Bava @Sundeep Anna @Phani Anna USA @Pradeep Anna`
+    );
+    out.inlineSalary = parseClosureText('Jane Doe received offer from Beta Inc at $85,000\n\n@Team');
+    out.selectedBy = parseClosureText('Bob Jones has been selected by Gamma LLC\n\nsalary: $60,000/yr\n\n@Team');
+    out.closedWith = parseClosureText('Alice White is closed with Delta Co\n\nsalary: $70k\n\n@Team');
+    out.multiple = parseClosureText('Candidate One got offer letter from CompanyA\n\nsalary: $50,000\n\nCandidate Two received offer from CompanyB\n\nsalary: $55,000\n\n@Team');
+    out.noFalsePositive = parseClosureText('1. John Smith – Interview – Acme – 4:00 PM IST – Duration: 30 Mins (1st Round)');
+    // Real messages that surfaced real bugs: "Sir," prefix, WhatsApp
+    // *bold* markdown around company/salary, currency symbol AFTER the
+    // number ("49$/Hr"), and salary glued onto the same line as the offer
+    // with no line break at all.
+    out.realBatch = [
+      parseClosureText(`Sir, Humera Pathan got offer letter from Insight Global \nSalary: 49$/Hr   \n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Vijetha nonwar got offer letter from *First port* \n\nsalary : *£38000* /Per Year\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Janani Priya got offer from *American University.*\n\nSalary: 112,000$ / yr\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Himaja Rao Adirala got offer letter  from Atrium hospitality\nSalary:  $68,000.00/Year`),
+      parseClosureText(`Lahari Beerla got offer from UTM (UTILITY TRAILER MANUFACTURING COMPANY)\n\nSalary: $85,000 / Yr\n\n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+      parseClosureText(`Sir, Lahari beerla got offer letter from *Novolox* \nSalary: $85,000/ Year  \n\n@Sashank Bava @Sundeep Anna @Pradeep Anna @Phani Anna USA`),
+    ];
+    return out;
+  });
+  check('Closures', 'Exact reported message parses candidate/company/salary correctly',
+    closureCases.original.length === 1 && closureCases.original[0].candidate === 'Rohini sura' &&
+    closureCases.original[0].company === 'Capitol bridge' && closureCases.original[0].salary === '$75,000 per annum',
+    JSON.stringify(closureCases.original));
+  check('Closures', 'Inline salary does not get swallowed into the company field',
+    closureCases.inlineSalary.length === 1 && closureCases.inlineSalary[0].company === 'Beta Inc' && closureCases.inlineSalary[0].salary === '$85,000',
+    JSON.stringify(closureCases.inlineSalary));
+  check('Closures', '"selected by" phrasing recognized',
+    closureCases.selectedBy.length === 1 && closureCases.selectedBy[0].company === 'Gamma LLC',
+    JSON.stringify(closureCases.selectedBy));
+  check('Closures', '"closed with" phrasing recognized',
+    closureCases.closedWith.length === 1 && closureCases.closedWith[0].company === 'Delta Co',
+    JSON.stringify(closureCases.closedWith));
+  check('Closures', 'Multiple closures in one paste each get their own salary',
+    closureCases.multiple.length === 2 && closureCases.multiple[0].salary === '$50,000' && closureCases.multiple[1].salary === '$55,000',
+    JSON.stringify(closureCases.multiple));
+  check('Closures', 'No false positives on plain call listings',
+    closureCases.noFalsePositive.length === 0,
+    JSON.stringify(closureCases.noFalsePositive));
+  const rb = closureCases.realBatch;
+  check('Closures', '"Sir," prefix stripped + dollar-after-number salary ("49$/Hr") extracted, not lost',
+    rb[0][0].candidate === 'Humera Pathan' && rb[0][0].company === 'Insight Global' && rb[0][0].salary === '49$/Hr', JSON.stringify(rb[0]));
+  check('Closures', 'WhatsApp *bold* markdown stripped from company and £ salary',
+    rb[1][0].company === 'First port' && rb[1][0].salary === '£38000 /Per Year', JSON.stringify(rb[1]));
+  check('Closures', 'Stray trailing period inside asterisks stripped ("*American University.*")',
+    rb[2][0].company === 'American University', JSON.stringify(rb[2]));
+  check('Closures', 'Salary glued onto the SAME line as the offer (no line break) still separates from company',
+    rb[3][0].company === 'Atrium hospitality' && rb[3][0].salary === '$68,000.00/Year', JSON.stringify(rb[3]));
+  check('Closures', 'Parenthetical company expansion preserved whole ("UTM (UTILITY TRAILER...)")',
+    rb[4][0].company === 'UTM (UTILITY TRAILER MANUFACTURING COMPANY)', JSON.stringify(rb[4]));
+  check('Closures', '"Sir," + *bold* + glued salary all handled together in one message',
+    rb[5][0].candidate === 'Lahari beerla' && rb[5][0].company === 'Novolox' && rb[5][0].salary === '$85,000/ Year', JSON.stringify(rb[5]));
+
+  // =====================================================================
+  console.log('\n=== 2b. Closure cross-reference against existing call records ===');
+  // =====================================================================
+  const crossRefCases = await page.evaluate(() => {
+    const allRows = [
+      { candidate: 'Himaja Rao Adirala', company: 'Atrium Hospitality', _date: '2026-08-01' },
+      { candidate: 'Vijetha nonwar', company: 'Second Port', _date: '2026-08-10' },
+    ];
+    return {
+      match: crossReferenceClosure('Himaja Rao Adirala', 'Atrium hospitality', allRows),
+      mismatch: crossReferenceClosure('Vijetha nonwar', 'First port', allRows),
+      noMatch: crossReferenceClosure('Nobody Real', 'Some Company', allRows),
+    };
+  });
+  check('Closures', 'Cross-reference: matching candidate+company (case-insensitive) recognized as a match',
+    crossRefCases.match.status === 'match', JSON.stringify(crossRefCases.match));
+  check('Closures', 'Cross-reference: candidate found but company genuinely differs — flagged, not silently trusted',
+    crossRefCases.mismatch.status === 'mismatch' && crossRefCases.mismatch.message.includes('Second Port'), JSON.stringify(crossRefCases.mismatch));
+  check('Closures', 'Cross-reference: no matching candidate at all — flagged as no_match',
+    crossRefCases.noMatch.status === 'no_match', JSON.stringify(crossRefCases.noMatch));
+
+  // =====================================================================
+  console.log('\n=== 3. Students Master fuzzy name matching ===');
+  // =====================================================================
+  const matchingCases = await page.evaluate(() => {
+    state.studentsMaster = [
+      { id: 's1', name: 'Sushmitha Basavaraju', country: 'USA' },
+      { id: 's2', name: 'Chidghana Hemantharaju', country: 'Germany' },
+      { id: 's3', name: 'S Sricharan', country: 'USA' },
+    ];
+    const out = {};
+    out.abbreviation = findStudentMasterMatch('Sushmitha B');
+    out.typoTolerance = findStudentMasterMatch('Chigdhana Hemantharaju'); // two letters swapped
+    out.reorderedWords = findStudentMasterMatch('Sri Charan Sadhu'); // vs "S Sricharan" pattern below
+    out.initialPlusCompound1 = findStudentMasterMatch('Sadhu Sri Charan');
+    out.initialPlusCompound2 = findStudentMasterMatch('S Sricharan');
+
+    // Genuine ambiguity: two DIFFERENT real students who both reduce to
+    // "S Sricharan" via the same letters — must refuse to guess.
+    state.studentsMaster.push({ id: 's4', name: 'Sudha Chari Ansr', country: 'UK' }); // same letter multiset as Sadhu Sri Charan
+    out.ambiguityRefusal = findStudentMasterMatch('Sri Charan Sadhu');
+
+    return {
+      abbreviation: out.abbreviation ? out.abbreviation.name : null,
+      typoTolerance: out.typoTolerance ? out.typoTolerance.name : null,
+      initialPlusCompound1: out.initialPlusCompound1 ? out.initialPlusCompound1.name : null,
+      initialPlusCompound2: out.initialPlusCompound2 ? out.initialPlusCompound2.name : null,
+      ambiguityRefusal: out.ambiguityRefusal ? out.ambiguityRefusal.name : null,
+    };
+  });
+  check('Students Master', '"Sushmitha B" abbreviation match',
+    matchingCases.abbreviation === 'Sushmitha Basavaraju', `got "${matchingCases.abbreviation}"`);
+  check('Students Master', 'Typo tolerance ("Chigdhana" vs "Chidghana")',
+    matchingCases.typoTolerance === 'Chidghana Hemantharaju', `got "${matchingCases.typoTolerance}"`);
+  check('Students Master', 'Initial+compound match ("Sadhu Sri Charan" → "S Sricharan")',
+    matchingCases.initialPlusCompound1 === 'S Sricharan', `got "${matchingCases.initialPlusCompound1}"`);
+  check('Students Master', 'Reverse form also matches ("S Sricharan" → itself, exact)',
+    matchingCases.initialPlusCompound2 === 'S Sricharan', `got "${matchingCases.initialPlusCompound2}"`);
+  check('Students Master', 'Genuine ambiguity correctly refuses to guess',
+    matchingCases.ambiguityRefusal === null, `got "${matchingCases.ambiguityRefusal}" (should be null)`);
+
+  // =====================================================================
+  console.log('\n=== 4. WOI → scheduled merge (no-duplicate-on-update) ===');
+  // =====================================================================
+  const woiCase = await page.evaluate(() => {
+    const existingRows = [{ id: 'w1', candidate: 'Satya Pavan', company: 'Deloitte', time: '', woi: true }];
+    const parsedRow = { candidate: 'Satya Pavan', company: '', time: '7:00 PM', woi: false, round: '1st' };
+    const match = findExistingCallMatch(parsedRow, existingRows);
+    return match ? match.id : null;
+  });
+  check('WOI merge', 'A re-pasted WOI call with a real time now matches its existing WOI row',
+    woiCase === 'w1', `got "${woiCase}"`);
+
+  // =====================================================================
+  console.log('\n=== 5. Role-based permissions ===');
+  // =====================================================================
+  await page.evaluate(() => {
+    state.view = 'all';
+    state.rows = [{ id: 'r1', time: '2:00 PM', company: 'Acme', candidate: 'Alice', round: '1st', duration: '30 mins', woi: false, assignee: 'HYD Team', country: 'USA', doubts: [] }];
+  });
+  await page.evaluate(() => { CURRENT_ROLE = 'team_lead'; render(); });
+  await page.waitForTimeout(150);
+  const teamLeadChecks = await page.evaluate(() => ({
+    incentivesHidden: document.getElementById('toggleIncentives') === null,
+    backupsHidden: document.getElementById('toggleBackups') === null,
+    saveButtonHidden: document.getElementById('saveAllBtn') === null,
+    drivingPersonEnabled: !document.querySelector('.driving-person-select')?.disabled,
+  }));
+  check('Permissions', 'Team Lead: Incentives panel hidden', teamLeadChecks.incentivesHidden);
+  check('Permissions', 'Team Lead: Backups panel hidden', teamLeadChecks.backupsHidden);
+  check('Permissions', 'Team Lead: general Save button hidden', teamLeadChecks.saveButtonHidden);
+  check('Permissions', 'Team Lead: Driving Person stays editable', teamLeadChecks.drivingPersonEnabled);
+
+  await page.evaluate(() => { CURRENT_ROLE = 'user'; render(); });
+  await page.waitForTimeout(150);
+  const plainUserChecks = await page.evaluate(() => ({
+    drivingPersonDisabled: document.querySelector('.driving-person-select')?.disabled === true,
+  }));
+  check('Permissions', 'Plain read-only User: Driving Person is NOT editable', plainUserChecks.drivingPersonDisabled);
+  await page.evaluate(() => { CURRENT_ROLE = 'admin'; render(); });
+
+  // =====================================================================
+  console.log('\n=== 6. Core row interactions (delegated handlers) ===');
+  // =====================================================================
+  await page.evaluate(() => {
+    state.view = 'all';
+    state.rows = [
+      { id: 'i1', time: '2:00 PM', company: 'Acme', candidate: 'Alice', round: '1st', duration: '30 mins', woi: false, assignee: '', country: 'USA', doubts: [] },
+      { id: 'i2', time: '3:00 PM', company: 'Beta', candidate: 'Bob', round: '1st', duration: '30 mins', woi: false, assignee: 'HYD Team', country: 'USA', doubts: [] },
+    ];
+    render();
+  });
+  await page.fill('tr[data-id="i1"] input[data-field="candidate"]', 'Alice Updated');
+  await page.waitForTimeout(150);
+  check('Row interactions', 'Text field edit updates state',
+    (await page.evaluate(() => state.rows.find(r => r.id === 'i1').candidate)) === 'Alice Updated');
+
+  await page.selectOption('tr[data-id="i1"] select[data-field="assignee"]', { value: 'Stephen' });
+  await page.waitForTimeout(150);
+  check('Row interactions', 'Select field edit updates state',
+    (await page.evaluate(() => state.rows.find(r => r.id === 'i1').assignee)) === 'Stephen');
+
+  const move2ndVisible = await page.locator('tr[data-id="i2"] .move-2nd').count();
+  if (move2ndVisible > 0) {
+    await page.click('tr[data-id="i2"] .move-2nd');
+    await page.waitForTimeout(150);
+    const afterMove = await page.evaluate(() => state.rows.find(r => r.id === 'i2'));
+    check('Row interactions', 'Move-to-2nd sets round AND clears team-level assignee',
+      afterMove.round === '2nd Round' && afterMove.assignee === '');
+  }
+
+  await page.click('tr[data-id="i1"] [data-del]');
+  await page.waitForTimeout(150);
+  check('Row interactions', 'Delete button removes the row',
+    (await page.evaluate(() => !state.rows.find(r => r.id === 'i1'))));
+  check('Row interactions', 'Undo toast appears after delete',
+    await page.locator('.undo-toast').isVisible());
+
+  // No duplicate-firing after many re-renders (delegation guard check).
+  const noDoubleFire = await page.evaluate(() => {
+    state.rows = [{ id: 'd1', time: '2:00 PM', company: 'Acme', candidate: 'X', round: '1st', duration: '30 mins', woi: false, assignee: '', country: 'USA', doubts: [] }];
+    for (let i = 0; i < 15; i++) render();
+    let markDirtyCalls = 0;
+    const orig = window.markDirty;
+    window.markDirty = function (...a) { markDirtyCalls++; return orig.apply(this, a); };
+    const input = document.querySelector('tr[data-id="d1"] input[data-field="candidate"]');
+    input.value = 'Changed';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    window.markDirty = orig;
+    return markDirtyCalls;
+  });
+  check('Row interactions', 'Exactly one handler fires per edit even after 15 re-renders (no listener accumulation)',
+    noDoubleFire === 1, `fired ${noDoubleFire} times`);
+
+  // =====================================================================
+  console.log('\n=== 7. Mobile layout ===');
+  // =====================================================================
+  await browser.close();
+  const mBrowser = await chromium.launch();
+  const mPage = await mBrowser.newPage({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true });
+  const mErrors = [];
+  mPage.on('pageerror', err => mErrors.push(err.message));
+  await mPage.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
+  await mPage.waitForTimeout(2000);
+  await mPage.evaluate(() => {
+    state.view = 'all';
+    state.rows = [{ id: 'm1', time: '2:00 PM', company: 'Acme Corp', candidate: 'Alice Smith', round: '1st', duration: '30 mins', woi: false, assignee: 'HYD Team', country: 'USA', doubts: [] }];
+    render();
+  });
+  await mPage.waitForTimeout(300);
+  const hOverflow = await mPage.evaluate(() => document.body.scrollWidth - window.innerWidth);
+  check('Mobile', 'Zero horizontal overflow on a narrow (390px) screen', hOverflow === 0, `overflow=${hOverflow}px`);
+
+  // Swipe-right opens the full assign picker (not a fixed "assign to me").
+  await mPage.evaluate(() => {
+    window.__swipeHelper = function (rowId, dxTotal) {
+      const tr = document.querySelector(`tbody tr[data-id="${rowId}"]`);
+      const rect = tr.getBoundingClientRect();
+      const startX = rect.left + 40, startY = rect.top + rect.height / 2;
+      function mk(x, y) { return new Touch({ identifier: 1, target: tr, clientX: x, clientY: y, pageX: x, pageY: y }); }
+      let t = mk(startX, startY);
+      tr.dispatchEvent(new TouchEvent('touchstart', { touches: [t], targetTouches: [t], changedTouches: [t], bubbles: true, cancelable: true }));
+      let lastX = startX;
+      for (let i = 1; i <= 8; i++) {
+        lastX = startX + (dxTotal * i / 8);
+        let t2 = mk(lastX, startY);
+        tr.dispatchEvent(new TouchEvent('touchmove', { touches: [t2], targetTouches: [t2], changedTouches: [t2], bubbles: true, cancelable: true }));
+      }
+      let t3 = mk(lastX, startY);
+      tr.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [t3], bubbles: true, cancelable: true }));
+    };
+    window.__swipeHelper('m1', 130);
+  });
+  await mPage.waitForTimeout(300);
+  const pickerCheck = await mPage.evaluate(() => ({
+    visible: document.getElementById('myNamePickerOverlay') !== null,
+    hasTeamGroup: document.querySelector('.my-name-picker-item[data-name="HYD Team"]') !== null,
+  }));
+  check('Mobile', 'Swipe-right opens the full assign picker', pickerCheck.visible);
+  check('Mobile', 'Picker includes team-level assign options', pickerCheck.hasTeamGroup);
+
+  // A touch that starts on a control INSIDE the row (its delete button,
+  // in this case) must never be hijacked into a swipe-delete/assign —
+  // real report: "records has also left right options" fighting with
+  // the row's own left-right swipe gesture.
+  await mPage.evaluate(() => {
+    state.rows = [{ id: 'm2', time: '2:00 PM', company: 'Acme Corp', candidate: 'Bob Jones', round: '1st', duration: '30 mins', woi: false, assignee: 'HYD Team', country: 'USA', doubts: [] }];
+    render();
+  });
+  await mPage.waitForTimeout(200);
+  const rowCountBeforeButtonDrag = await mPage.evaluate(() => state.rows.length);
+  await mPage.evaluate(() => {
+    const btn = document.querySelector('tbody tr[data-id="m2"] .row-del');
+    const rect = btn.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
+    function mk(x, y) { return new Touch({ identifier: 1, target: btn, clientX: x, clientY: y, pageX: x, pageY: y }); }
+    btn.dispatchEvent(new TouchEvent('touchstart', { touches: [mk(startX, startY)], targetTouches: [mk(startX, startY)], changedTouches: [mk(startX, startY)], bubbles: true, cancelable: true }));
+    for (let i = 1; i <= 6; i++) {
+      const x = startX - (100 * i / 6);
+      btn.dispatchEvent(new TouchEvent('touchmove', { touches: [mk(x, startY)], targetTouches: [mk(x, startY)], changedTouches: [mk(x, startY)], bubbles: true, cancelable: true }));
+    }
+    btn.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [mk(startX - 100, startY)], bubbles: true, cancelable: true }));
+  });
+  await mPage.waitForTimeout(300);
+  const rowCountAfterButtonDrag = await mPage.evaluate(() => state.rows.length);
+  check('Mobile', 'Dragging from the row\'s own delete button does not trigger swipe-delete',
+    rowCountAfterButtonDrag === rowCountBeforeButtonDrag,
+    `rows ${rowCountBeforeButtonDrag} -> ${rowCountAfterButtonDrag}`);
+
+  // A mostly-vertical drag (ordinary scrolling) with a little horizontal
+  // wobble must not be misread as a horizontal swipe.
+  await mPage.evaluate(() => { state.showSwipeAssignPicker = false; state.pendingSwipeAssignRowId = null; render(); });
+  const rowCountBeforeScroll = await mPage.evaluate(() => state.rows.length);
+  await mPage.evaluate(() => {
+    const tr = document.querySelector('tbody tr[data-id="m2"]');
+    const rect = tr.getBoundingClientRect();
+    const startX = rect.left + 40, startY = rect.top + rect.height / 2;
+    function mk(x, y) { return new Touch({ identifier: 1, target: tr, clientX: x, clientY: y, pageX: x, pageY: y }); }
+    tr.dispatchEvent(new TouchEvent('touchstart', { touches: [mk(startX, startY)], targetTouches: [mk(startX, startY)], changedTouches: [mk(startX, startY)], bubbles: true, cancelable: true }));
+    for (let i = 1; i <= 8; i++) {
+      const x = startX + (20 * i / 8), y = startY + (200 * i / 8);
+      tr.dispatchEvent(new TouchEvent('touchmove', { touches: [mk(x, y)], targetTouches: [mk(x, y)], changedTouches: [mk(x, y)], bubbles: true, cancelable: true }));
+    }
+    tr.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [mk(startX + 20, startY + 200)], bubbles: true, cancelable: true }));
+  });
+  await mPage.waitForTimeout(300);
+  const afterVerticalScroll = await mPage.evaluate(() => ({ rows: state.rows.length, picker: !!document.getElementById('myNamePickerOverlay') }));
+  check('Mobile', 'A mostly-vertical drag with slight horizontal wobble is treated as scrolling, not a swipe',
+    afterVerticalScroll.rows === rowCountBeforeScroll && !afterVerticalScroll.picker);
+
+  // The More/Tools mobile menu must render as a fully on-screen, fully
+  // tappable bottom sheet no matter where the page is scrolled to — real
+  // report: "opened but there is no chance to select any option."
+  await mPage.evaluate(() => {
+    state.rows = Array.from({ length: 25 }, (_, i) => ({ id: 'bulk' + i, time: '2:00 PM', company: 'Acme', candidate: 'Row ' + i, round: '1st', duration: '30 mins', woi: false, assignee: '', country: 'USA', doubts: [] }));
+    render();
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+  await mPage.waitForTimeout(200);
+  const navMoreBtn = await mPage.$('#navMore');
+  if (navMoreBtn) await navMoreBtn.click();
+  await mPage.waitForTimeout(300);
+  const menuCheck = await mPage.evaluate(() => {
+    const items = Array.from(document.querySelectorAll('.more-menu-item'));
+    return items.length > 0 && items.every(item => {
+      const r = item.getBoundingClientRect();
+      const onScreen = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+      const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return onScreen && topEl === item;
+    });
+  });
+  check('Mobile', 'More menu (opened via bottom nav, scrolled to bottom of a long list) is fully on-screen and every item is tappable', menuCheck);
+
+  console.log('\nMobile page errors:', mErrors.length ? mErrors.join('\n') : '(none)');
+  await mBrowser.close();
+
+  // =====================================================================
+  console.log('\n=== 8. Panel smoke test (every panel opens without a JS error) ===');
+  // =====================================================================
+  const sBrowser = await chromium.launch();
+  const sPage = await sBrowser.newPage();
+  const sErrors = [];
+  sPage.on('pageerror', err => sErrors.push(err.message));
+  sPage.on('console', msg => {
+    const t = msg.text();
+    if (msg.type() === 'error' && !t.includes('CORS') && !t.includes('Failed to load resource') && !t.includes('Failed to fetch')) sErrors.push('[console] ' + t);
+  });
+  sPage.on('dialog', d => d.accept());
+  await sPage.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
+  await sPage.waitForTimeout(2500);
+  await sPage.evaluate(() => {
+    state.view = 'all';
+    state.rows = [{ id: 'p1', time: '2:00 PM', company: 'Acme', candidate: 'Alice', round: '2nd Round', duration: '30 mins', woi: false, assignee: 'Karthikeya', country: 'USA', doubts: [] }];
+    render();
+  });
+  async function click(id, ms) { try { await sPage.click('#' + id, { timeout: 2000 }); await sPage.waitForTimeout(ms || 150); return true; } catch (e) { return false; } }
+  await click('toggleNotifications');
+  const notifTabs = await sPage.locator('.notif-tab-btn').count();
+  for (let i = 0; i < notifTabs; i++) { await sPage.locator('.notif-tab-btn').nth(i).click().catch(() => {}); await sPage.waitForTimeout(80); }
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  for (const id of ['toggleImport', 'toggleRescheduleImport']) {
+    await sPage.evaluate(() => { closeAllPanels(); render(); });
+    await click(id, 150);
+  }
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleToolsMenu');
+  for (const id of ['toggleRoster', 'togglePortalSync', 'toggleIncentives', 'toggleBackups']) {
+    await sPage.evaluate(() => { closeAllPanels(); render(); });
+    await click('toggleToolsMenu', 80);
+    await click(id, 150);
+  }
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleMoreMenu');
+  for (const id of ['toggleStudentsMaster', 'toggleClientSearch', 'toggleSummary', 'toggleAllDates']) {
+    await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
+    await click('toggleMoreMenu', 80);
+    await click(id, 200);
+  }
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  for (const view of ['all', '1st', '2nd', 'doubts', 'rescheduled']) {
+    await sPage.evaluate((v) => { closeAllPanels(); state.view = v; render(); }, view);
+    await sPage.waitForTimeout(100);
+  }
+  check('Panel smoke test', 'Every panel + every tab opens with zero JS errors', sErrors.length === 0, sErrors.join(' | '));
+  await sBrowser.close();
+
+  // =====================================================================
+  console.log('\n=== SUMMARY ===');
+  // =====================================================================
+  console.log(`${pass} passed, ${fail} failed (of ${pass + fail} checks)`);
+  if (pageErrors.length) {
+    console.log('\nUnexpected page errors during the run:');
+    console.log(pageErrors.join('\n'));
+  }
+  if (failures.length) {
+    console.log('\nFailed checks:');
+    failures.forEach(f => console.log('  - ' + f));
+  }
+  process.exit(fail > 0 ? 1 : 0);
+}
+
+main().catch(err => {
+  console.error('Test suite crashed:', err);
+  process.exit(1);
+});
