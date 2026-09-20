@@ -500,6 +500,78 @@ async function main() {
   check('Mobile', 'Swipe-right opens the full assign picker', pickerCheck.visible);
   check('Mobile', 'Picker includes team-level assign options', pickerCheck.hasTeamGroup);
 
+  // A touch that starts on a control INSIDE the row (its delete button,
+  // in this case) must never be hijacked into a swipe-delete/assign —
+  // real report: "records has also left right options" fighting with
+  // the row's own left-right swipe gesture.
+  await mPage.evaluate(() => {
+    state.rows = [{ id: 'm2', time: '2:00 PM', company: 'Acme Corp', candidate: 'Bob Jones', round: '1st', duration: '30 mins', woi: false, assignee: 'HYD Team', country: 'USA', doubts: [] }];
+    render();
+  });
+  await mPage.waitForTimeout(200);
+  const rowCountBeforeButtonDrag = await mPage.evaluate(() => state.rows.length);
+  await mPage.evaluate(() => {
+    const btn = document.querySelector('tbody tr[data-id="m2"] .row-del');
+    const rect = btn.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
+    function mk(x, y) { return new Touch({ identifier: 1, target: btn, clientX: x, clientY: y, pageX: x, pageY: y }); }
+    btn.dispatchEvent(new TouchEvent('touchstart', { touches: [mk(startX, startY)], targetTouches: [mk(startX, startY)], changedTouches: [mk(startX, startY)], bubbles: true, cancelable: true }));
+    for (let i = 1; i <= 6; i++) {
+      const x = startX - (100 * i / 6);
+      btn.dispatchEvent(new TouchEvent('touchmove', { touches: [mk(x, startY)], targetTouches: [mk(x, startY)], changedTouches: [mk(x, startY)], bubbles: true, cancelable: true }));
+    }
+    btn.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [mk(startX - 100, startY)], bubbles: true, cancelable: true }));
+  });
+  await mPage.waitForTimeout(300);
+  const rowCountAfterButtonDrag = await mPage.evaluate(() => state.rows.length);
+  check('Mobile', 'Dragging from the row\'s own delete button does not trigger swipe-delete',
+    rowCountAfterButtonDrag === rowCountBeforeButtonDrag,
+    `rows ${rowCountBeforeButtonDrag} -> ${rowCountAfterButtonDrag}`);
+
+  // A mostly-vertical drag (ordinary scrolling) with a little horizontal
+  // wobble must not be misread as a horizontal swipe.
+  await mPage.evaluate(() => { state.showSwipeAssignPicker = false; state.pendingSwipeAssignRowId = null; render(); });
+  const rowCountBeforeScroll = await mPage.evaluate(() => state.rows.length);
+  await mPage.evaluate(() => {
+    const tr = document.querySelector('tbody tr[data-id="m2"]');
+    const rect = tr.getBoundingClientRect();
+    const startX = rect.left + 40, startY = rect.top + rect.height / 2;
+    function mk(x, y) { return new Touch({ identifier: 1, target: tr, clientX: x, clientY: y, pageX: x, pageY: y }); }
+    tr.dispatchEvent(new TouchEvent('touchstart', { touches: [mk(startX, startY)], targetTouches: [mk(startX, startY)], changedTouches: [mk(startX, startY)], bubbles: true, cancelable: true }));
+    for (let i = 1; i <= 8; i++) {
+      const x = startX + (20 * i / 8), y = startY + (200 * i / 8);
+      tr.dispatchEvent(new TouchEvent('touchmove', { touches: [mk(x, y)], targetTouches: [mk(x, y)], changedTouches: [mk(x, y)], bubbles: true, cancelable: true }));
+    }
+    tr.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [mk(startX + 20, startY + 200)], bubbles: true, cancelable: true }));
+  });
+  await mPage.waitForTimeout(300);
+  const afterVerticalScroll = await mPage.evaluate(() => ({ rows: state.rows.length, picker: !!document.getElementById('myNamePickerOverlay') }));
+  check('Mobile', 'A mostly-vertical drag with slight horizontal wobble is treated as scrolling, not a swipe',
+    afterVerticalScroll.rows === rowCountBeforeScroll && !afterVerticalScroll.picker);
+
+  // The More/Tools mobile menu must render as a fully on-screen, fully
+  // tappable bottom sheet no matter where the page is scrolled to — real
+  // report: "opened but there is no chance to select any option."
+  await mPage.evaluate(() => {
+    state.rows = Array.from({ length: 25 }, (_, i) => ({ id: 'bulk' + i, time: '2:00 PM', company: 'Acme', candidate: 'Row ' + i, round: '1st', duration: '30 mins', woi: false, assignee: '', country: 'USA', doubts: [] }));
+    render();
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+  await mPage.waitForTimeout(200);
+  const navMoreBtn = await mPage.$('#navMore');
+  if (navMoreBtn) await navMoreBtn.click();
+  await mPage.waitForTimeout(300);
+  const menuCheck = await mPage.evaluate(() => {
+    const items = Array.from(document.querySelectorAll('.more-menu-item'));
+    return items.length > 0 && items.every(item => {
+      const r = item.getBoundingClientRect();
+      const onScreen = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+      const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return onScreen && topEl === item;
+    });
+  });
+  check('Mobile', 'More menu (opened via bottom nav, scrolled to bottom of a long list) is fully on-screen and every item is tappable', menuCheck);
+
   console.log('\nMobile page errors:', mErrors.length ? mErrors.join('\n') : '(none)');
   await mBrowser.close();
 
