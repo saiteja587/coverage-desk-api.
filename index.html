@@ -4460,6 +4460,16 @@ function renderStrip(rows, conflictIds){
     </div>
   </div>`;
 }
+// A one-tap "paste from clipboard" button dropped just above any import
+// textarea — the actual speed-up for "I keep copying from WhatsApp and
+// pasting in here every time": one tap instead of long-press → Paste,
+// and it works the same on every import panel (calls, reschedule/cancel,
+// closures) since they all just fill a textarea by id.
+function pasteButtonHtml(targetId){
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+    <button type="button" class="btn ghost paste-clipboard-btn" data-target="${targetId}" style="font-size:11.5px;padding:5px 10px" title="Paste the WhatsApp message you just copied">📋 Paste from clipboard</button>
+  </div>`;
+}
 
 function renderRescheduleImportPanel(){
   const dayRows = state.rows.slice().sort((a,b)=>businessDayMinutes(a.time)-businessDayMinutes(b.time));
@@ -4468,6 +4478,7 @@ function renderRescheduleImportPanel(){
   ).join('');
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Paste WhatsApp-style reschedule/cancel messages for calls that are <b>already saved</b> in this day's list — this only updates the status/tag on matching calls, it does not create new calls. Existing calls in the DB will be scanned for a match by candidate name and time.</div>
+    ${pasteButtonHtml('rescheduleImportText')}
     <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir"></textarea>
     <div class="row">
       <div class="hint">Each message must include a name, a time (e.g. 2:30 PM, or a bare "7:00"), and the word "reschedule", "cancel", or "not responding"/"no response".</div>
@@ -4547,6 +4558,7 @@ function renderRescheduleConfirmPanel(){
 function renderClosureImportSection(){
   return `<div style="margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--border-soft)">
     <div class="hint" style="margin-bottom:10px">Paste a closure/job-offer message — a candidate name, a company, and (optionally) a salary line. This creates new closure records; it doesn't touch today's calls.</div>
+    ${pasteButtonHtml('closureImportText')}
     <textarea id="closureImportText" placeholder="Paste closure/offer messages, e.g.:&#10;Rohini sura got offer letter from Capitol bridge&#10;&#10;salary: $75,000 per annum"></textarea>
     <div class="row">
       <div class="hint">Recognizes phrasings like "got offer letter from", "received offer from", "selected by", "closed with", "placed at".</div>
@@ -4884,6 +4896,7 @@ function renderImportPanel(){
       <input type="date" id="importDate" value="${state.date}">
     </div>
     ${state.importDefaultRound==='2nd' ? `<div class="hint" style="color:var(--teal);margin-bottom:8px">↻ Calls without an explicit round will default to <b>2nd Round</b> (opened from the 2nd Round tab).</div>` : ''}
+    ${pasteButtonHtml('importText')}
     <textarea id="importText" placeholder="Paste either format:&#10;1. Royal Prabhu (UK) – Interview – Lloyds Group – 1:30 PM IST – Duration: 30 Mins (1st Round)&#10;&#10;or a team-grouped list:&#10;*HYD Team*&#10;Sweta Sridhar - 2&#10;Meghana B - 3.30 (*STEPHEN*)"></textarea>
     <div class="row">
       <div class="hint">Supports team-header lists (*Team*, @Name) and numbered lists with → assignee arrows. Times without AM/PM assumed 1–11 = PM, 12 = AM — check after import.</div>
@@ -8090,6 +8103,40 @@ function findPortalMatch(row){
   }
   return matches[0];
 }
+
+// One-tap "paste from clipboard" for every import textarea (calls,
+// reschedule/cancel, closures) — delegated on #app so it survives every
+// re-render without needing to be rebound in attachHandlers(). Requires
+// a secure context (https, which the real deployment is) and clipboard
+// permission; on failure this just tells the person to paste manually
+// rather than leaving the tap looking like it did nothing.
+(function setupPasteFromClipboard(){
+  const appEl = document.getElementById('app');
+  if(!appEl) return;
+  appEl.addEventListener('click', async (e)=>{
+    const btn = e.target.closest('.paste-clipboard-btn');
+    if(!btn) return;
+    const targetId = btn.dataset.target;
+    const el = targetId ? document.getElementById(targetId) : null;
+    if(!el) return;
+    if(!navigator.clipboard || !navigator.clipboard.readText){
+      alert('Clipboard access isn\'t available here — paste manually (long-press → Paste) instead.');
+      return;
+    }
+    try{
+      const text = await navigator.clipboard.readText();
+      if(!text || !text.trim()){
+        alert('Clipboard is empty — copy the WhatsApp message first, then tap this again.');
+        return;
+      }
+      el.value = el.value.trim() ? (el.value.replace(/\s+$/,'') + '\n\n' + text) : text;
+      el.focus();
+      hapticTap();
+    }catch(err){
+      alert('Couldn\'t read the clipboard (your browser may need permission) — paste manually (long-press → Paste) instead.');
+    }
+  });
+})();
 
 // ---------- init ----------
 // Swipe-right-to-assign / swipe-left-to-delete for mobile call cards.
