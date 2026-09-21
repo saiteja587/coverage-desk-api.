@@ -577,6 +577,81 @@ async function main() {
   check('Clipboard picker', 'A single-message clipboard still inserts directly with no picker shown',
     clipboardPickerTests.singleMessageNoPicker && clipboardPickerTests.singleMessageDirectInsert, JSON.stringify(clipboardPickerTests));
 
+  // =====================================================================
+  console.log('\n=== 2d. New Calls / 2nd Round / Reschedule imports merged into one Import button ===');
+  // =====================================================================
+  // Real request: too many separate import buttons scattered in the
+  // toolbar (Import, Import 2nd Round, Import Reschedule/Cancel). Now
+  // there's exactly one "📥 Import" button in the header, next to
+  // Closures, opening a single panel with a New Calls / Reschedule tab
+  // switcher and a 1st/2nd Round toggle inside the New Calls tab.
+  const importHubTests = await page.evaluate(async () => {
+    const out = {};
+    closeAllPanels();
+    render();
+    out.oldButtonsGone = !document.getElementById('toggleImport') && !document.getElementById('toggleImport2nd') && !document.getElementById('toggleRescheduleImport');
+    out.hubButtonExists = !!document.getElementById('toggleImportHub');
+
+    document.getElementById('toggleImportHub').click();
+    await new Promise(r => setTimeout(r, 20));
+    out.opensOnNewCallsTab = !!document.getElementById('importText') && !document.getElementById('rescheduleImportText');
+
+    document.getElementById('importHubTabReschedule').click();
+    await new Promise(r => setTimeout(r, 20));
+    out.switchesToRescheduleTab = !!document.getElementById('rescheduleImportText') && !document.getElementById('importText');
+
+    document.getElementById('importHubTabNew').click();
+    await new Promise(r => setTimeout(r, 20));
+    out.switchesBackToNewTab = !!document.getElementById('importText');
+
+    document.getElementById('importRound2nd').click();
+    await new Promise(r => setTimeout(r, 20));
+    out.roundToggleWorks = state.importDefaultRound === '2nd';
+
+    document.getElementById('importText').value = 'Import Hub Test Candidate (UK) – Interview – Hub Test Co – 3:00 PM IST – Duration: 30 Mins';
+    document.getElementById('runImport').click();
+    // runImport() awaits a createBackup() call that tries a real network
+    // fetch first (fails since there's no backend in this test) before it
+    // gets to closing the panel — a short fixed sleep is a race, so poll
+    // instead of guessing a delay.
+    for(let i=0; i<40 && state.showImport; i++){ await new Promise(r => setTimeout(r, 50)); }
+    const row = state.rows.find(r => r.candidate && r.candidate.includes('Import Hub Test Candidate'));
+    out.importWorksThroughHub = !!row && row.round === '2nd';
+    out.panelClosesAfterImport = !state.showImport && !state.showRescheduleImport;
+    if(row) state.rows = state.rows.filter(r => r.id !== row.id);
+
+    document.getElementById('toggleImportHub').click();
+    await new Promise(r => setTimeout(r, 20));
+    document.getElementById('importHubTabReschedule').click();
+    await new Promise(r => setTimeout(r, 20));
+    document.getElementById('rescheduleImportText').value = 'Import Hub Test Candidate – 3:00 PM IST – rescheduled from candidate side';
+    document.getElementById('parseRescheduleBtn').click();
+    await new Promise(r => setTimeout(r, 200));
+    out.rescheduleWorksThroughHub = !!state.rescheduleReview;
+
+    closeAllPanels();
+    render();
+    return out;
+  });
+  check('Import hub', 'The three separate import buttons (Import, Import 2nd Round, Import Reschedule) are gone',
+    importHubTests.oldButtonsGone, JSON.stringify(importHubTests));
+  check('Import hub', 'A single "Import" button exists in the header',
+    importHubTests.hubButtonExists, JSON.stringify(importHubTests));
+  check('Import hub', 'Clicking it opens on the New Calls tab by default',
+    importHubTests.opensOnNewCallsTab, JSON.stringify(importHubTests));
+  check('Import hub', 'The Reschedule/Cancel tab switches content without closing the panel',
+    importHubTests.switchesToRescheduleTab, JSON.stringify(importHubTests));
+  check('Import hub', 'Switching back to New Calls tab works',
+    importHubTests.switchesBackToNewTab, JSON.stringify(importHubTests));
+  check('Import hub', 'The 1st/2nd Round toggle inside the New Calls tab works',
+    importHubTests.roundToggleWorks, JSON.stringify(importHubTests));
+  check('Import hub', 'A call imported via the hub (with 2nd Round selected) is added with the right round',
+    importHubTests.importWorksThroughHub, JSON.stringify(importHubTests));
+  check('Import hub', 'The panel closes automatically after a successful import',
+    importHubTests.panelClosesAfterImport, JSON.stringify(importHubTests));
+  check('Import hub', 'The reschedule/cancel flow still works when reached through the hub\'s tab',
+    importHubTests.rescheduleWorksThroughHub, JSON.stringify(importHubTests));
+
   // Close the panel back out — this app uses an exclusive-panel model
   // (any open panel hides the main call table), so leaving it open here
   // would break every test after this one.
@@ -880,8 +955,9 @@ async function main() {
   const notifTabs = await sPage.locator('.notif-tab-btn').count();
   for (let i = 0; i < notifTabs; i++) { await sPage.locator('.notif-tab-btn').nth(i).click().catch(() => {}); await sPage.waitForTimeout(80); }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
-  for (const id of ['toggleImport', 'toggleRescheduleImport']) {
-    await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleImportHub', 150);
+  for (const id of ['importHubTabNew', 'importHubTabReschedule']) {
     await click(id, 150);
   }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
