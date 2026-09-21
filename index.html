@@ -942,8 +942,17 @@ async function apiCall(resource, opts){
   // indefinitely, since render() never gets reached. 20s is generous enough
   // for a genuine cold start while still guaranteeing the app eventually
   // gives up and falls back instead of hanging forever.
+  //
+  // Portal sync is the one caller that needs longer: it proxies out to a
+  // separate Apps Script bridge (its own, independent cold start on top of
+  // this backend's) and, on a Full Sync, deliberately pulls the entire call
+  // history — a real request that can legitimately take close to 20s on
+  // its own even once everything's warm. A flat 20s timeout was killing
+  // that right as it was about to succeed. Callers that know they're slow
+  // pass a longer opts.timeoutMs; everything else keeps the original 20s.
+  const timeoutMs = opts.timeoutMs || 20000;
   const controller = new AbortController();
-  const timeoutId = setTimeout(()=>controller.abort(), 20000);
+  const timeoutId = setTimeout(()=>controller.abort(), timeoutMs);
   let res;
   try{
     res = await fetch(url, {
@@ -960,7 +969,8 @@ async function apiCall(resource, opts){
     });
   }catch(e){
     if(e && e.name === 'AbortError'){
-      throw new Error(`${resource}: the server took too long to respond (over 20s) — it may be waking up from being idle. Try again in a moment.`);
+      const secs = Math.round(timeoutMs/1000);
+      throw new Error(`${resource}: the server took too long to respond (over ${secs}s) — it may be waking up from being idle. Try again in a moment.`);
     }
     throw e;
   }finally{
@@ -978,7 +988,8 @@ async function apiCall(resource, opts){
 // the browser.
 //
 // mode 'today'  -> fast: only this date's calls (few seconds), auto-polled
-// mode 'full'   -> slow: the entire call history (~20s), manual only
+// mode 'full'   -> slow: the entire call history (~20-40s depending on
+//                  whether the Apps Script bridge is cold), manual only
 async function fetchPortalSync(mode){
   if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
   if((mode || state.portalSyncMode) === 'today' && !isViewingToday()){
@@ -991,9 +1002,14 @@ async function fetchPortalSync(mode){
   render();
   try{
     const dateQs = state.portalSyncMode === 'today' ? ('&date=' + encodeURIComponent(state.date)) : '';
+    // Longer timeout than apiCall's usual 20s default — this proxies out to
+    // a separate Apps Script bridge with its own cold start, and a Full
+    // Sync deliberately pulls the entire call history, which can genuinely
+    // take close to 20s on its own even once everything's warm.
+    const portalTimeoutMs = state.portalSyncMode === 'full' ? 45000 : 30000;
     const [assignmentsResult, incentivesResult] = await Promise.all([
-      apiCall('portal_sync', {qs:'type=assignments' + dateQs}),
-      apiCall('portal_sync', {qs:'type=incentives'})
+      apiCall('portal_sync', {qs:'type=assignments' + dateQs, timeoutMs: portalTimeoutMs}),
+      apiCall('portal_sync', {qs:'type=incentives', timeoutMs: portalTimeoutMs})
     ]);
     state.portalSyncData = {
       assignments: assignmentsResult.data || [],
@@ -4963,7 +4979,7 @@ function renderPortalSyncPanel(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn ghost" id="closePortalSync">Close</button>
         <button class="btn ${state.portalSyncMode==='today'?'primary':''}" id="syncPortalToday" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading && state.portalSyncMode==='today' ? '<span class="spinner"></span>Syncing…' : `📅 Sync Today (${state.date})`}</button>
-        <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? '<span class="spinner"></span>Syncing… (~20s)' : '🗂 Full Sync (all data)'}</button>
+        <button class="btn ${state.portalSyncMode==='full'?'primary':''}" id="syncPortalFull" ${state.portalSyncLoading?'disabled':''}>${state.portalSyncLoading && state.portalSyncMode==='full' ? '<span class="spinner"></span>Syncing… (~20-40s)' : '🗂 Full Sync (all data)'}</button>
       </div>
     </div>
     ${body}
