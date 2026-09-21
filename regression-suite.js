@@ -315,6 +315,50 @@ async function main() {
     JSON.stringify(gluedGotCase));
 
   // =====================================================================
+  console.log('\n=== 2a-2. WhatsApp multi-select-copy prefixes stripped on all three importers ===');
+  // =====================================================================
+  // Real ask: "if there are 2+ messages in the clipboard, how do I copy
+  // them all at once?" — answer is WhatsApp's own multi-select (long-press
+  // one message, tap the rest, then the copy icon), but that mode prefixes
+  // every line with a timestamp + sender name that single-message copy
+  // never includes. Two known shapes (iOS bracket, Android dash) must be
+  // stripped before any of the three importers ever sees the line.
+  const multiCopyCases = await page.evaluate(() => {
+    const iosClosure = parseClosureText(
+      '[2:32 PM, 9/21/26] Sashank Bava: Steffy Metilda Jerom Mohan got offer letter from SMBC\n[2:33 PM, 9/21/26] Sashank Bava: salary : *€60000* /Per Year'
+    );
+    const androidClosure = parseClosureText(
+      '21/09/2026, 14:32 - Sashank Bava: Steffy Metilda Jerom Mohan got offer letter from SMBC\n21/09/2026, 14:33 - Sashank Bava: salary : *€60000* /Per Year'
+    );
+    const androidReschedule = parseRescheduleText(
+      '21/09/2026, 09:10 - Sashank Bava: Ruchitha Mandalapu - 11pm ist interview was reschedule to tomorrow from interviewer side sir'
+    );
+    const iosCallImport = parseImportText(
+      '[9:00 AM, 9/21/26] Sashank Bava: Royal Prabhu (UK) – Interview – Lloyds Group – 1:30 PM IST – Duration: 30 Mins (1st Round)',
+      '2026-09-21', null
+    );
+    // A normal, single-message paste (no WhatsApp prefix at all) must be
+    // completely unaffected — this is the far more common case.
+    const untouchedNormal = parseRescheduleText('Ruchitha Mandalapu - 11pm ist interview was reschedule to tomorrow from interviewer side sir');
+    return { iosClosure, androidClosure, androidReschedule, iosCallImport, untouchedNormal };
+  });
+  check('Multi-copy', 'iOS-style "[time, date] Sender:" prefix stripped from a closure paste',
+    multiCopyCases.iosClosure.length === 1 && multiCopyCases.iosClosure[0].company === 'SMBC' && multiCopyCases.iosClosure[0].salary === '€60000 /Per Year',
+    JSON.stringify(multiCopyCases.iosClosure));
+  check('Multi-copy', 'Android-style "date, time - Sender:" prefix stripped from a closure paste',
+    multiCopyCases.androidClosure.length === 1 && multiCopyCases.androidClosure[0].company === 'SMBC' && multiCopyCases.androidClosure[0].salary === '€60000 /Per Year',
+    JSON.stringify(multiCopyCases.androidClosure));
+  check('Multi-copy', 'Android-style prefix stripped from a reschedule paste',
+    multiCopyCases.androidReschedule.length === 1 && multiCopyCases.androidReschedule[0].candidate === 'Ruchitha Mandalapu',
+    JSON.stringify(multiCopyCases.androidReschedule));
+  check('Multi-copy', 'iOS-style prefix stripped from a plain call-import paste',
+    multiCopyCases.iosCallImport.length === 1 && multiCopyCases.iosCallImport[0].candidate === 'Royal Prabhu' && multiCopyCases.iosCallImport[0].company === 'Lloyds Group',
+    JSON.stringify(multiCopyCases.iosCallImport));
+  check('Multi-copy', 'A normal single-message paste (no WhatsApp export prefix) is completely unaffected',
+    multiCopyCases.untouchedNormal.length === 1 && multiCopyCases.untouchedNormal[0].candidate === 'Ruchitha Mandalapu',
+    JSON.stringify(multiCopyCases.untouchedNormal));
+
+  // =====================================================================
   console.log('\n=== 2b. Closure cross-reference against existing call records ===');
   // =====================================================================
   const crossRefCases = await page.evaluate(() => {
