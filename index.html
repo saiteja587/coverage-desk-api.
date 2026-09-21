@@ -3699,7 +3699,6 @@ function render(){
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="More actions">⋯ More</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
-            <button class="more-menu-item" id="loadScrumPrep">📋 Load from Scrum Prep</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
@@ -3725,7 +3724,6 @@ function render(){
     </div>` : ''}
     ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);margin:-10px 0 16px">Portal sync error: ${escapeHtml(state.portalSyncError)}</div>` : ''}
     ${state.portalSyncedAt ? `<div class="hint" style="margin:-10px 0 16px">Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
-    <div id="scrumPrepToast" style="display:none;background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-size:12.5px;padding:10px 14px;border-radius:8px;margin:-14px 0 16px;"></div>
     ${activePanel ? `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
       <button class="btn ghost" id="backToCalls">← Back to calls</button>
@@ -5865,20 +5863,6 @@ function attachHandlers(conflictIds){
     state.exportedIds = state.rows.map(r=>r.id);
     state.dirty = true;
     render();
-  };
-  const loadScrumPrepBtn = document.getElementById('loadScrumPrep');
-  if(loadScrumPrepBtn) loadScrumPrepBtn.onclick = async ()=>{
-    const dateObj = new Date(state.date+'T00:00:00');
-    const dateLabel = dateObj.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
-    const message = `Load Scrum Prep for ${dateLabel} into Coverage Desk`;
-    const toast = document.getElementById('scrumPrepToast');
-    try{
-      await navigator.clipboard.writeText(message);
-      toast.textContent = `Copied — paste this to Claude in chat: "${message}"`;
-    }catch(e){
-      toast.textContent = `Send this to Claude in chat: "${message}" (couldn't copy automatically — type it manually)`;
-    }
-    toast.style.display = 'block';
   };
   document.querySelectorAll('.filter-chip').forEach(btn=>{
     btn.onclick = ()=>{ state.filter = btn.dataset.f; render(); };
