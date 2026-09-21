@@ -3553,8 +3553,7 @@ function getActivePanelName(){
   if(state.showIncentives) return 'incentives';
   if(state.showBackups) return 'backups';
   if(state.showRoster) return 'roster';
-  if(state.showImport) return 'import';
-  if(state.showRescheduleImport) return 'rescheduleImport';
+  if(state.showImport || state.showRescheduleImport) return 'importHub';
   if(state.rescheduleReview) return 'rescheduleReview';
   if(state.closureReview) return 'closureReview';
   if(state.showClosures) return 'closures';
@@ -3581,8 +3580,7 @@ function renderActivePanel(name){
   if(name === 'incentives') return renderIncentivesPanel();
   if(name === 'backups') return renderBackupsPanel();
   if(name === 'roster') return renderRosterPanel();
-  if(name === 'import') return renderImportPanel();
-  if(name === 'rescheduleImport') return renderRescheduleImportPanel();
+  if(name === 'importHub') return renderImportHubPanel();
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
   if(name === 'closureReview') return renderClosureConfirmPanel();
   if(name === 'closures') return renderClosuresPanel();
@@ -3595,7 +3593,7 @@ function panelTitle(name){
   const titles = {
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
-    roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
+    roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
   };
@@ -3687,6 +3685,7 @@ function render(){
         <button class="arrow-btn" id="nextDay">›</button>
         <button class="btn ${(state.notifications && state.notifications.length) || state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="n">${state.notifications.length}</span>` : '')}</button>
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
+        ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="More actions">⋯ More</button>
@@ -3885,9 +3884,6 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
 
     <div class="toolbar">
       ${isReadOnly ? `<span class="read-only-badge">👁 Read-only — ask an admin for edit access</span>` : `
-      <button class="btn primary" id="toggleImport">＋ Import from WhatsApp text</button>
-      ${state.view==='2nd' ? `<button class="btn primary" id="toggleImport2nd" title="Same import textarea, but any call without an explicit round defaults to 2nd Round instead of 1st">＋ Import 2nd Round Calls</button>` : ''}
-      <button class="btn" id="toggleRescheduleImport">↻ Import Reschedule/Cancel</button>
       <button class="btn" id="addRow">＋ Add call</button>
       ${renderFinalizeControls()}`}
       ${(CURRENT_ROLE==='admin' && sum.conflicts) ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
@@ -4554,7 +4550,7 @@ function renderRescheduleImportPanel(){
   const manualOptionsHtml = `<option value="">— Select a call —</option>` + dayRows.map(r=>
     `<option value="${r.id}">${escapeHtml(r.candidate||'(no name)')} — ${escapeHtml(r.time||'')}${r.company?' — '+escapeHtml(r.company):''}</option>`
   ).join('');
-  return `<div class="import-panel">
+  return `<div class="import-panel" style="border:none;padding:0;margin-bottom:0;box-shadow:none">
     <div class="hint" style="margin-bottom:10px">Paste WhatsApp-style reschedule/cancel messages for calls that are <b>already saved</b> in this day's list — this only updates the status/tag on matching calls, it does not create new calls. Existing calls in the DB will be scanned for a match by candidate name and time.</div>
     ${pasteButtonHtml('rescheduleImportText')}
     <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir"></textarea>
@@ -4968,12 +4964,16 @@ function renderPortalSyncPanel(){
 }
 
 function renderImportPanel(){
-  return `<div class="import-panel">
-    <div class="add-row" style="margin-top:0;margin-bottom:10px">
+  return `<div class="import-panel" style="border:none;padding:0;margin-bottom:0;box-shadow:none">
+    <div class="add-row" style="margin-top:0;margin-bottom:10px;flex-wrap:wrap;gap:10px">
       <label style="font-size:12.5px;color:var(--text-muted);white-space:nowrap">Import into date:</label>
       <input type="date" id="importDate" value="${state.date}">
+      <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-left:auto">
+        <button type="button" class="btn ghost" id="importRound1st" style="border:none;border-radius:0;padding:6px 12px;font-size:12px;${state.importDefaultRound!=='2nd'?'background:var(--teal-dim);color:var(--teal)':''}">1st Round</button>
+        <button type="button" class="btn ghost" id="importRound2nd" style="border:none;border-radius:0;padding:6px 12px;font-size:12px;${state.importDefaultRound==='2nd'?'background:var(--teal-dim);color:var(--teal)':''}">2nd Round</button>
+      </div>
     </div>
-    ${state.importDefaultRound==='2nd' ? `<div class="hint" style="color:var(--teal);margin-bottom:8px">↻ Calls without an explicit round will default to <b>2nd Round</b> (opened from the 2nd Round tab).</div>` : ''}
+    ${state.importDefaultRound==='2nd' ? `<div class="hint" style="color:var(--teal);margin-bottom:8px">↻ Calls without an explicit round will default to <b>2nd Round</b>.</div>` : ''}
     ${pasteButtonHtml('importText')}
     <textarea id="importText" placeholder="Paste either format:&#10;1. Royal Prabhu (UK) – Interview – Lloyds Group – 1:30 PM IST – Duration: 30 Mins (1st Round)&#10;&#10;or a team-grouped list:&#10;*HYD Team*&#10;Sweta Sridhar - 2&#10;Meghana B - 3.30 (*STEPHEN*)"></textarea>
     <div class="row">
@@ -4983,6 +4983,22 @@ function renderImportPanel(){
         <button class="btn primary" id="runImport">Parse &amp; add calls</button>
       </div>
     </div>
+  </div>`;
+}
+
+// Single entry point for both "new calls" and "reschedule/cancel" imports —
+// one header button ("📥 Import") opens this, with a small tab switcher on
+// top deciding which of the two underlying panels (showImport /
+// showRescheduleImport — kept as-is so every existing success/cancel
+// handler for each still works untouched) is shown below it.
+function renderImportHubPanel(){
+  const tab = state.showRescheduleImport ? 'reschedule' : 'new';
+  return `<div class="import-panel">
+    <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px">
+      <button type="button" class="btn ${tab==='new'?'primary':'ghost'}" id="importHubTabNew" style="flex:1">＋ New Calls</button>
+      <button type="button" class="btn ${tab==='reschedule'?'primary':'ghost'}" id="importHubTabReschedule" style="flex:1">↻ Reschedule / Cancel</button>
+    </div>
+    ${tab==='new' ? renderImportPanel() : renderRescheduleImportPanel()}
   </div>`;
 }
 
@@ -5719,12 +5735,20 @@ function attachHandlers(conflictIds){
 
   const backToCallsBtn = document.getElementById('backToCalls');
   if(backToCallsBtn) backToCallsBtn.onclick = ()=>{ closeAllPanels(); render(); };
-  const toggleImportBtn = document.getElementById('toggleImport');
-  if(toggleImportBtn) toggleImportBtn.onclick = ()=>{ state.importDefaultRound = '1st'; openOnlyPanel('showImport'); render(); };
-  const toggleImport2ndBtn = document.getElementById('toggleImport2nd');
-  if(toggleImport2ndBtn) toggleImport2ndBtn.onclick = ()=>{ state.importDefaultRound = '2nd'; openOnlyPanel('showImport'); render(); };
-  const toggleRescheduleImportBtn = document.getElementById('toggleRescheduleImport');
-  if(toggleRescheduleImportBtn) toggleRescheduleImportBtn.onclick = ()=>{ openOnlyPanel('showRescheduleImport'); render(); };
+  const toggleImportHubBtn = document.getElementById('toggleImportHub');
+  if(toggleImportHubBtn) toggleImportHubBtn.onclick = ()=>{
+    state.importDefaultRound = state.view==='2nd' ? '2nd' : '1st';
+    openOnlyPanel('showImport');
+    render();
+  };
+  const importHubTabNewBtn = document.getElementById('importHubTabNew');
+  if(importHubTabNewBtn) importHubTabNewBtn.onclick = ()=>{ state.showImport = true; state.showRescheduleImport = false; render(); };
+  const importHubTabRescheduleBtn = document.getElementById('importHubTabReschedule');
+  if(importHubTabRescheduleBtn) importHubTabRescheduleBtn.onclick = ()=>{ state.showImport = false; state.showRescheduleImport = true; render(); };
+  const importRound1stBtn = document.getElementById('importRound1st');
+  if(importRound1stBtn) importRound1stBtn.onclick = ()=>{ state.importDefaultRound = '1st'; render(); };
+  const importRound2ndBtn = document.getElementById('importRound2nd');
+  if(importRound2ndBtn) importRound2ndBtn.onclick = ()=>{ state.importDefaultRound = '2nd'; render(); };
   const toggleRosterBtn = document.getElementById('toggleRoster');
   if(toggleRosterBtn) toggleRosterBtn.onclick = ()=>{ openOnlyPanel('showRoster'); render(); };
   const togglePortalSyncBtn = document.getElementById('togglePortalSync');
