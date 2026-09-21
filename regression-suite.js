@@ -299,6 +299,19 @@ async function main() {
   check('Closures', '"Sir," + *bold* + glued salary all handled together in one message',
     rb[5][0].candidate === 'Lahari beerla' && rb[5][0].company === 'Novolox' && rb[5][0].salary === '$85,000/ Year', JSON.stringify(rb[5]));
 
+  // Real report: the candidate's last name ran straight into "got" with
+  // no space at all ("...Jerom Mohangot offer letter from SMBC") — fast
+  // WhatsApp typing, no space bar hit. The parser used to require a
+  // literal space before "got"/"closed"/"selected"/"placed", so this
+  // silently matched nothing.
+  const gluedGotCase = await page.evaluate(() => parseClosureText(
+    'Steffy Metilda Jerom Mohangot offer letter from SMBC\n\nsalary : *€60000* /Per Year\n@Sashank Bava @Sundeep Anna @Phani Anna USA @Pradeep Anna'
+  ));
+  check('Closures', '"Mohangot" (candidate name run into "got" with no space) still parses',
+    gluedGotCase.length === 1 && gluedGotCase[0].candidate === 'Steffy Metilda Jerom Mohan' &&
+    gluedGotCase[0].company === 'SMBC' && gluedGotCase[0].salary === '€60000 /Per Year',
+    JSON.stringify(gluedGotCase));
+
   // =====================================================================
   console.log('\n=== 2b. Closure cross-reference against existing call records ===');
   // =====================================================================
