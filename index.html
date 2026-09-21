@@ -2183,8 +2183,25 @@ function parseDetailedLine(line, defaultRound){
 
   return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC, onsite, candidateFirstInterview };
 }
+// Selecting several WhatsApp messages at once (long-press one, tap the
+// rest, then the copy icon) pastes ALL of them in one go \u2014 but WhatsApp
+// prepends each line with a timestamp and sender name when copying more
+// than one message this way, which a single-message copy never includes.
+// Two known shapes, iOS and Android:
+//   [2:32 PM, 9/21/26] Sashank Bava: Ruchitha Mandalapu - 11pm ist...
+//   9/21/2026, 14:32 - Sashank Bava: Ruchitha Mandalapu - 11pm ist...
+// Stripped before a line ever reaches a parser, so multi-select copy
+// works the same as pasting one message at a time. Deliberately strict
+// (date + time + a colon-terminated name, all anchored at the very
+// start) so it can't accidentally eat real message content.
+function stripWhatsAppExportPrefix(line){
+  return line
+    .replace(/^\[\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AaPp][Mm])?,\s*\d{1,2}\/\d{1,2}\/\d{2,4}\]\s*[^:\n]{1,60}:\s*/, '')
+    .replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?\s*-\s*[^:\n]{1,60}:\s*/, '')
+    .trim();
+}
 function parseImportText(text, baseDate, defaultRound){
-  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')).filter(Boolean);
+  const lines = text.split('\n').map(l=>stripWhatsAppExportPrefix(l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''))).filter(Boolean);
   const out = [];
   let currentDefault = null;
   let currentTargetDate = null; // null = whatever date the import panel targets
@@ -2426,7 +2443,7 @@ function looksLikeRescheduleLine(line){
 }
 function parseRescheduleText(text){
   const results = [];
-  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''));
+  const lines = text.split('\n').map(l=>stripWhatsAppExportPrefix(l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')));
   // Bare times (no AM/PM) default to PM — matches the app's existing
   // convention elsewhere for bare times, and these real messages very
   // often drop the AM/PM since it's understood to be an evening shift.
@@ -2698,7 +2715,7 @@ function extractSalaryFromText(text){
 // at all ("...from Acme Salary: $X" all run together).
 function parseClosureText(text){
   if(!text || !text.trim()) return [];
-  const lines = text.split('\n').map(l=>l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''));
+  const lines = text.split('\n').map(l=>stripWhatsAppExportPrefix(l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')));
   const blocks = [];
   let current = [];
   for(const line of lines){
