@@ -54,6 +54,8 @@ async function main() {
   });
   page.on('dialog', d => d.accept());
 
+  try { await page.context().grantPermissions(['clipboard-read', 'clipboard-write']); } catch (e) { /* not fatal — the paste-from-clipboard check below will just report what it finds */ }
+
   await page.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 
@@ -390,6 +392,48 @@ async function main() {
   check('Closures UI', 'Records are grouped month by month, most recent month first',
     monthGroupingCheck.hasSeptember && monthGroupingCheck.hasAugust && monthGroupingCheck.septemberBeforeAugust,
     JSON.stringify(monthGroupingCheck));
+
+  // Real request: pasting WhatsApp messages in by hand, every time, was
+  // the actual friction — a one-tap "Paste from clipboard" button next
+  // to every import textarea (calls, reschedule/cancel, closures) skips
+  // the long-press-to-paste step.
+  await page.evaluate(async () => { try { await navigator.clipboard.writeText('Clipboard Test Candidate got offer letter from Clipboard Test Co\n\nsalary: $77,000 per year'); } catch(e) {} });
+  const pasteBtnSelector = '.paste-clipboard-btn[data-target="closureImportText"]';
+  const pasteBtnPresent = await page.evaluate((sel) => !!document.querySelector(sel), pasteBtnSelector);
+  let pastedValue = '';
+  if (pasteBtnPresent) {
+    await page.click(pasteBtnSelector);
+    await page.waitForTimeout(200);
+    pastedValue = await page.evaluate(() => document.getElementById('closureImportText').value);
+  }
+  check('Closures UI', 'A "Paste from clipboard" button fills the closure import textarea',
+    pasteBtnPresent && pastedValue.includes('Clipboard Test Candidate'), `present=${pasteBtnPresent}, value=${JSON.stringify(pastedValue)}`);
+
+  const pasteOtherPanels = await page.evaluate(async () => {
+    async function tryPanel(flag, targetId, clipText) {
+      closeAllPanels();
+      state[flag] = true;
+      render();
+      try { await navigator.clipboard.writeText(clipText); } catch(e) {}
+      const btn = document.querySelector(`.paste-clipboard-btn[data-target="${targetId}"]`);
+      const present = !!btn;
+      if (btn) btn.click();
+      await new Promise(r => setTimeout(r, 50));
+      const el = document.getElementById(targetId);
+      return { present, value: el ? el.value : null };
+    }
+    const callImport = await tryPanel('showImport', 'importText', 'Clipboard call import test');
+    const reschedImport = await tryPanel('showRescheduleImport', 'rescheduleImportText', 'Clipboard reschedule import test');
+    closeAllPanels();
+    render();
+    return { callImport, reschedImport };
+  });
+  check('Closures UI', 'The paste button also works on the plain call-import panel',
+    pasteOtherPanels.callImport.present && pasteOtherPanels.callImport.value === 'Clipboard call import test',
+    JSON.stringify(pasteOtherPanels.callImport));
+  check('Closures UI', 'The paste button also works on the reschedule/cancel import panel',
+    pasteOtherPanels.reschedImport.present && pasteOtherPanels.reschedImport.value === 'Clipboard reschedule import test',
+    JSON.stringify(pasteOtherPanels.reschedImport));
 
   // Close the panel back out — this app uses an exclusive-panel model
   // (any open panel hides the main call table), so leaving it open here
