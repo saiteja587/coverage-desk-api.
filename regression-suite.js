@@ -674,10 +674,12 @@ async function main() {
     out.oldQuickButtonGone = !document.getElementById('syncPortalBtn');
     out.oldFunctionRemoved = typeof syncPortalData === 'undefined';
 
-    state.showToolsMenu = true;
+    // Team Sync lives under the "📊 Reports" menu (formerly "More"), not
+    // "🔧 Admin" (formerly "Tools") — moved there in the More/Tools regroup.
+    state.showMoreMenu = true;
     render();
     out.teamSyncButtonExists = !!document.getElementById('togglePortalSync');
-    state.showToolsMenu = false;
+    state.showMoreMenu = false;
     render();
 
     // Stub the backend so this runs without a real server, and confirm one
@@ -717,7 +719,7 @@ async function main() {
   });
   check('Portal sync', 'The separate "Sync Portal" quick-action button (and its function) is gone',
     portalSyncTests.oldQuickButtonGone && portalSyncTests.oldFunctionRemoved, JSON.stringify(portalSyncTests));
-  check('Portal sync', 'The single "📡 Team Sync" entry point still exists (in the Tools menu)',
+  check('Portal sync', 'The single "📡 Team Sync" entry point still exists (now under the Reports menu)',
     portalSyncTests.teamSyncButtonExists, JSON.stringify(portalSyncTests));
   check('Portal sync', 'One fetchPortalSync() call populates the Team Sync panel\'s own data',
     portalSyncTests.panelDataPopulated, JSON.stringify(portalSyncTests));
@@ -725,6 +727,87 @@ async function main() {
     portalSyncTests.rowBadgeDataPopulated, JSON.stringify(portalSyncTests));
   check('Portal sync', 'findPortalMatch() actually finds a match off that one shared sync',
     portalSyncTests.rowBadgeMatchWorksFromOneSync, JSON.stringify(portalSyncTests));
+
+  // =====================================================================
+  console.log('\n=== 2f. "More"/"Tools" regrouped into "📊 Reports" / "🔧 Admin" ===');
+  // =====================================================================
+  // Real request: the old More/Tools split had no clear logic (a lookup
+  // like Client History Search sat in More while another lookup, Team
+  // Sync, sat in Tools; Team roster was in Tools while Users was in
+  // More). Regrouped by purpose: Reports & Lookup vs Admin & Team, with
+  // the two destructive actions (Remove Duplicates, Clear all calls)
+  // visually separated at the bottom of Admin behind a divider so they're
+  // not one tap away from routine lookups.
+  const menuRegroupTests = await page.evaluate(() => {
+    const out = {};
+    closeAllPanels();
+
+    // Log out only renders once logged in (ADMIN_PASSWORD or
+    // CURRENT_USERNAME set) — simulate that so this check actually
+    // exercises the "still reachable" path instead of trivially passing
+    // on an absent button.
+    const savedUsername = CURRENT_USERNAME;
+    CURRENT_USERNAME = 'RegressionTestUser';
+
+    state.showMoreMenu = true;
+    render();
+    const reportsItems = Array.from(document.querySelectorAll('.more-menu-dropdown .more-menu-item')).map(b => b.id);
+    out.reportsButtonLabel = document.getElementById('toggleMoreMenu').textContent.trim();
+    out.reportsHasSummary = reportsItems.includes('toggleSummary');
+    out.reportsHasAllDates = reportsItems.includes('toggleAllDates');
+    out.reportsHasStudentsMaster = reportsItems.includes('toggleStudentsMaster');
+    out.reportsHasClientSearch = reportsItems.includes('toggleClientSearch');
+    out.reportsHasTeamSync = reportsItems.includes('togglePortalSync');
+    out.reportsHasLogout = reportsItems.includes('headerLogoutBtn');
+    // Admin-only items must NOT have leaked into Reports.
+    out.reportsDoesNotHaveUsers = !reportsItems.includes('toggleUsers');
+    out.reportsDoesNotHaveRoster = !reportsItems.includes('toggleRoster');
+    state.showMoreMenu = false;
+    CURRENT_USERNAME = savedUsername;
+    render();
+
+    state.showToolsMenu = true;
+    render();
+    const adminItems = Array.from(document.querySelectorAll('.more-menu-dropdown .more-menu-item')).map(b => b.id);
+    out.adminButtonLabel = document.getElementById('toggleToolsMenu').textContent.trim();
+    out.adminHasRoster = adminItems.includes('toggleRoster');
+    out.adminHasUsers = adminItems.includes('toggleUsers');
+    out.adminHasIncentives = adminItems.includes('toggleIncentives');
+    out.adminHasBackups = adminItems.includes('toggleBackups');
+    out.adminHasRemoveDup = adminItems.includes('removeDuplicatesBtn');
+    out.adminHasClearAll = adminItems.includes('clearAll');
+    // Team Sync must NOT have leaked into Admin (moved to Reports).
+    out.adminDoesNotHaveTeamSync = !adminItems.includes('togglePortalSync');
+    // The danger-zone divider actually separates the destructive actions
+    // from the routine ones, not just present somewhere in the menu.
+    const dividerIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.classList.contains('more-menu-divider'));
+    const removeDupIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.id === 'removeDuplicatesBtn');
+    const rosterIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.id === 'toggleRoster');
+    out.dividerSeparatesDangerZone = dividerIdx !== -1 && rosterIdx < dividerIdx && removeDupIdx > dividerIdx;
+    state.showToolsMenu = false;
+
+    closeAllPanels();
+    render();
+    return out;
+  });
+  check('Menu regroup', 'Reports menu (formerly "More") is relabeled and has Summary/All Dates/Students Master/Client Search',
+    menuRegroupTests.reportsButtonLabel.includes('Reports') && menuRegroupTests.reportsHasSummary && menuRegroupTests.reportsHasAllDates && menuRegroupTests.reportsHasStudentsMaster && menuRegroupTests.reportsHasClientSearch,
+    JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Team Sync moved into the Reports menu',
+    menuRegroupTests.reportsHasTeamSync, JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Log out is still reachable, from the Reports menu',
+    menuRegroupTests.reportsHasLogout, JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Admin-only items (Users, Team roster) did not leak into the Reports menu',
+    menuRegroupTests.reportsDoesNotHaveUsers && menuRegroupTests.reportsDoesNotHaveRoster, JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Admin menu (formerly "Tools") is relabeled and has Team/Users/Incentives/Backups',
+    menuRegroupTests.adminButtonLabel.includes('Admin') && menuRegroupTests.adminHasRoster && menuRegroupTests.adminHasUsers && menuRegroupTests.adminHasIncentives && menuRegroupTests.adminHasBackups,
+    JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Remove Duplicates and Clear all calls are still in the Admin menu',
+    menuRegroupTests.adminHasRemoveDup && menuRegroupTests.adminHasClearAll, JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'Team Sync did NOT leak into the Admin menu (moved out to Reports)',
+    menuRegroupTests.adminDoesNotHaveTeamSync, JSON.stringify(menuRegroupTests));
+  check('Menu regroup', 'A divider visually separates the destructive actions from the routine ones in Admin',
+    menuRegroupTests.dividerSeparatesDangerZone, JSON.stringify(menuRegroupTests));
 
   // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
