@@ -852,6 +852,11 @@ let state = {
   showSwipeAssignPicker: false,
   pendingSwipeAssignRowId: null,
   rejectedStudentMatches: new Set(),
+  showClipboardPicker: false,
+  clipboardPickerMessages: [],
+  clipboardPickerSelected: null,
+  clipboardPickerTargetId: null,
+  clipboardPickerExistingValue: '',
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -2194,11 +2199,45 @@ function parseDetailedLine(line, defaultRound){
 // works the same as pasting one message at a time. Deliberately strict
 // (date + time + a colon-terminated name, all anchored at the very
 // start) so it can't accidentally eat real message content.
+const WHATSAPP_EXPORT_PREFIX_RE = [
+  /^\[\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AaPp][Mm])?,\s*\d{1,2}\/\d{1,2}\/\d{2,4}\]\s*[^:\n]{1,60}:\s*/,
+  /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?\s*-\s*[^:\n]{1,60}:\s*/,
+];
+function isWhatsAppExportPrefixLine(line){
+  return WHATSAPP_EXPORT_PREFIX_RE.some(re=>re.test(line));
+}
 function stripWhatsAppExportPrefix(line){
-  return line
-    .replace(/^\[\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AaPp][Mm])?,\s*\d{1,2}\/\d{1,2}\/\d{2,4}\]\s*[^:\n]{1,60}:\s*/, '')
-    .replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?\s*-\s*[^:\n]{1,60}:\s*/, '')
-    .trim();
+  let out = line;
+  WHATSAPP_EXPORT_PREFIX_RE.forEach(re=>{ out = out.replace(re, ''); });
+  return out.trim();
+}
+// Splits a clipboard paste into the distinct WhatsApp messages it holds,
+// used by the "Paste from clipboard" picker so a person can choose which
+// ones to actually bring in when they multi-selected more than they
+// meant to. Only splits when WhatsApp's OWN multi-select-copy prefix
+// marks each message boundary — that's the one reliable signal we have.
+// Without it (a normal single-message copy, or a closure message that
+// legitimately spans a blank line for its own salary line), splitting on
+// blank lines would be a guess, and a wrong guess here means silently
+// offering to drop half of someone's message — so a single chunk comes
+// back untouched rather than risk that.
+function splitClipboardIntoMessages(text){
+  if(!text || !text.trim()) return [text ? text.trim() : ''].filter(Boolean);
+  const rawLines = text.replace(/\r\n/g, '\n').split('\n').map(l=>l.replace(/[​‌‍⁠﻿]/g, ''));
+  const hasAnyPrefix = rawLines.some(isWhatsAppExportPrefixLine);
+  if(!hasAnyPrefix) return [text.trim()];
+  const chunks = [];
+  let current = [];
+  rawLines.forEach(line=>{
+    if(isWhatsAppExportPrefixLine(line)){
+      if(current.length) chunks.push(current.join('\n').trim());
+      current = [stripWhatsAppExportPrefix(line)];
+    } else if(current.length){
+      current.push(line);
+    }
+  });
+  if(current.length) chunks.push(current.join('\n').trim());
+  return chunks.filter(Boolean);
 }
 function parseImportText(text, baseDate, defaultRound){
   const lines = text.split('\n').map(l=>stripWhatsAppExportPrefix(l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, ''))).filter(Boolean);
@@ -3727,6 +3766,28 @@ function render(){
           ${renderSwipeAssignGroups(pendingRow ? pendingRow.round : '1st')}
         </div>
         <button class="btn ghost" id="myNamePickerCancel" style="margin-top:10px;width:100%">Cancel</button>
+      </div>
+    </div>`;
+    })() : ''}
+    ${state.showClipboardPicker ? (()=>{
+      const msgs = state.clipboardPickerMessages || [];
+      const sel = state.clipboardPickerSelected || new Set();
+      return `<div class="my-name-picker-overlay" id="clipboardPickerOverlay">
+      <div class="my-name-picker-card" style="max-width:480px;width:92vw">
+        <div class="my-name-picker-title">Clipboard has ${msgs.length} messages</div>
+        <div class="my-name-picker-sub">Pick which one(s) to paste in — all are selected by default.</div>
+        <div class="my-name-picker-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin:10px 0">
+          ${msgs.map((m,i)=>`
+            <label style="display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);cursor:pointer">
+              <input type="checkbox" class="clipboard-picker-check" data-idx="${i}" ${sel.has(i)?'checked':''} style="margin-top:3px;flex:none">
+              <span style="font-size:12.5px;line-height:1.4;white-space:pre-wrap;word-break:break-word;color:var(--text-2)">${escapeHtml(m.length > 220 ? (m.slice(0,220) + '…') : m)}</span>
+            </label>
+          `).join('')}
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" id="clipboardPickerCancel" style="flex:1">Cancel</button>
+          <button class="btn primary" id="clipboardPickerInsert" style="flex:1">Insert selected (${sel.size})</button>
+        </div>
       </div>
     </div>`;
     })() : ''}
@@ -8146,12 +8207,92 @@ function findPortalMatch(row){
         alert('Clipboard is empty — copy the WhatsApp message first, then tap this again.');
         return;
       }
-      el.value = el.value.trim() ? (el.value.replace(/\s+$/,'') + '\n\n' + text) : text;
-      el.focus();
+      const messages = splitClipboardIntoMessages(text);
+      if(messages.length <= 1){
+        el.value = el.value.trim() ? (el.value.replace(/\s+$/,'') + '\n\n' + text.trim()) : text.trim();
+        el.focus();
+        hapticTap();
+        return;
+      }
+      // Clipboard holds several WhatsApp messages (export-prefix boundaries
+      // detected) — show a small picker instead of dumping everything in,
+      // so the person can choose which message(s) they actually want.
+      // render() below fully rebuilds the DOM and this textarea isn't
+      // value-bound to state, so whatever the person already typed has to
+      // be captured now and restored after render(), or it's silently lost.
+      state.clipboardPickerMessages = messages;
+      state.clipboardPickerSelected = new Set(messages.map((_,i)=>i));
+      state.clipboardPickerTargetId = targetId;
+      state.clipboardPickerExistingValue = el.value || '';
+      state.showClipboardPicker = true;
+      render();
+      const elAfterOpen = document.getElementById(targetId);
+      if(elAfterOpen) elAfterOpen.value = state.clipboardPickerExistingValue;
       hapticTap();
     }catch(err){
       alert('Couldn\'t read the clipboard (your browser may need permission) — paste manually (long-press → Paste) instead.');
     }
+  });
+
+  // The multi-message picker this can open — a separate delegated click
+  // listener on the same #app element for its checkboxes / cancel / insert.
+  appEl.addEventListener('click', (e)=>{
+    if(e.target.id === 'clipboardPickerCancel' || e.target.id === 'clipboardPickerOverlay'){
+      const targetId = state.clipboardPickerTargetId;
+      const existingValue = state.clipboardPickerExistingValue || '';
+      state.showClipboardPicker = false;
+      state.clipboardPickerMessages = [];
+      state.clipboardPickerSelected = null;
+      state.clipboardPickerTargetId = null;
+      state.clipboardPickerExistingValue = '';
+      // Same DOM-rebuild issue as opening the picker — restore whatever was
+      // there before, since render() below wipes the un-bound textarea.
+      render();
+      if(targetId){
+        const elAfter = document.getElementById(targetId);
+        if(elAfter) elAfter.value = existingValue;
+      }
+      return;
+    }
+    if(e.target.id === 'clipboardPickerInsert'){
+      const targetId = state.clipboardPickerTargetId;
+      const existingValue = state.clipboardPickerExistingValue || '';
+      const msgs = state.clipboardPickerMessages || [];
+      const sel = state.clipboardPickerSelected || new Set();
+      const chosen = msgs.filter((_,i)=>sel.has(i));
+      state.showClipboardPicker = false;
+      state.clipboardPickerMessages = [];
+      state.clipboardPickerSelected = null;
+      state.clipboardPickerTargetId = null;
+      state.clipboardPickerExistingValue = '';
+      // render() fully rebuilds the DOM, and these plain <textarea> import
+      // boxes aren't value-bound to state — so the insert has to happen on
+      // the freshly rebuilt element AFTER render(), same as why the direct
+      // single-message path above never calls render() at all.
+      render();
+      if(targetId && chosen.length){
+        const elAfter = document.getElementById(targetId);
+        if(elAfter){
+          const joined = chosen.join('\n\n');
+          elAfter.value = existingValue.trim() ? (existingValue.replace(/\s+$/,'') + '\n\n' + joined) : joined;
+          elAfter.focus();
+        }
+      } else if(targetId){
+        const elAfter = document.getElementById(targetId);
+        if(elAfter) elAfter.value = existingValue;
+      }
+      hapticTap();
+      return;
+    }
+  });
+  appEl.addEventListener('change', (e)=>{
+    const chk = e.target.closest('.clipboard-picker-check');
+    if(!chk) return;
+    const idx = Number(chk.dataset.idx);
+    if(!state.clipboardPickerSelected) state.clipboardPickerSelected = new Set();
+    if(chk.checked) state.clipboardPickerSelected.add(idx);
+    else state.clipboardPickerSelected.delete(idx);
+    render();
   });
 })();
 
