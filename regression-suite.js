@@ -334,6 +334,70 @@ async function main() {
     crossRefCases.noMatch.status === 'no_match', JSON.stringify(crossRefCases.noMatch));
 
   // =====================================================================
+  console.log('\n=== 2c. Closures + Import merged into one panel/button ===');
+  // =====================================================================
+  // Real request: two separate buttons (Closures, Import Closure) were
+  // hard to find, tucked into different menus. Now there's exactly one
+  // button, and clicking it opens a single panel with the import form on
+  // top and the recorded list — grouped month by month — underneath.
+  const oneButtonCheck = await page.evaluate(() => ({
+    closuresBtnCount: document.querySelectorAll('#toggleClosures').length,
+    noSeparateImportBtn: !document.getElementById('toggleClosureImport'),
+  }));
+  check('Closures UI', 'Exactly one Closures button exists (no separate Import Closure button)',
+    oneButtonCheck.closuresBtnCount === 1 && oneButtonCheck.noSeparateImportBtn, JSON.stringify(oneButtonCheck));
+
+  await page.click('#toggleClosures');
+  await page.waitForTimeout(200);
+  const combinedPanelCheck = await page.evaluate(() => ({
+    hasTextarea: !!document.getElementById('closureImportText'),
+    hasParseBtn: !!document.getElementById('parseClosureBtn'),
+    hasSummary: !!document.querySelector('.summary'),
+  }));
+  check('Closures UI', 'Clicking Closures opens ONE panel with both the import form and the records summary',
+    combinedPanelCheck.hasTextarea && combinedPanelCheck.hasParseBtn && combinedPanelCheck.hasSummary,
+    JSON.stringify(combinedPanelCheck));
+
+  await page.fill('#closureImportText', 'Regression Test Candidate got offer letter from Regression Test Corp\n\nsalary: $90,000 per year');
+  await page.click('#parseClosureBtn');
+  await page.waitForTimeout(200);
+  await page.click('#cancelClosureConfirm');
+  await page.waitForTimeout(200);
+  const backToCombinedCheck = await page.evaluate(() => ({
+    activePanelName: getActivePanelName(),
+    showClosures: state.showClosures,
+    hasTextarea: !!document.getElementById('closureImportText'),
+  }));
+  check('Closures UI', 'Cancelling the parse-review step returns to the same combined panel (not fully closed)',
+    backToCombinedCheck.activePanelName === 'closures' && backToCombinedCheck.showClosures && backToCombinedCheck.hasTextarea,
+    JSON.stringify(backToCombinedCheck));
+
+  const monthGroupingCheck = await page.evaluate(() => {
+    state.closures = [
+      { id: 1, candidate: 'A', company: 'X', salary: '$1', createdAt: new Date(2026, 8, 15).toISOString() },
+      { id: 2, candidate: 'B', company: 'Y', salary: '$2', createdAt: new Date(2026, 8, 1).toISOString() },
+      { id: 3, candidate: 'C', company: 'Z', salary: '$3', createdAt: new Date(2026, 7, 20).toISOString() },
+    ];
+    state.closuresLoaded = true;
+    render();
+    const text = document.querySelector('.import-panel').textContent;
+    return {
+      hasSeptember: text.includes('September 2026'),
+      hasAugust: text.includes('August 2026'),
+      septemberBeforeAugust: text.indexOf('September 2026') < text.indexOf('August 2026'),
+    };
+  });
+  check('Closures UI', 'Records are grouped month by month, most recent month first',
+    monthGroupingCheck.hasSeptember && monthGroupingCheck.hasAugust && monthGroupingCheck.septemberBeforeAugust,
+    JSON.stringify(monthGroupingCheck));
+
+  // Close the panel back out — this app uses an exclusive-panel model
+  // (any open panel hides the main call table), so leaving it open here
+  // would break every test after this one.
+  await page.evaluate(() => { closeAllPanels(); render(); });
+  await page.waitForTimeout(100);
+
+  // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
   // =====================================================================
   const matchingCases = await page.evaluate(() => {
