@@ -117,6 +117,7 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .more-menu-wrap{position:relative;}
 .more-menu-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:220px;}
+.more-menu-divider{height:1px;background:var(--border);margin:5px 6px;flex:none;}
 .more-menu-backdrop{display:none;}
 .more-menu-item{background:none;border:none;color:var(--text);font-family:var(--body);font-size:13px;text-align:left;padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;}
 .more-menu-item:hover{background:var(--surface-2);}
@@ -701,10 +702,10 @@ tbody tr[data-id]{touch-action:pan-y;}
     <span class="bottom-nav-fab-icon">＋</span>
   </button>
   <button class="bottom-nav-item" id="navTools" data-nav="tools">
-    <span class="bottom-nav-icon">🔧</span><span class="bottom-nav-label">Tools</span>
+    <span class="bottom-nav-icon">🔧</span><span class="bottom-nav-label">Admin</span>
   </button>
   <button class="bottom-nav-item" id="navMore" data-nav="more">
-    <span class="bottom-nav-icon">⋯</span><span class="bottom-nav-label">More</span>
+    <span class="bottom-nav-icon">📊</span><span class="bottom-nav-label">Reports</span>
   </button>
 </nav>
 
@@ -3697,14 +3698,14 @@ function render(){
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
         <div class="more-menu-wrap">
-          <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="More actions">⋯ More</button>
+          <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
-            ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
-            ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
+            <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
@@ -3894,13 +3895,13 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       ${renderFinalizeControls()}`}
       ${(CURRENT_ROLE==='admin' && sum.conflicts) ? `<button class="btn" id="toggleConflicts" style="color:var(--violet);border-color:var(--violet)" title="Focused view to resolve double-bookings">⚠ Resolve Conflicts (${sum.conflicts})</button>` : ''}
       <div class="more-menu-wrap">
-        <button class="btn ${state.showToolsMenu?'active':''}" id="toggleToolsMenu" title="Team, sync, incentives, backups, and other less-frequent actions">🔧 Tools</button>
+        <button class="btn ${state.showToolsMenu?'active':''}" id="toggleToolsMenu" title="Team, users, incentives, backups, and account maintenance">🔧 Admin</button>
         ${state.showToolsMenu ? `<div class="more-menu-backdrop" data-close-menu="showToolsMenu"></div><div class="more-menu-dropdown">
           <button class="more-menu-item" id="toggleRoster">👥 Team (${state.roster.length})</button>
-          <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+          ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👤 Users</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleIncentives">💰 Incentives</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleBackups">🕐 Backups</button>` : ''}
-          ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
+          ${CURRENT_ROLE==='admin' ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
           ${!isReadOnly ? `<button class="more-menu-item" id="clearAll" style="color:var(--coral)">🗑 Clear all calls</button>` : ''}
         </div>` : ''}
       </div>
