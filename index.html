@@ -1000,6 +1000,15 @@ async function fetchPortalSync(mode){
     };
     state.portalSyncUpdatedAt = Date.now();
     state.portalSyncError = '';
+    // Also feeds the inline per-row "Portal shows a different assignee"
+    // badges (findPortalMatch()) — this used to need its own separate
+    // "Sync Portal" quick action buried in a different menu, fetching the
+    // exact same data a second time into a second state field. One sync
+    // now drives both; `handler` is kept for findPortalMatch()'s naming,
+    // which predates this panel's `assignee` field.
+    const rows = assignmentsResult.data || [];
+    state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
+    state.portalSyncedAt = new Date().toLocaleTimeString();
   }catch(e){
     state.portalSyncError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
   }
@@ -3696,7 +3705,6 @@ function render(){
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
-            <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
@@ -3891,7 +3899,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
         <button class="btn ${state.showToolsMenu?'active':''}" id="toggleToolsMenu" title="Team, sync, incentives, backups, and other less-frequent actions">🔧 Tools</button>
         ${state.showToolsMenu ? `<div class="more-menu-backdrop" data-close-menu="showToolsMenu"></div><div class="more-menu-dropdown">
           <button class="more-menu-item" id="toggleRoster">👥 Team (${state.roster.length})</button>
-          <button class="more-menu-item" id="togglePortalSync">📡 Team Sync</button>
+          <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleIncentives">💰 Incentives</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleBackups">🕐 Backups</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
@@ -6022,8 +6030,6 @@ function attachHandlers(conflictIds){
       render();
     });
   });
-  const syncPortalBtn = document.getElementById('syncPortalBtn');
-  if(syncPortalBtn) syncPortalBtn.onclick = ()=>{ syncPortalData(); };
   const retryLoadBtn = document.getElementById('retryLoadBtn');
   if(retryLoadBtn) retryLoadBtn.onclick = async ()=>{
     retryLoadBtn.disabled = true;
@@ -8076,7 +8082,7 @@ function findPriorClientOccurrence(row){
 // Reads back whatever was last saved to the database for this date's
 // Portal assignments — no live Apps Script call, so it's fast and safe
 // to run automatically on every page load / date switch. A real sync
-// (syncPortalData / Team Sync) still overwrites this with fresh data
+// (fetchPortalSync via the 📡 Team Sync panel) still overwrites this with fresh data
 // and re-saves it, same as before.
 async function loadCachedPortalAssignmentsForDate(dateStr){
   if(!API_BASE_URL) return;
@@ -8089,38 +8095,6 @@ async function loadCachedPortalAssignmentsForDate(dateStr){
       render();
     }
   }catch(e){ /* best-effort — a manual sync still works even if this fails */ }
-}
-async function syncPortalData(){
-  if(!API_BASE_URL){
-    state.portalSyncError = 'Connect a database first (see 🗄️ Database settings) — Portal sync needs the backend to relay the request.';
-    render();
-    return;
-  }
-  if(!isViewingToday()){
-    state.portalSyncError = `Portal sync only works while viewing today's date — you're currently on ${state.date}. Switch to today first to sync it.`;
-    render();
-    return;
-  }
-  state.portalSyncLoading = true;
-  render();
-  try{
-    // Scoped to the currently open date — fast (a few seconds) rather
-    // than pulling the entire multi-thousand-record history just to
-    // show today's per-row badges.
-    const result = await apiCall('portal_sync', {qs:'type=assignments&date=' + encodeURIComponent(state.date)});
-    const rows = (result.data && result.data.length !== undefined) ? result.data : (result.data && result.data.assignments) || [];
-    // findPortalMatch() below expects a `handler` field (it predates the
-    // newer `assignee` naming used by the Team Sync panel) — map it here
-    // so both features can share one response shape without either needing
-    // to change.
-    state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
-    state.portalSyncError = '';
-  }catch(e){
-    state.portalSyncError = e.message;
-  }
-  state.portalSyncLoading = false;
-  state.portalSyncedAt = new Date().toLocaleTimeString();
-  render();
 }
 // Matches a Coverage Desk row to a Portal record by candidate name (and
 // time, when available, to disambiguate same-name candidates). The exact
