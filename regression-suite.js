@@ -659,6 +659,74 @@ async function main() {
   await page.waitForTimeout(100);
 
   // =====================================================================
+  console.log('\n=== 2e. Portal Sync merged into one entry point (📡 Team Sync) ===');
+  // =====================================================================
+  // Real request: a quick "Sync Portal" action buried in the "⋯ More"
+  // menu, and a fuller "Team Sync" panel buried in a different "🔧 Tools"
+  // menu, both fetched the exact same Portal assignment data into two
+  // separate state fields for two separate purposes (per-row 📡 mismatch
+  // badges vs. the panel's own table). Now there's one entry point (Team
+  // Sync) and one fetch (fetchPortalSync) that populates both.
+  const portalSyncTests = await page.evaluate(async () => {
+    const out = {};
+    closeAllPanels();
+    render();
+    out.oldQuickButtonGone = !document.getElementById('syncPortalBtn');
+    out.oldFunctionRemoved = typeof syncPortalData === 'undefined';
+
+    state.showToolsMenu = true;
+    render();
+    out.teamSyncButtonExists = !!document.getElementById('togglePortalSync');
+    state.showToolsMenu = false;
+    render();
+
+    // Stub the backend so this runs without a real server, and confirm one
+    // fetchPortalSync() call now feeds BOTH the panel's data AND the
+    // per-row badge-matching data.
+    const origApiCall = apiCall;
+    const origBase = API_BASE_URL;
+    API_BASE_URL = 'http://fake-backend.test';
+    apiCall = async (resource, opts) => {
+      if (resource === 'portal_sync' && opts.qs.includes('type=assignments')) {
+        return { data: [{ candidate: 'Portal Sync Regression Candidate', time: '2:00 PM', team: 'HYD', teamCode: 'HYD', client: 'Acme', assignee: 'Karthikeya', status: 'Scheduled' }] };
+      }
+      if (resource === 'portal_sync' && opts.qs.includes('type=incentives')) {
+        return { data: { byHandler: [], byTeam: {} } };
+      }
+      return { data: [] };
+    };
+    state.portalAssignments = null;
+    state.portalSyncData = null;
+    await fetchPortalSync('today');
+    out.panelDataPopulated = !!(state.portalSyncData && state.portalSyncData.assignments.length === 1);
+    out.rowBadgeDataPopulated = !!(state.portalAssignments && state.portalAssignments.length === 1 && state.portalAssignments[0].handler === 'Karthikeya');
+
+    const savedRows = state.rows;
+    state.rows = [{ id: 'portalsynctest', candidate: 'Portal Sync Regression Candidate', time: '2:00 PM', assignee: 'HYD Team', round: '1st Round' }];
+    const match = findPortalMatch(state.rows[0]);
+    out.rowBadgeMatchWorksFromOneSync = !!match && match.handler === 'Karthikeya';
+    state.rows = savedRows;
+
+    apiCall = origApiCall;
+    API_BASE_URL = origBase;
+    state.portalAssignments = null;
+    state.portalSyncData = null;
+    closeAllPanels();
+    render();
+    return out;
+  });
+  check('Portal sync', 'The separate "Sync Portal" quick-action button (and its function) is gone',
+    portalSyncTests.oldQuickButtonGone && portalSyncTests.oldFunctionRemoved, JSON.stringify(portalSyncTests));
+  check('Portal sync', 'The single "📡 Team Sync" entry point still exists (in the Tools menu)',
+    portalSyncTests.teamSyncButtonExists, JSON.stringify(portalSyncTests));
+  check('Portal sync', 'One fetchPortalSync() call populates the Team Sync panel\'s own data',
+    portalSyncTests.panelDataPopulated, JSON.stringify(portalSyncTests));
+  check('Portal sync', 'The SAME call also populates the data the per-row 📡 mismatch badge needs',
+    portalSyncTests.rowBadgeDataPopulated, JSON.stringify(portalSyncTests));
+  check('Portal sync', 'findPortalMatch() actually finds a match off that one shared sync',
+    portalSyncTests.rowBadgeMatchWorksFromOneSync, JSON.stringify(portalSyncTests));
+
+  // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
   // =====================================================================
   const matchingCases = await page.evaluate(() => {
