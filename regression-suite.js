@@ -479,6 +479,104 @@ async function main() {
     pasteOtherPanels.reschedImport.present && pasteOtherPanels.reschedImport.value === 'Clipboard reschedule import test',
     JSON.stringify(pasteOtherPanels.reschedImport));
 
+  // -----------------------------------------------------------------
+  // Multi-message clipboard picker: "if i click the paste from clipboard
+  // is there any chance that they can show clipboaed all messqags in a
+  // small screnn then i select which messgage i can paste" — when the
+  // clipboard has several WhatsApp messages (detected via export-prefix
+  // boundaries), show a picker instead of dumping everything in.
+  // -----------------------------------------------------------------
+  const clipboardPickerTests = await page.evaluate(async () => {
+    const out = {};
+
+    // splitClipboardIntoMessages: single legitimate multi-line message
+    // (blank line inside it, e.g. a closure's salary line) must NOT be
+    // split — only an actual WhatsApp export prefix is a real boundary.
+    const singleMsg = "Steffy Metilda Jerom Mohangot offer letter from SMBC\n\nsalary : *€60000* /Per Year\n@Sashank Bava";
+    out.singleMessageNotSplit = splitClipboardIntoMessages(singleMsg).length === 1;
+
+    const multiMsg = "[2:32 PM, 9/21/26] Sashank Bava: Steffy offer letter from SMBC\n\nsalary : *€60000* /Per Year\n[2:33 PM, 9/21/26] Sashank Bava: Another candidate offer from XYZ\n\nsalary : *€50000* /Per Year";
+    const split = splitClipboardIntoMessages(multiMsg);
+    out.multiMessageSplitCount = split.length;
+    out.multiMessagePrefixesStripped = !split[0].includes('[2:32 PM') && !split[1].includes('[2:33 PM');
+
+    // Open closures panel, prime clipboard with 2 messages, click paste —
+    // picker should appear instead of a direct insert.
+    closeAllPanels();
+    state.showClosures = true;
+    render();
+    const existingText = 'already typed draft';
+    document.getElementById('closureImportText').value = existingText;
+    await navigator.clipboard.writeText(multiMsg);
+    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
+    await new Promise(r => setTimeout(r, 80));
+
+    out.pickerShown = !!document.getElementById('clipboardPickerOverlay');
+    out.pickerMessageCount = state.clipboardPickerMessages.length;
+    out.textareaPreservedWhilePickerOpen = document.getElementById('closureImportText').value === existingText;
+    out.insertButtonLabel = document.getElementById('clipboardPickerInsert').textContent;
+
+    // Uncheck the second message, then insert — only the first should land.
+    const checks = document.querySelectorAll('.clipboard-picker-check');
+    out.checkboxCount = checks.length;
+    checks[1].checked = false;
+    checks[1].dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    out.insertLabelAfterUncheck = document.getElementById('clipboardPickerInsert').textContent;
+    document.getElementById('clipboardPickerInsert').click();
+    await new Promise(r => setTimeout(r, 80));
+
+    out.pickerClosedAfterInsert = !document.getElementById('clipboardPickerOverlay');
+    const afterInsertValue = document.getElementById('closureImportText').value;
+    out.insertedOnlyFirstMessage = afterInsertValue.includes('Steffy offer letter') && !afterInsertValue.includes('Another candidate');
+    out.existingDraftKeptOnInsert = afterInsertValue.startsWith(existingText);
+
+    // Cancel path: prime again, open picker, cancel — textarea must revert
+    // to exactly what it had before the picker opened (not be wiped by the
+    // DOM rebuild, and not keep any picker leftovers).
+    document.getElementById('closureImportText').value = 'draft before cancel test';
+    await navigator.clipboard.writeText(multiMsg);
+    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
+    await new Promise(r => setTimeout(r, 80));
+    document.getElementById('clipboardPickerCancel').click();
+    await new Promise(r => setTimeout(r, 80));
+    out.pickerClosedAfterCancel = !document.getElementById('clipboardPickerOverlay');
+    out.textareaUnchangedAfterCancel = document.getElementById('closureImportText').value === 'draft before cancel test';
+
+    // A single-message clipboard must still direct-insert with no picker.
+    document.getElementById('closureImportText').value = '';
+    await navigator.clipboard.writeText('Plain single message with no export prefix\n\nsalary: $30,000');
+    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
+    await new Promise(r => setTimeout(r, 80));
+    out.singleMessageNoPicker = !document.getElementById('clipboardPickerOverlay');
+    out.singleMessageDirectInsert = document.getElementById('closureImportText').value.includes('Plain single message');
+
+    closeAllPanels();
+    render();
+    return out;
+  });
+  check('Clipboard picker', 'A single legitimate multi-line message (e.g. closure w/ blank-line salary) is never split',
+    clipboardPickerTests.singleMessageNotSplit, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Clipboard with 2 WhatsApp-prefixed messages splits into exactly 2, prefixes stripped',
+    clipboardPickerTests.multiMessageSplitCount === 2 && clipboardPickerTests.multiMessagePrefixesStripped,
+    JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Pasting a multi-message clipboard opens the picker instead of inserting directly',
+    clipboardPickerTests.pickerShown && clipboardPickerTests.pickerMessageCount === 2, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Opening the picker does not wipe text already typed in the import box',
+    clipboardPickerTests.textareaPreservedWhilePickerOpen, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'All messages are checked by default and the Insert button reflects the count',
+    clipboardPickerTests.insertButtonLabel.includes('(2)') && clipboardPickerTests.checkboxCount === 2, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Unchecking a message updates the Insert button count',
+    clipboardPickerTests.insertLabelAfterUncheck.includes('(1)'), JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Insert closes the picker and appends only the checked message(s)',
+    clipboardPickerTests.pickerClosedAfterInsert && clipboardPickerTests.insertedOnlyFirstMessage, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Insert keeps whatever was already drafted in the textarea',
+    clipboardPickerTests.existingDraftKeptOnInsert, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'Cancel closes the picker and leaves the textarea exactly as it was',
+    clipboardPickerTests.pickerClosedAfterCancel && clipboardPickerTests.textareaUnchangedAfterCancel, JSON.stringify(clipboardPickerTests));
+  check('Clipboard picker', 'A single-message clipboard still inserts directly with no picker shown',
+    clipboardPickerTests.singleMessageNoPicker && clipboardPickerTests.singleMessageDirectInsert, JSON.stringify(clipboardPickerTests));
+
   // Close the panel back out — this app uses an exclusive-panel model
   // (any open panel hides the main call table), so leaving it open here
   // would break every test after this one.
