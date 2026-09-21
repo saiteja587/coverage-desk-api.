@@ -761,7 +761,6 @@ let state = {
   finalized: false,
   showImport: false,
   showRescheduleImport: false,
-  showClosureImport: false,
   closureReview: null,
   closureApplying: false,
   showClosures: false,
@@ -3479,7 +3478,6 @@ function closeAllPanels(){
   state.showImport = false;
   state.showRescheduleImport = false;
   state.rescheduleReview = null;
-  state.showClosureImport = false;
   state.closureReview = null;
   state.showClosures = false;
   state.showStudentsMaster = false;
@@ -3502,7 +3500,6 @@ function getActivePanelName(){
   if(state.showImport) return 'import';
   if(state.showRescheduleImport) return 'rescheduleImport';
   if(state.rescheduleReview) return 'rescheduleReview';
-  if(state.showClosureImport) return 'closureImport';
   if(state.closureReview) return 'closureReview';
   if(state.showClosures) return 'closures';
   if(state.showStudentsMaster) return 'studentsMaster';
@@ -3531,7 +3528,6 @@ function renderActivePanel(name){
   if(name === 'import') return renderImportPanel();
   if(name === 'rescheduleImport') return renderRescheduleImportPanel();
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
-  if(name === 'closureImport') return renderClosureImportPanel();
   if(name === 'closureReview') return renderClosureConfirmPanel();
   if(name === 'closures') return renderClosuresPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
@@ -3544,7 +3540,7 @@ function panelTitle(name){
     allDates:'All Dates', summary:'Summary', users:'Users', dbSettings:'Database Settings',
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', import:'Import from WhatsApp text', rescheduleImport:'Import Reschedule/Cancel',
-    rescheduleReview:'Confirm Reschedule/Cancel', closureImport:'Import Closure/Job Offer', closureReview:'Confirm Closures',
+    rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
   };
   return titles[name] || '';
@@ -3635,6 +3631,7 @@ function render(){
         <button class="arrow-btn" id="nextDay">›</button>
         <button class="btn ${(state.notifications && state.notifications.length) || state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="n">${state.notifications.length}</span>` : '')}</button>
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
+        <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="More actions">⋯ More</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
@@ -3643,7 +3640,6 @@ function render(){
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
-            <button class="more-menu-item" id="toggleClosures">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
             ${(CURRENT_ROLE==='admin' && API_BASE_URL) ? `<button class="more-menu-item" id="toggleUsers">👥 Users</button>` : ''}
             <button class="more-menu-item" id="syncPortalBtn" ${state.portalSyncLoading || !isViewingToday()?'disabled':''} title="${isViewingToday()?'':'Only works while viewing today\'s date'}">${state.portalSyncLoading ? '<span class="spinner"></span>Syncing…' : '📡 Sync Portal'}</button>
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
@@ -3822,7 +3818,6 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
         ${state.showToolsMenu ? `<div class="more-menu-backdrop" data-close-menu="showToolsMenu"></div><div class="more-menu-dropdown">
           <button class="more-menu-item" id="toggleRoster">👥 Team (${state.roster.length})</button>
           <button class="more-menu-item" id="togglePortalSync">📡 Team Sync</button>
-          <button class="more-menu-item" id="toggleClosureImport">🏆 Import Closure/Job Offer</button>
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleIncentives">💰 Incentives</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleBackups">🕐 Backups</button>` : ''}
           ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="removeDuplicatesBtn">🧹 Remove Duplicates</button>` : ''}
@@ -4549,16 +4544,13 @@ function renderRescheduleConfirmPanel(){
   </div>`;
 }
 
-function renderClosureImportPanel(){
-  return `<div class="import-panel">
+function renderClosureImportSection(){
+  return `<div style="margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--border-soft)">
     <div class="hint" style="margin-bottom:10px">Paste a closure/job-offer message — a candidate name, a company, and (optionally) a salary line. This creates new closure records; it doesn't touch today's calls.</div>
     <textarea id="closureImportText" placeholder="Paste closure/offer messages, e.g.:&#10;Rohini sura got offer letter from Capitol bridge&#10;&#10;salary: $75,000 per annum"></textarea>
     <div class="row">
       <div class="hint">Recognizes phrasings like "got offer letter from", "received offer from", "selected by", "closed with", "placed at".</div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn ghost" id="cancelClosureImport">Cancel</button>
-        <button class="btn primary" id="parseClosureBtn">Parse messages</button>
-      </div>
+      <button class="btn primary" id="parseClosureBtn">Parse messages</button>
     </div>
   </div>`;
 }
@@ -4615,24 +4607,60 @@ function renderClosuresPanel(){
     const d = new Date(c.createdAt);
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
   }).length;
-  const rowsHtml = list.map(c=>`<tr>
-      <td>${escapeHtml(c.candidate)}</td>
-      <td>${escapeHtml(c.company)}</td>
-      <td>${escapeHtml(c.salary||'—')}</td>
-      <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
-    </tr>`).join('');
+
+  // Grouped month-by-month (newest month first) instead of one long flat
+  // table — each group keyed by "September 2026" so records are easy to
+  // scan a month at a time as the list grows. Anything with no
+  // createdAt (shouldn't normally happen) falls into its own trailing
+  // "Undated" group rather than being silently dropped.
+  const groups = [];
+  const groupByKey = {};
+  list.forEach(c=>{
+    let key, label, sortKey;
+    if(c.createdAt){
+      const d = new Date(c.createdAt);
+      key = d.getFullYear() + '-' + String(d.getMonth()).padStart(2,'0');
+      label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      sortKey = d.getFullYear() * 12 + d.getMonth();
+    } else {
+      key = 'undated'; label = 'Undated'; sortKey = -1;
+    }
+    if(!groupByKey[key]){
+      groupByKey[key] = { key, label, sortKey, rows: [] };
+      groups.push(groupByKey[key]);
+    }
+    groupByKey[key].rows.push(c);
+  });
+  groups.sort((a,b)=>b.sortKey - a.sortKey);
+
+  const groupsHtml = groups.map(g=>{
+    const rowsHtml = g.rows.map(c=>`<tr>
+        <td>${escapeHtml(c.candidate)}</td>
+        <td>${escapeHtml(c.company)}</td>
+        <td>${escapeHtml(c.salary||'—')}</td>
+        <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
+      </tr>`).join('');
+    return `<div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="font-weight:700;font-size:13px">${escapeHtml(g.label)}</div>
+        <div class="mini-badge" style="opacity:.8">${g.rows.length}</div>
+      </div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+        <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
+          <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th>
+        </tr></thead>
+        <tbody style="font-size:13px">${rowsHtml}</tbody>
+      </table></div>
+    </div>`;
+  }).join('');
+
   return `<div class="import-panel">
+    ${renderClosureImportSection()}
     <div class="summary" style="margin-bottom:14px">
       <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
       <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
     </div>
-    <div class="hint" style="margin-bottom:10px">${list.length ? 'Most recent first.' : ''}</div>
-    ${list.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
-        <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th>
-      </tr></thead>
-      <tbody style="font-size:13px">${rowsHtml}</tbody>
-    </table></div>` : '<div class="hint">Nothing recorded yet — use "Import Closure/Job Offer" from the Tools menu to add one.</div>'}
+    ${list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>'}
   </div>`;
 }
 
@@ -6682,13 +6710,10 @@ function attachHandlers(conflictIds){
     scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
   };
 
-  // ---------- Closure / Job Offer import ----------
-  const toggleClosureImportBtn = document.getElementById('toggleClosureImport');
-  if(toggleClosureImportBtn) toggleClosureImportBtn.onclick = ()=>{ openOnlyPanel('showClosureImport'); render(); };
-
-  const cancelClosureImport = document.getElementById('cancelClosureImport');
-  if(cancelClosureImport) cancelClosureImport.onclick = ()=>{ closeAllPanels(); render(); };
-
+  // ---------- Closure / Job Offer import (now embedded directly inside
+  // the combined Closures panel, rather than a separate panel of its
+  // own — one button, one place, import at the top and the recorded
+  // list grouped by month underneath) ----------
   const parseClosureBtn = document.getElementById('parseClosureBtn');
   if(parseClosureBtn) parseClosureBtn.onclick = async ()=>{
     const textEl = document.getElementById('closureImportText');
@@ -6699,7 +6724,6 @@ function attachHandlers(conflictIds){
       return;
     }
     state.closureReview = parsed.map(p=>Object.assign({crossRef: {status:'checking', message:'Checking existing records…'}}, p));
-    state.showClosureImport = false;
     render();
     // Cross-checked against every call on file (any date), not just
     // today's — one shared fetch for the whole batch rather than one
