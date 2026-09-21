@@ -2656,17 +2656,25 @@ function matchClosureLine(line){
   // "X got offer letter from Y" / "X got the offer from Y" / "X has
   // received an offer from Y" / "X received offer from Y" / "X got an
   // offer with Y"
-  let m = line.match(/^(.+?)\s+(?:got|received|has\s+got|has\s+received)\s+(?:the\s+|an?\s+)?offer(?:\s+letter)?\s+(?:from|with|at)\s+(.+?)[.!]?\s*$/i);
+  // The leading \s* (not \s+) right before each keyword is deliberate —
+  // a real message had the candidate's last name run straight into "got"
+  // with no space at all ("...Jerom Mohangot offer letter from SMBC",
+  // from fast WhatsApp typing). Allowing zero spaces there is safe even
+  // though names can coincidentally contain "got" as a substring (e.g.
+  // "Margot") — the rest of each pattern still has to match in full
+  // right after the keyword, so a spurious mid-name split just fails to
+  // complete and the regex backtracks to the real boundary.
+  let m = line.match(/^(.+?)\s*(?:got|received|has\s+got|has\s+received)\s+(?:the\s+|an?\s+)?offer(?:\s+letter)?\s+(?:from|with|at)\s+(.+?)[.!]?\s*$/i);
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   // "X got selected in/at/by Y" / "X has been selected by Y" / "X is
   // selected by Y"
-  m = line.match(/^(.+?)\s+(?:got\s+selected|has\s+been\s+selected|is\s+selected)\s+(?:in|at|by|with)\s+(.+?)[.!]?\s*$/i);
+  m = line.match(/^(.+?)\s*(?:got\s+selected|has\s+been\s+selected|is\s+selected)\s+(?:in|at|by|with)\s+(.+?)[.!]?\s*$/i);
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   // "X closed with Y" / "X is closed with Y" / "X got closed at Y"
-  m = line.match(/^(.+?)\s+(?:is\s+|got\s+)?closed\s+(?:with|at)\s+(.+?)[.!]?\s*$/i);
+  m = line.match(/^(.+?)\s*(?:is\s+|got\s+)?closed\s+(?:with|at)\s+(.+?)[.!]?\s*$/i);
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   // "X placed at/with Y" / "X got placed at Y"
-  m = line.match(/^(.+?)\s+(?:got\s+|is\s+)?placed\s+(?:at|with|in)\s+(.+?)[.!]?\s*$/i);
+  m = line.match(/^(.+?)\s*(?:got\s+|is\s+)?placed\s+(?:at|with|in)\s+(.+?)[.!]?\s*$/i);
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   return null;
 }
