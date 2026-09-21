@@ -810,6 +810,86 @@ async function main() {
     menuRegroupTests.dividerSeparatesDangerZone, JSON.stringify(menuRegroupTests));
 
   // =====================================================================
+  console.log('\n=== 2g. Portal Sync gets a longer request timeout (was timing out on real cold starts) ===');
+  // =====================================================================
+  // Real report: "portal sync error: ... the server took too long to
+  // respond (over 20s)". Root cause — apiCall() hard-coded a 20s abort for
+  // EVERY request, but Portal Sync proxies out to a separate Apps Script
+  // bridge (its own cold start on top of this backend's) and Full Sync
+  // deliberately pulls the entire call history, which the code's own old
+  // comment already admitted could take "~20s" on its own — so the timeout
+  // was firing right as a legitimate slow request was about to succeed.
+  // Fix: apiCall() now accepts an opts.timeoutMs override (default stays
+  // 20s for every other caller), and fetchPortalSync() asks for 30s on
+  // Today / 45s on Full Sync.
+  const timeoutTests = await page.evaluate(async () => {
+    const out = {};
+
+    // apiCall actually honors a custom timeoutMs (not just accepts and
+    // ignores it) — verified by making it abort at a deliberately short
+    // custom value and checking it fires at THAT time, not the 20s default.
+    const origFetch = window.fetch;
+    window.fetch = (url, opts) => new Promise((resolve, reject) => {
+      if (opts && opts.signal) {
+        opts.signal.addEventListener('abort', () => {
+          const err = new Error('The operation was aborted.');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      }
+      // otherwise never resolves — simulates a hung/cold-starting backend
+    });
+    const savedBase = API_BASE_URL;
+    API_BASE_URL = 'http://fake-backend.test';
+
+    const t0 = Date.now();
+    try {
+      await apiCall('portal_sync', { qs: 'type=assignments', timeoutMs: 300 });
+    } catch (e) {
+      out.customTimeoutElapsedMs = Date.now() - t0;
+      out.customTimeoutMessage = e.message;
+    }
+    window.fetch = origFetch;
+    API_BASE_URL = savedBase;
+
+    // fetchPortalSync() requests the right timeout per mode — intercept
+    // apiCall to record what it was actually called with, without needing
+    // to wait out a real 30-45s timeout in this test.
+    const origApiCall = apiCall;
+    const calls = [];
+    apiCall = async (resource, opts) => {
+      calls.push(opts.timeoutMs);
+      if (opts.qs.includes('type=assignments')) return { data: [] };
+      return { data: { byHandler: [], byTeam: {} } };
+    };
+    API_BASE_URL = 'http://fake-backend.test';
+    await fetchPortalSync('today');
+    out.todayTimeouts = calls.slice();
+    calls.length = 0;
+    await fetchPortalSync('full');
+    out.fullTimeouts = calls.slice();
+    apiCall = origApiCall;
+    API_BASE_URL = savedBase;
+
+    // A default apiCall (no timeoutMs passed) must still fall back to a
+    // real, generous value rather than 0/undefined breaking setTimeout.
+    out.defaultInSource = apiCall.toString().includes('opts.timeoutMs || 20000');
+
+    return out;
+  });
+  check('Portal sync timeout', 'apiCall() actually honors a custom timeoutMs (aborts at that time, not the 20s default)',
+    timeoutTests.customTimeoutElapsedMs != null && timeoutTests.customTimeoutElapsedMs < 2000 && timeoutTests.customTimeoutElapsedMs >= 250,
+    JSON.stringify(timeoutTests));
+  check('Portal sync timeout', 'The abort error message reflects the timeout that was actually used',
+    !!timeoutTests.customTimeoutMessage && timeoutTests.customTimeoutMessage.includes('portal_sync'), JSON.stringify(timeoutTests));
+  check('Portal sync timeout', 'fetchPortalSync("today") requests a longer-than-default timeout (30s) on both its calls',
+    JSON.stringify(timeoutTests.todayTimeouts) === JSON.stringify([30000, 30000]), JSON.stringify(timeoutTests));
+  check('Portal sync timeout', 'fetchPortalSync("full") requests an even longer timeout (45s) on both its calls',
+    JSON.stringify(timeoutTests.fullTimeouts) === JSON.stringify([45000, 45000]), JSON.stringify(timeoutTests));
+  check('Portal sync timeout', 'Every other apiCall() caller still defaults to the original 20s (unaffected by this fix)',
+    timeoutTests.defaultInSource, JSON.stringify(timeoutTests));
+
+  // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
   // =====================================================================
   const matchingCases = await page.evaluate(() => {
