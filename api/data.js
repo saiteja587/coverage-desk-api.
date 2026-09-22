@@ -138,6 +138,22 @@ async function isRateLimited(db, identifier) {
 async function recordFailedAttempt(db, identifier) {
   try { await db.query('INSERT INTO login_attempts (identifier) VALUES (?)', [identifier]); }
   catch (e) { /* best-effort — a logging failure should never break the response */ }
+  // FIX: this table previously had nothing pruning it, so it grew forever —
+  // every failed login attempt, kept indefinitely. Only rows older than the
+  // rate-limit window itself are ever actually looked at (isRateLimited only
+  // queries the last RATE_LIMIT_WINDOW_MINUTES), so anything older than a
+  // generous multiple of that window is safe to delete. Piggybacks on this
+  // function specifically because it already only runs on a failed login —
+  // rare compared to normal traffic — rather than adding a cleanup step to
+  // every single request. Best-effort and non-blocking, same as the insert
+  // above: a failed cleanup should never affect whether this login attempt
+  // itself gets recorded or rate-limited correctly.
+  try {
+    await db.query(
+      `DELETE FROM login_attempts WHERE attempted_at < (NOW() - INTERVAL ? MINUTE)`,
+      [RATE_LIMIT_WINDOW_MINUTES * 8]
+    );
+  } catch (e) { /* best-effort — never let cleanup break the response */ }
 }
 
 async function authenticate(req, db) {
