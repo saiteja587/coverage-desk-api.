@@ -716,8 +716,17 @@ async function handlePortalSyncCacheRead(req, res) {
 //   full payload (keeps the list fast even with many backups).
 // GET (with id): full snapshot for one specific backup, for restoring.
 // POST: create a new backup — called automatically before import, clear
-//   all, and finalize. Old backups are never deleted automatically; this
-//   is meant as a safety net, not a rolling log, so nothing prunes it.
+//   all, and finalize.
+//
+// FIX: this used to never prune old backups at all — "a safety net, not a
+// rolling log". Still true in spirit: nothing here ever deletes a backup
+// from the last 90 days, so anything recent enough to plausibly matter for
+// an undo is always there. Only backups older than that get cleaned up,
+// piggybacked onto this POST handler (new-backup creation) the same
+// best-effort, non-blocking way login_attempts cleanup piggybacks onto
+// recordFailedAttempt — never lets a cleanup failure affect the actual
+// backup being saved right now.
+const CALL_BACKUPS_RETENTION_DAYS = 90;
 async function handleCallBackups(req, res, db) {
   if (req.method === 'GET') {
     const { date, id } = req.query;
@@ -737,6 +746,12 @@ async function handleCallBackups(req, res, db) {
       'INSERT INTO call_backups (call_date, reason, snapshot_json, row_count) VALUES (?,?,?,?)',
       [date, reason, JSON.stringify(rows), rows.length]
     );
+    try {
+      await db.query(
+        `DELETE FROM call_backups WHERE created_at < (NOW() - INTERVAL ? DAY)`,
+        [CALL_BACKUPS_RETENTION_DAYS]
+      );
+    } catch (e) { /* best-effort — never let cleanup affect the backup just saved */ }
     return res.status(200).json({ ok: true });
   }
   return res.status(405).json({ error: 'Method not allowed' });
