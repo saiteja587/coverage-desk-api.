@@ -820,6 +820,10 @@ let state = {
   absencePatterns: null,
   notifSearchAllResched: '',
   hideAllNotifAllResched: false,
+  clientReliabilityData: null,
+  notifSearchReliability: '',
+  hideAllNotifReliability: false,
+  trendsData: null,
   showSummary: false,
   backingUp: false,
   showUsers: false,
@@ -3435,6 +3439,92 @@ async function scanAllReschedules(forceRefresh){
   results.sort((a,b)=> b.date.localeCompare(a.date) || String(b.time||'').localeCompare(String(a.time||'')));
   return results;
 }
+const RESCHED_STATUSES = ['rescheduled','cancelled','not_responded'];
+// One rollup per client, across every saved date: how many of their calls
+// ended up Rescheduled/Cancelled/Not-Responded, as a rate rather than a flat
+// list. Same underlying data as scanAllReschedules() above, just grouped by
+// client and turned into a percentage instead of a chronological feed —
+// meant to answer "should I think twice before committing a coordinator's
+// slot to this client" rather than "what happened, when".
+const CLIENT_RELIABILITY_MIN_CALLS = 4; // below this a rate isn't meaningful yet — 1 bad call out of 1 would show as "100%"
+async function scanClientReliability(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const byCompany = {};
+  allRows.forEach(row=>{
+    if(!row.company || row.woi) return; // WOI rows aren't a committed scheduled slot yet
+    const key = normalizeCompanyKey(row.company);
+    if(!key) return;
+    if(!byCompany[key]) byCompany[key] = { company: row.company, total: 0, bad: 0, breakdown: {rescheduled:0, cancelled:0, not_responded:0} };
+    const c = byCompany[key];
+    c.total++;
+    // Client names get typed inconsistently across dates/coordinators —
+    // keep whichever spelling is longest as the display label, since the
+    // longer form is usually the fuller/more-correct one (matches the same
+    // heuristic normalizeCompanyKey's own comment describes).
+    if(row.company.length > c.company.length) c.company = row.company;
+    if(row.status && RESCHED_STATUSES.includes(row.status)){
+      c.bad++;
+      c.breakdown[row.status]++;
+    }
+  });
+  const results = Object.values(byCompany)
+    .filter(c => c.total >= CLIENT_RELIABILITY_MIN_CALLS)
+    .map(c => ({ ...c, rate: c.bad / c.total }))
+    .sort((a,b)=> b.rate - a.rate || b.total - a.total);
+  return results;
+}
+// Monday-anchored week key for bucketing calls into weeks. Dates are stored
+// as plain YYYY-MM-DD calendar-date strings (no time component), so this
+// works entirely in UTC-space (Date.UTC in, getUTCDay/setUTCDate/toISOString
+// out) rather than parsing as local midnight — parsing as local midnight
+// and then calling toISOString() rolls the date back a day for anyone in a
+// UTC+ timezone (IST included), since local midnight is still "yesterday"
+// in UTC. Staying in UTC the whole way through avoids that entirely.
+function weekStartDateKey(dateStr){
+  const parts = (dateStr||'').split('-').map(Number);
+  if(parts.length !== 3 || parts.some(n=>isNaN(n))) return dateStr;
+  const [y,m,day] = parts;
+  const d = new Date(Date.UTC(y, m-1, day));
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  const diff = (dow === 0 ? -6 : 1 - dow); // shift back to that week's Monday
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0,10);
+}
+const TRENDS_MIN_HANDLER_CALLS = 5; // below this a per-handler rate is too noisy to mean anything
+// Weekly rollups from data that's already tagged day-by-day today (status,
+// round type) but never aggregated past a single date — call volume per
+// week, reschedule rate per week, and which individual handler's calls get
+// rescheduled most often (team-level assignments excluded — same
+// exclusion computeWorkloadWarnings() above uses, since a team name isn't a
+// person to hold accountable for a rate).
+async function scanCallTrends(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  const byWeek = {};
+  allRows.forEach(row=>{
+    if(!row._date || row.woi) return;
+    const wk = weekStartDateKey(row._date);
+    if(!byWeek[wk]) byWeek[wk] = { week: wk, total: 0, bad: 0, roundTypeCounts: {} };
+    const w = byWeek[wk];
+    w.total++;
+    if(row.status && RESCHED_STATUSES.includes(row.status)) w.bad++;
+    if(row.roundType) w.roundTypeCounts[row.roundType] = (w.roundTypeCounts[row.roundType]||0) + 1;
+  });
+  const weeks = Object.values(byWeek).sort((a,b)=> a.week.localeCompare(b.week));
+
+  const handlerTotals = {}, handlerBad = {};
+  allRows.forEach(row=>{
+    if(!row.assignee || row.woi || teamNames.has(row.assignee)) return; // only individual assignments count
+    handlerTotals[row.assignee] = (handlerTotals[row.assignee]||0) + 1;
+    if(row.status && RESCHED_STATUSES.includes(row.status)) handlerBad[row.assignee] = (handlerBad[row.assignee]||0) + 1;
+  });
+  const handlerRates = Object.keys(handlerTotals)
+    .filter(name => handlerTotals[name] >= TRENDS_MIN_HANDLER_CALLS)
+    .map(name => ({ name, total: handlerTotals[name], bad: handlerBad[name]||0, rate: (handlerBad[name]||0) / handlerTotals[name] }))
+    .sort((a,b)=> b.rate - a.rate);
+
+  return { weeks, handlerRates };
+}
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
 // a JSON array of roster person IDs — this reads that same entry back for
@@ -4444,7 +4534,9 @@ function renderNotificationsPanel(){
     { key:'candidatesAcross', label:'📅 Repeat Candidates (All Dates)' },
     { key:'clientsAcross', label:'🎯 Same Client, 2nd Round+ (All Dates)' },
     { key:'allResched', label:'↻ All Rescheduled/Cancelled' },
-    { key:'absencePatterns', label:'🔁 Recurring Absences' }
+    { key:'absencePatterns', label:'🔁 Recurring Absences' },
+    { key:'clientReliability', label:'📊 Client Reliability' },
+    { key:'trends', label:'📈 Trends Over Time' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>`
@@ -4563,6 +4655,78 @@ function renderNotificationsPanel(){
           <button class="btn ghost" id="runAbsencePatternScan">Re-scan</button>
         </div>
         ${rowsHtml}`;
+    }
+  } else if(active === 'clientReliability'){
+    if(state.clientReliabilityData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Scans every date you've saved and rolls up, per client, how many of their calls ended up Rescheduled/Cancelled/Not-Responded — a rate, not just a list, so a flaky client stands out before you commit a coordinator's slot to them. Clients with fewer than ${CLIENT_RELIABILITY_MIN_CALLS} calls on file aren't shown — not enough history for the rate to mean anything yet.</div>
+        <button class="btn primary" id="runReliabilityScan">\U0001f50d Scan client reliability</button>`;
+    } else if(state.clientReliabilityData.length === 0){
+      content = `<div class="hint">No client has ${CLIENT_RELIABILITY_MIN_CALLS}+ calls on file yet. <button class="btn ghost" id="runReliabilityScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else if(state.hideAllNotifReliability){
+      content = `<div class="hint">Hidden. <button class="btn ghost" id="unhideAllReliability">Show ${state.clientReliabilityData.length} result(s) again</button></div>`;
+    } else {
+      const q = (state.notifSearchReliability||'').trim().toLowerCase();
+      const visible = q ? state.clientReliabilityData.filter(c => c.company.toLowerCase().includes(q)) : state.clientReliabilityData;
+      const rowsHtml = visible.map(c=>{
+        const pct = Math.round(c.rate*100);
+        const barColor = pct>=50 ? 'var(--coral)' : pct>=25 ? 'var(--amber)' : 'var(--teal)';
+        const breakdownChips = [
+          c.breakdown.rescheduled ? `<span class="notif-chip">${c.breakdown.rescheduled} rescheduled</span>` : '',
+          c.breakdown.cancelled ? `<span class="notif-chip">${c.breakdown.cancelled} cancelled</span>` : '',
+          c.breakdown.not_responded ? `<span class="notif-chip">${c.breakdown.not_responded} no-response</span>` : ''
+        ].join('');
+        return `<div class="notif-row">
+          <div class="notif-name">${escapeHtml(c.company)} <span class="notif-warn" style="color:${barColor}">${pct}% (${c.bad} of ${c.total})</span></div>
+          <div style="background:var(--surface-2);border-radius:4px;height:6px;margin:4px 0 6px;overflow:hidden;max-width:240px"><div style="width:${pct}%;height:100%;background:${barColor}"></div></div>
+          ${breakdownChips ? `<div class="notif-detail">${breakdownChips}</div>` : ''}
+        </div>`;
+      }).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.clientReliabilityData.length} client(s) with ${CLIENT_RELIABILITY_MIN_CALLS}+ calls on file, worst reliability first.</div>
+          <span style="display:flex;gap:6px"><button class="btn ghost" id="hideAllReliability">Hide all</button><button class="btn ghost" id="runReliabilityScan">Re-scan</button></span>
+        </div>
+        <input type="text" class="notif-search" id="notifSearchReliability" placeholder="Search client…" value="${escapeHtml(state.notifSearchReliability||'')}">
+        ${rowsHtml || '<div class="hint">No matches.</div>'}`;
+    }
+  } else if(active === 'trends'){
+    if(state.trendsData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Scans every date you've saved and rolls it up by week — call volume, reschedule/cancel rate, round-type mix, and which handler's calls get rescheduled most (5+ individually-assigned calls needed for a handler's rate to count). Nothing exported — just something to open and read.</div>
+        <button class="btn primary" id="runTrendsScan">\U0001f50d Scan for trends</button>`;
+    } else if(!state.trendsData.weeks.length){
+      content = `<div class="hint">No dated calls on file yet. <button class="btn ghost" id="runTrendsScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else {
+      const weeksHtml = state.trendsData.weeks.map(w=>{
+        const pct = w.total ? Math.round(w.bad/w.total*100) : 0;
+        const barColor = pct>=30 ? 'var(--coral)' : pct>=15 ? 'var(--amber)' : 'var(--teal)';
+        const rtChips = Object.entries(w.roundTypeCounts).map(([rt,n])=>{
+          const info = roundTypeBadgeInfo(rt);
+          return info ? `<span class="notif-chip">${escapeHtml(info.shortLabel)}: ${n}</span>` : '';
+        }).join('');
+        return `<div class="notif-row">
+          <div class="notif-name">Week of ${escapeHtml(w.week)} <span class="notif-warn">${w.total} call(s)${w.bad?`, ${pct}% rescheduled/cancelled`:''}</span></div>
+          <div style="background:var(--surface-2);border-radius:4px;height:6px;margin:4px 0 6px;overflow:hidden;max-width:240px"><div style="width:${pct}%;height:100%;background:${barColor}"></div></div>
+          ${rtChips ? `<div class="notif-detail">${rtChips}</div>` : ''}
+        </div>`;
+      }).join('');
+      const handlerHtml = state.trendsData.handlerRates.length ? state.trendsData.handlerRates.map(h=>{
+        const pct = Math.round(h.rate*100);
+        const barColor = pct>=30 ? 'var(--coral)' : pct>=15 ? 'var(--amber)' : 'var(--teal)';
+        return `<div class="notif-row">
+          <div class="notif-name">${escapeHtml(h.name)} <span class="notif-warn" style="color:${barColor}">${pct}% (${h.bad} of ${h.total})</span></div>
+        </div>`;
+      }).join('') : `<div class="hint">No handler has ${TRENDS_MIN_HANDLER_CALLS}+ individually-assigned calls on file yet.</div>`;
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.trendsData.weeks.length} week(s) on file, oldest first.</div>
+          <button class="btn ghost" id="runTrendsScan">Re-scan</button>
+        </div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume &amp; reschedule rate by week</div>
+        ${weeksHtml}
+        <div style="font-weight:700;font-size:13px;margin:14px 0 6px">Reschedule rate by handler</div>
+        ${handlerHtml}`;
     }
   }
 
@@ -6104,6 +6268,28 @@ function attachHandlers(conflictIds){
   if(runAbsencePatternBtn) runAbsencePatternBtn.onclick = async ()=>{
     runAbsencePatternBtn.textContent = 'Scanning…';
     state.absencePatterns = await scanAbsencePatterns();
+    render();
+  };
+  const runReliabilityBtn = document.getElementById('runReliabilityScan');
+  if(runReliabilityBtn) runReliabilityBtn.onclick = async ()=>{
+    runReliabilityBtn.textContent = 'Scanning…';
+    state.clientReliabilityData = await scanClientReliability(true);
+    state.hideAllNotifReliability = false;
+    render();
+  };
+  const hideAllReliabilityBtn = document.getElementById('hideAllReliability');
+  if(hideAllReliabilityBtn) hideAllReliabilityBtn.onclick = ()=>{ state.hideAllNotifReliability = true; render(); };
+  const unhideAllReliabilityBtn = document.getElementById('unhideAllReliability');
+  if(unhideAllReliabilityBtn) unhideAllReliabilityBtn.onclick = ()=>{ state.hideAllNotifReliability = false; render(); };
+  const notifSearchReliabilityInput = document.getElementById('notifSearchReliability');
+  if(notifSearchReliabilityInput) notifSearchReliabilityInput.addEventListener('input', ()=>{
+    state.notifSearchReliability = notifSearchReliabilityInput.value;
+    render();
+  });
+  const runTrendsBtn = document.getElementById('runTrendsScan');
+  if(runTrendsBtn) runTrendsBtn.onclick = async ()=>{
+    runTrendsBtn.textContent = 'Scanning…';
+    state.trendsData = await scanCallTrends(true);
     render();
   };
   const hideAllReschedBtn = document.getElementById('hideAllResched');
