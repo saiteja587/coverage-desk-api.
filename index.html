@@ -192,8 +192,10 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 /* SUMMARY STRIP */
 .summary{display:flex;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:var(--shadow-sm);}
 .team-load-strip{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
-.team-load-cell{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--text-muted);}
+.team-load-cell{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:border-color .12s,background-color .12s;}
+.team-load-cell:hover{border-color:var(--text-faint);}
 .team-load-cell.team-load-full{border-color:var(--amber);background:var(--amber-dim);}
+.team-load-cell.team-load-active{border-color:var(--teal);background:var(--teal-dim);color:var(--text);}
 .team-load-capacity{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-left:1px;}
 .team-load-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
 .team-load-num{font-family:var(--mono);font-size:15px;color:var(--text);margin-left:4px;}
@@ -827,6 +829,7 @@ let state = {
   lastDeleted: null,
   assigneeFilter: '',
   clientFilter: '',
+  teamFilter: null,
   groupByCompany: false,
   showMoreMenu: false,
   showToolsMenu: false,
@@ -2435,6 +2438,14 @@ function autoRouteByCountry(row){
 // through 12 AM IST (not the early-morning hours), and if a team's member count
 // is already fully booked at a given exact time, the call overflows to the other
 // team instead — same rule applies in both directions.
+// HYD Team's working window: ~12 PM (noon) through 12 AM (midnight) IST.
+// Extracted so the overload-suggestion logic can reuse the exact same
+// definition the auto-router uses, instead of a second copy drifting out
+// of sync with it.
+function isWithinHydHours(time){
+  const mins = timeToMinutes(time);
+  return mins >= 720 || mins === 0;
+}
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
   if(teamNames.has(assignee)) return assignee;
@@ -2496,12 +2507,8 @@ function autoRouteRows(newRows, existingRows){
     const primaryTeam = isHydCountry(row.country) ? 'HYD Team' : 'Pradeep Anna Team';
     const fallbackTeam = primaryTeam==='HYD Team' ? 'Pradeep Anna Team' : 'HYD Team';
 
-    // HYD Team's working window: ~12 PM (noon) through 12 AM (midnight) IST.
-    const mins = timeToMinutes(row.time);
-    const withinHydHours = (mins >= 720 || mins === 0);
-
     let chosenTeam = primaryTeam;
-    if(primaryTeam==='HYD Team' && !withinHydHours){
+    if(primaryTeam==='HYD Team' && !isWithinHydHours(row.time)){
       chosenTeam = 'Pradeep Anna Team'; // outside HYD's hours entirely
       if(row.doubts) row.doubts.push('Outside HYD Team\u2019s usual afternoon\u2013midnight hours \u2014 routed to Pradeep Anna Team instead.');
     } else if(!hasRoom(chosenTeam, row.time)){
@@ -3729,6 +3736,10 @@ function render(){
   if(state.clientFilter){
     filtered = filtered.filter(r => r.company === state.clientFilter);
   }
+  if(state.teamFilter){
+    const allTeamNames = new Set(state.roster.map(p=>p.team));
+    filtered = filtered.filter(r => teamOfAssignee(r.assignee, allTeamNames) === state.teamFilter);
+  }
   if(state.groupByCompany){
     filtered = filtered.slice().sort((a,b)=>
       (a.company||'').localeCompare(b.company||'') || businessDayMinutes(a.time)-businessDayMinutes(b.time)
@@ -3935,7 +3946,11 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
   const teamStats = DISPLAY_TEAMS.map(t => ({
     name: t.name, color: t.color, count: teamLoad[t.name]||0, capacity: computeTeamCapacity(t.name)
   }));
-  const teamSuggestion = suggestAlternativeTeam(teamStats);
+  // Suggestion logic runs on 1st-round calls only, and only weighs HYD
+  // Team / Pradeep Anna Team / Marketing Team against each other — see
+  // suggestAlternativeTeam's own comment for why.
+  const firstRoundToday = (allRowsToday || sortedRows).filter(r=>!isAdvancedRound(r.round));
+  const teamSuggestion = suggestAlternativeTeam(firstRoundToday);
   return `
     <div class="search-row">
       <span class="search-icon">🔍</span>
@@ -3953,9 +3968,11 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     </div>
 
     <div class="team-load-strip">
-      ${teamStats.map(t => `<div class="team-load-cell ${teamSuggestion && teamSuggestion.full===t.name ? 'team-load-full' : ''}" title="${t.capacity} available today${teamSuggestion && teamSuggestion.full===t.name ? ' — running heavy relative to headcount' : ''}"><span class="team-load-dot" style="background:${t.color}"></span>${escapeHtml(t.name)}<span class="team-load-num">${t.count}</span>${t.capacity?`<span class="team-load-capacity">/${t.capacity}</span>`:''}</div>`).join('')}
+      ${teamStats.map(t => `<div class="team-load-cell ${teamSuggestion && teamSuggestion.full===t.name ? 'team-load-full' : ''} ${state.teamFilter===t.name ? 'team-load-active' : ''}" data-team="${escapeHtml(t.name)}" title="${t.capacity} available today${teamSuggestion && teamSuggestion.full===t.name ? ' — running heavy relative to headcount' : ''} — click to show only ${escapeHtml(t.name)}'s calls"><span class="team-load-dot" style="background:${t.color}"></span>${escapeHtml(t.name)}<span class="team-load-num">${t.count}</span>${t.capacity?`<span class="team-load-capacity">/${t.capacity}</span>`:''}</div>`).join('')}
+      ${state.teamFilter ? `<button class="filter-chip" id="clearTeamFilterBtn" style="margin-left:2px">✕ Clear (${escapeHtml(state.teamFilter)})</button>` : ''}
     </div>
-    ${teamSuggestion ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:8px 12px;border-radius:8px;margin:-10px 0 16px;font-size:12px">⚠ ${escapeHtml(teamSuggestion.full)} is carrying a heavy load for today's headcount — ${escapeHtml(teamSuggestion.suggest)} has more room right now, worth routing new calls there instead.</div>` : ''}
+    ${teamSuggestion ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:8px 12px;border-radius:8px;margin:-10px 0 ${teamSuggestion.outsideHydHoursCount?'6px':'16px'};font-size:12px">⚠ ${escapeHtml(teamSuggestion.full)} is carrying a heavy 1st-round load for today's headcount — ${escapeHtml(teamSuggestion.suggest)} has more room right now, worth routing new calls there instead.</div>` : ''}
+    ${(teamSuggestion && teamSuggestion.outsideHydHoursCount) ? `<div class="hint" style="color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);padding:8px 12px;border-radius:8px;margin:0 0 16px;font-size:12px">⏰ ${teamSuggestion.outsideHydHoursCount} of ${escapeHtml(teamSuggestion.full)}'s ${teamSuggestion.outsideHydHoursTotal} 1st-round calls today fall outside HYD Team's working hours (before noon or after midnight IST) — those were never going to land on HYD regardless of headcount, so that's a structural reason for the load difference, not just uneven sharing.</div>` : ''}
 
     <div class="toolbar">
       ${isReadOnly ? `<span class="read-only-badge">👁 Read-only — ask an admin for edit access</span>` : `
@@ -5379,19 +5396,46 @@ function computeTeamCapacity(teamName){
 }
 // Flags the busiest team relative to its own headcount, and — only when
 // that load is genuinely lopsided against some other team with real spare
-// capacity — names which team has the most room right now. Deliberately
+// capacity — names which team has the most room right now. Only HYD Team,
+// Pradeep Anna Team, and Marketing Team are considered here — Development
+// Team is technical/coding-round only and is never suggested as a general
+// overflow destination, however much room it has. Only 1st-round calls are
+// counted: advanced rounds go to specific senior members regardless of
+// team load, so they aren't part of this capacity picture. Deliberately
 // conservative (needs BOTH a high absolute load AND a wide gap against the
 // roomiest team) so it doesn't nag over a normal, expected difference.
-function suggestAlternativeTeam(teamStats){
-  const withCapacity = teamStats.filter(t=>t.capacity>0);
+const OVERFLOW_ELIGIBLE_TEAMS = ['HYD Team', 'Pradeep Anna Team', 'Marketing Team'];
+function suggestAlternativeTeam(firstRoundRows){
+  const teamLoad = computeTeamLoadCounts(firstRoundRows);
+  const stats = OVERFLOW_ELIGIBLE_TEAMS.map(name => ({
+    name, count: teamLoad[name]||0, capacity: computeTeamCapacity(name)
+  }));
+  const withCapacity = stats.filter(t=>t.capacity>0);
   if(withCapacity.length < 2) return null;
   const ranked = withCapacity.map(t=>({...t, ratio: t.count/t.capacity})).sort((a,b)=>b.ratio-a.ratio);
   const fullest = ranked[0];
   const roomiest = ranked[ranked.length-1];
-  if(fullest.ratio >= 3 && fullest.name !== roomiest.name && fullest.ratio > roomiest.ratio * 1.4){
-    return { full: fullest.name, suggest: roomiest.name };
+  if(!(fullest.ratio >= 3 && fullest.name !== roomiest.name && fullest.ratio > roomiest.ratio * 1.4)){
+    return null;
   }
-  return null;
+  const result = { full: fullest.name, suggest: roomiest.name };
+
+  // Separate structural note: some of the fullest team's calls may simply
+  // fall outside HYD Team's noon–midnight working window, so they were
+  // never going to land on HYD regardless of headcount — that's a
+  // scheduling-hours fact, not a workload-sharing gap, and it's worth
+  // calling out on its own rather than folding it into the same sentence
+  // as the roomiest-team suggestion.
+  if(fullest.name !== 'HYD Team'){
+    const teamNames = new Set(state.roster.map(p=>p.team));
+    const fullestRows = firstRoundRows.filter(r=>!r.woi && r.assignee && teamOfAssignee(r.assignee, teamNames)===fullest.name);
+    const outsideHydHours = fullestRows.filter(r=>!isWithinHydHours(r.time)).length;
+    if(outsideHydHours > 0){
+      result.outsideHydHoursCount = outsideHydHours;
+      result.outsideHydHoursTotal = fullestRows.length;
+    }
+  }
+  return result;
 }
 
 function classifyCompany(company){
@@ -5936,6 +5980,15 @@ function attachHandlers(conflictIds){
   document.querySelectorAll('.filter-chip').forEach(btn=>{
     btn.onclick = ()=>{ state.filter = btn.dataset.f; render(); };
   });
+  document.querySelectorAll('.team-load-cell').forEach(cell=>{
+    cell.onclick = ()=>{
+      const team = cell.dataset.team;
+      state.teamFilter = (state.teamFilter === team) ? null : team; // click again to clear
+      render();
+    };
+  });
+  const clearTeamFilterBtn = document.getElementById('clearTeamFilterBtn');
+  if(clearTeamFilterBtn) clearTeamFilterBtn.onclick = (e)=>{ e.stopPropagation(); state.teamFilter = null; render(); };
   document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.onclick = ()=>{ state.view = btn.dataset.view; state.filter = 'all'; state.selectedIds.clear(); render(); };
   });
