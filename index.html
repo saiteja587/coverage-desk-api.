@@ -834,6 +834,7 @@ let state = {
   portalSyncError: '',
   saveError: '',
   portalSyncedAt: '',
+  portalDrivingPersonFillCount: 0,
   notifTab: 'absent',
   repeatClientsAdvanced: null,
   notifSearchCandidates: '',
@@ -1046,6 +1047,40 @@ async function apiCall(resource, opts){
 // mode 'today'  -> fast: only this date's calls (few seconds), auto-polled
 // mode 'full'   -> slow: the entire call history (~20-40s depending on
 //                  whether the Apps Script bridge is cold), manual only
+// After a Portal sync, for 1st Round calls on the currently-open date:
+// if the Portal shows who's actually handling a call and Coverage Desk
+// doesn't have a Driving Person set for it yet, fill it in automatically.
+// Requested specifically for 1st Round — advanced rounds are left alone,
+// since those are more often driven by a senior member the Portal doesn't
+// necessarily reflect. Deliberately narrow to keep this safe:
+//   - only fills an EMPTY Driving Person — never overwrites one someone
+//     already set by hand (silently overwriting a person's own edit is
+//     exactly the kind of silent-failure-shaped bug this app has been
+//     burned by before)
+//   - only runs for admin/team_lead — the only roles allowed to edit
+//     Driving Person at all, so a read-only viewer never sees local-only
+//     changes they have no way to save or explain
+//   - reuses findPortalMatch(), the same team-isolated, date-scoped,
+//     tie-broken matcher the 📡 badge already relies on — never invents
+//     its own looser matching logic
+//   - only ever runs as part of an explicit sync the person just clicked
+//     (fetchPortalSync), never on page load or date change, matching the
+//     existing "never auto-load Portal data" rule
+// Returns how many rows it actually filled, so the sync panel can say so.
+function fillDrivingPersonFromPortal(){
+  if(CURRENT_ROLE !== 'admin' && CURRENT_ROLE !== 'team_lead') return 0;
+  let filled = 0;
+  state.rows.forEach(row=>{
+    if(row.woi || row.drivingPerson || isAdvancedRound(row.round)) return;
+    const match = findPortalMatch(row);
+    if(match && match.handler){
+      row.drivingPerson = match.handler;
+      filled++;
+    }
+  });
+  if(filled) markDirty();
+  return filled;
+}
 async function fetchPortalSync(mode){
   if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
   if((mode || state.portalSyncMode) === 'today' && !isViewingToday()){
@@ -1082,6 +1117,7 @@ async function fetchPortalSync(mode){
     const rows = assignmentsResult.data || [];
     state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
     state.portalSyncedAt = new Date().toLocaleTimeString();
+    state.portalDrivingPersonFillCount = fillDrivingPersonFromPortal();
   }catch(e){
     state.portalSyncError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
   }
@@ -1557,6 +1593,10 @@ async function loadDay(dateStr){
   // "recently imported".
   state.recentImportIds = null;
   state.filter = state.filter === 'recentImport' ? 'all' : state.filter;
+  // Same reasoning as recentImportIds just above — scoped to whichever
+  // date the sync happened on, so switching dates doesn't leave a stale
+  // "filled N calls" message pointing at a sync that ran on a different day.
+  state.portalDrivingPersonFillCount = 0;
   if(API_BASE_URL){
     try{
       const [callsData, notesData, finalData, statusData] = await Promise.all([
@@ -5376,6 +5416,7 @@ function renderPortalSyncPanel(){
   }
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). "Sync Today" is fast and covers just this date; "Full Sync" pulls the entire call history (~20 seconds) — use it sparingly. Every successful sync is saved to Coverage Desk's database so it's still here after a refresh. This never writes anything back to the Portal.</div>
+    ${state.portalDrivingPersonFillCount ? `<div class="hint" style="color:var(--teal);margin-bottom:10px">✓ Filled Driving Person for ${state.portalDrivingPersonFillCount} 1st Round call${state.portalDrivingPersonFillCount===1?'':'s'} from this sync (existing values left untouched). Remember to Save.</div>` : ''}
     <div class="row" style="margin-bottom:12px">
       <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
