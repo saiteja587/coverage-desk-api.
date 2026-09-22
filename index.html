@@ -687,9 +687,33 @@ tbody tr[data-id]{touch-action:pan-y;}
   body.has-install-banner{padding-bottom:124px;} /* nav bar + install banner both showing at once */
 }
 
+.global-busy-bar{
+  position:fixed; top:0; left:0; right:0; height:3px; z-index:9999;
+  background:var(--teal); transform-origin:left; transform:scaleX(0);
+  opacity:0; pointer-events:none;
+  transition:transform .2s ease, opacity .15s ease;
+}
+.global-busy-bar.active{
+  opacity:1;
+  animation:globalBusyPulse 1.1s ease-in-out infinite;
+}
+@keyframes globalBusyPulse{
+  0%{ transform:scaleX(0.08); }
+  50%{ transform:scaleX(0.6); }
+  100%{ transform:scaleX(0.95); }
+}
 </style>
 </head>
 <body>
+<!-- Global "working…" indicator — a thin bar that appears whenever ANY
+     network request is in flight (apiCall wraps every one). Lives outside
+     #app so render()'s full innerHTML rebuild never touches it, and is
+     toggled by a plain class swap (see setNetworkBusy below) rather than a
+     full render() — instant, and doesn't cost another ~230ms render just to
+     show that something is loading. This is what most buttons were
+     missing: without it, a click that triggers a slow server round-trip
+     just sits there looking frozen with no feedback at all. -->
+<div id="globalBusyBar" class="global-busy-bar" aria-hidden="true"></div>
 <div class="app" id="app"><div class="loading-block"><span class="spinner spinner-lg"></span><div>Loading Coverage Desk…</div></div></div>
 <button id="scrollToTopBtn" class="scroll-to-top-btn" title="Scroll to top" aria-label="Scroll to top">↑</button>
 <div id="installBanner" class="install-banner" style="display:none">
@@ -937,7 +961,23 @@ try{ CURRENT_USERNAME = localStorage.getItem('coverage-desk-username') || ''; }c
 let CURRENT_ROLE = 'admin'; // optimistic default; refined by refreshRole() once connected
 let AUTH_FAILED = false; // set true when the backend rejects the current credentials
 
+// Global "working…" indicator (the bar at the very top of the page — see
+// #globalBusyBar in the static HTML). Every apiCall() increments this on
+// start and decrements it when it settles, success or failure; the bar
+// shows whenever the count is above zero, so ANY in-flight request —
+// import, quick-assign, a panel loading its data, not just the main Save
+// button — now gives some visible sign it's working instead of the button
+// just silently doing nothing until the response comes back. A plain class
+// toggle, not a render() call, so showing/hiding it never costs a render.
+let __pendingApiCalls = 0;
+function setNetworkBusy(delta){
+  __pendingApiCalls = Math.max(0, __pendingApiCalls + delta);
+  const bar = document.getElementById('globalBusyBar');
+  if(bar) bar.classList.toggle('active', __pendingApiCalls > 0);
+}
 async function apiCall(resource, opts){
+  setNetworkBusy(1);
+  try{
   const url = `${API_BASE_URL.replace(/\/$/,'')}/api/data?resource=${resource}${opts.qs?'&'+opts.qs:''}`;
   const headers = opts.body ? {'Content-Type':'application/json'} : {};
   if(ADMIN_PASSWORD){
@@ -993,7 +1033,10 @@ async function apiCall(resource, opts){
   if(res.status === 403){ throw new Error('Read-only account — admin permission required to save changes.'); }
   AUTH_FAILED = false;
   if(!res.ok) throw new Error(`API ${resource} failed: ${res.status}`);
-  return res.json();
+  return await res.json();
+  } finally {
+    setNetworkBusy(-1);
+  }
 }
 // Pulls the combined, read-only Portal snapshot (assignments + per-handler
 // incentives) via Coverage Desk's own backend, which proxies the actual
@@ -2450,6 +2493,75 @@ function isWithinHydHours(time){
   const mins = timeToMinutes(time);
   return mins >= 720 || mins === 0;
 }
+// Downloads the currently-open date's calls as a formatted .xlsx — one
+// sheet with every call (grouped by team, then time), one summary sheet
+// with counts per team and per handler. Uses the SheetJS library already
+// loaded for Students Master imports (see the <script src=".../xlsx...">
+// tag near the top of the file) — nothing new to load, this just writes
+// with it instead of only reading.
+function exportDayToExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('The Excel library did not load (probably a network/ad-blocker issue) — try refreshing the page.');
+    return;
+  }
+  if(!state.rows.length){
+    alert(`There are no calls for ${state.date} to export.`);
+    return;
+  }
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  const statusLabels = { rescheduled: 'Rescheduled', cancelled: 'Cancelled', not_responded: 'Not Responded' };
+
+  const callRows = state.rows.slice().sort((a,b)=>{
+    const teamA = teamOfAssignee(a.assignee, teamNames) || 'Zzz Unassigned';
+    const teamB = teamOfAssignee(b.assignee, teamNames) || 'Zzz Unassigned';
+    if(teamA !== teamB) return teamA.localeCompare(teamB);
+    return timeToMinutes(a.time) - timeToMinutes(b.time);
+  }).map(r=>{
+    const team = teamOfAssignee(r.assignee, teamNames);
+    return {
+      'Team': team || 'Unassigned',
+      'Time': r.woi ? 'Waiting for Invite' : (r.time||''),
+      'Candidate': r.candidate||'',
+      'Company': r.company||'',
+      'Round': r.round||'',
+      'Duration': r.duration||'',
+      'Assignee': r.assignee || (r.woi ? '' : 'Unassigned'),
+      'Driving Person': r.drivingPerson||'',
+      'Country': r.country||'',
+      'Onsite': r.onsite ? 'Yes' : '',
+      'Status': statusLabels[r.status] || '',
+    };
+  });
+
+  // Per-handler and per-team counts, for a quick headcount view without
+  // having to scroll/count the main sheet by hand.
+  const byHandler = {};
+  const byTeam = {};
+  state.rows.forEach(r=>{
+    if(!r.assignee || r.woi) return;
+    const team = teamOfAssignee(r.assignee, teamNames);
+    if(teamNames.has(r.assignee)) return; // a team-level assignment, not a person — skip in the per-handler count
+    byHandler[r.assignee] = (byHandler[r.assignee]||0) + 1;
+    if(team) byTeam[team] = (byTeam[team]||0) + 1;
+  });
+  const summaryRows = [
+    ...Object.keys(byTeam).sort().map(team=>({ 'Team': team, 'Handler': '(team total)', 'Calls': byTeam[team] })),
+    ...Object.keys(byHandler).sort().map(name=>({ 'Team': teamOfAssignee(name, teamNames)||'', 'Handler': name, 'Calls': byHandler[name] })),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const callsSheet = XLSX.utils.json_to_sheet(callRows);
+  callsSheet['!cols'] = [
+    {wch:16},{wch:14},{wch:26},{wch:22},{wch:12},{wch:10},{wch:18},{wch:16},{wch:10},{wch:8},{wch:14}
+  ];
+  XLSX.utils.book_append_sheet(wb, callsSheet, 'Calls');
+
+  const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+  summarySheet['!cols'] = [{wch:22},{wch:22},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
+
+  XLSX.writeFile(wb, `Coverage-Desk-${state.date}.xlsx`);
+}
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
   if(teamNames.has(assignee)) return assignee;
@@ -3890,6 +4002,7 @@ function render(){
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
@@ -5770,6 +5883,17 @@ function renderTable(rows, conflictIds, clientConflicts){
     if(drivingPersonOptionsCache === null) drivingPersonOptionsCache = buildDrivingPersonOptions('');
     return drivingPersonOptionsCache;
   }
+  // PERFORMANCE NOTE: tried lazy-loading this cached option-list string
+  // (only building the full <select> contents when a row's dropdown is
+  // actually opened, via a delegated focus handler) — profiling showed a
+  // real ~2.6x render-time win. Reverted anyway: running it against this
+  // project's own regression-suite.js immediately caught a real breakage
+  // — Playwright's selectOption (and plausibly some real assistive-tech /
+  // programmatic interaction paths) can select a value without ever
+  // triggering the focus event the lazy-load depended on, leaving the
+  // target option missing and the selection silently failing. Assigning a
+  // call is the single most important action in this app; not worth the
+  // risk for a render-speed win. Left eager, as originally.
   const knownAssigneeValues = new Set([...state.roster.map(p=>p.team), ...state.roster.map(p=>p.name)]);
   const knownDrivingPersonNames = new Set(state.roster.map(p=>p.name));
   // PERFORMANCE: these three used to be rebuilt fresh INSIDE the per-row
@@ -6123,6 +6247,8 @@ function attachHandlers(conflictIds){
     if(state.showPortalSync) startPortalSyncPolling();
     render();
   };
+  const exportExcelBtn = document.getElementById('exportExcelBtn');
+  if(exportExcelBtn) exportExcelBtn.onclick = ()=>{ state.showMoreMenu = false; exportDayToExcel(); render(); };
   const closePortalSyncBtn = document.getElementById('closePortalSync');
   if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const syncPortalTodayBtn = document.getElementById('syncPortalToday');
