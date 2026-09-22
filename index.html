@@ -3101,6 +3101,22 @@ function computeWorkloadWarnings(rows){
     .sort((a,b)=>b[1]-a[1])
     .map(([name,count])=>({ name, count, avg: Math.round(avg*10)/10 }));
 }
+// Fires from today's roster availability alone — independent of how many
+// calls have actually been entered yet. computeConflicts/suggestAlternativeTeam
+// above are both reactive: they only speak up once a team's ALREADY overloaded
+// against today's call volume. This one is meant to catch it earlier — a team
+// that's lost most of its headcount to absences is a foreseeable overload risk
+// even on a day with a perfectly normal number of calls, and that's knowable
+// the moment absences are marked, before the calls even start coming in.
+// Deliberately narrow (only OVERFLOW_ELIGIBLE_TEAMS, only a genuinely steep
+// drop) so it doesn't nag over one routine day-off.
+function computeCapacityRiskWarnings(){
+  return OVERFLOW_ELIGIBLE_TEAMS.map(name=>{
+    const total = state.roster.filter(p=>p.team===name).length;
+    const capacity = computeTeamCapacity(name);
+    return { name, total, capacity, absent: total - capacity };
+  }).filter(t => t.total >= 3 && t.capacity > 0 && t.capacity <= Math.ceil(t.total * 0.5));
+}
 function summarize(rows, conflictIds){
   let assigned=0, unassigned=0, woi=0;
   const rowIds = new Set(rows.map(r=>r.id));
@@ -3812,6 +3828,7 @@ function render(){
     ${renderActivePanel(activePanel)}
     ` : `
     ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
+    ${(()=>{ const risk = computeCapacityRiskWarnings(); return risk.length ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim,rgba(255,107,107,0.12));border:1px solid var(--coral);padding:10px 14px;border-radius:8px;margin-bottom:16px">🚨 ${risk.map(t=>`${escapeHtml(t.name)} is down to ${t.capacity} of ${t.total} today (${t.absent} absent)`).join('. ')} — even a normal day's volume could overload them. Worth planning overflow ahead of time rather than after calls start piling up.</div>` : ''; })()}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
       <label for="shiftNoteInput" class="shift-note-label-row">
         <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
@@ -4021,7 +4038,19 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
 // Same candidate appearing twice on the same day — could be a legit 2nd/3rd
 // round happening the same day, but could also just be an accidental double
 // paste/entry. Flagged for a quick human check either way, not auto-resolved.
+//
+// This also computes actual TIME OVERLAP between the occurrences —
+// distinct from just "appears twice" — because that's the gap
+// computeConflicts() above doesn't cover: computeConflicts only flags one
+// PERSON double-booked across different candidates, never the same
+// CANDIDATE entered twice by two different coordinators (often on two
+// different teams) who each booked their own slot without seeing the
+// other's queue. When that overlap is genuinely across two different
+// teams, it's flagged as the highest-risk case — exactly the
+// accidental cross-team duplicate scenario neither coordinator's own view
+// would ever surface on its own.
 function findSameDayDuplicateCandidates(rows){
+  const teamNames = new Set(state.roster.map(p=>p.team));
   const byName = {};
   rows.forEach(r=>{
     if(!r.candidate) return;
@@ -4032,7 +4061,27 @@ function findSameDayDuplicateCandidates(rows){
   });
   return Object.values(byName)
     .filter(group => group.length > 1)
-    .map(group => ({ candidate: group[0].candidate, occurrences: group }));
+    .map(group => {
+      let hasOverlap = false, crossTeamOverlap = false;
+      for(let i=0;i<group.length;i++){
+        for(let j=i+1;j<group.length;j++){
+          const a = group[i], b = group[j];
+          const aStart = timeToMinutes(a.time), bStart = timeToMinutes(b.time);
+          let overlap = (aStart === bStart);
+          if(!overlap){
+            const aDur = parseDurationMinutes(a.duration), bDur = parseDurationMinutes(b.duration);
+            if(aDur && bDur) overlap = (aStart < bStart+bDur && bStart < aStart+aDur);
+          }
+          if(overlap){
+            hasOverlap = true;
+            const aTeam = teamOfAssignee(a.assignee, teamNames), bTeam = teamOfAssignee(b.assignee, teamNames);
+            if(aTeam && bTeam && aTeam !== bTeam) crossTeamOverlap = true;
+          }
+        }
+      }
+      return { candidate: group[0].candidate, occurrences: group, hasOverlap, crossTeamOverlap };
+    })
+    .sort((a,b) => (b.crossTeamOverlap - a.crossTeamOverlap) || (b.hasOverlap - a.hasOverlap));
 }
 
 function renderSameDayDuplicatesSection(){
@@ -4040,14 +4089,21 @@ function renderSameDayDuplicatesSection(){
   if(!dupes.length){
     return `<div class="hint" style="margin-bottom:14px">No candidate appears more than once in today's list.</div>`;
   }
-  const rowsHtml = dupes.map(d=>`
+  const rowsHtml = dupes.map(d=>{
+    const label = d.crossTeamOverlap
+      ? `<span class="notif-warn" style="color:var(--coral)">🔴 same time, booked by two different teams — likely an accidental duplicate</span>`
+      : d.hasOverlap
+      ? `<span class="notif-warn" style="color:var(--coral)">🔴 overlapping times — check before both go ahead</span>`
+      : `<span class="notif-warn">⚠ appears ${d.occurrences.length}×</span>`;
+    return `
     <div class="notif-row">
-      <div class="notif-name">${escapeHtml(d.candidate)} <span class="notif-warn">⚠ appears ${d.occurrences.length}×</span></div>
+      <div class="notif-name">${escapeHtml(d.candidate)} ${label}</div>
       <div class="notif-detail">${d.occurrences.map(o=>`<span class="notif-chip">${escapeHtml(o.time||'time n/a')} \u2014 ${escapeHtml(o.round||'round n/a')}${o.assignee?' \u2014 '+escapeHtml(o.assignee):''}</span>`).join(' ')}</div>
     </div>
-  `).join('');
+  `;}).join('');
+  const overlapCount = dupes.filter(d=>d.hasOverlap).length;
   return `<div style="margin-bottom:16px">
-    <div class="hint" style="margin-bottom:8px">${dupes.length} candidate(s) appear more than once today — verify these are genuinely separate rounds, not a duplicate entry.</div>
+    <div class="hint" style="margin-bottom:8px">${dupes.length} candidate(s) appear more than once today${overlapCount ? `, ${overlapCount} with overlapping times` : ''} — verify these are genuinely separate rounds, not a duplicate entry.</div>
     ${rowsHtml}
   </div>`;
 }
@@ -5587,7 +5643,13 @@ function renderTable(rows, conflictIds, clientConflicts){
     return `<span class="mini-badge mini-badge-confirm-student" data-candidate="${escapeHtml(r.candidate)}" data-candidate-key="${escapeHtml(normalizeNameKey(r.candidate))}" data-matched-id="${escapeHtml(info.student.id)}" data-pair-key="${escapeHtml(info.pairKey)}" title="Possibly the same as “${escapeHtml(info.student.name)}” in Students Master (${escapeHtml(info.reason)}) — not an exact match, click to confirm">?</span>`;
   }
   return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`;
-})()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}${escapeHtml(portalSyncFreshnessLabel())}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+})()}</span>${(()=>{
+        const pm = findPortalMatch(r);
+        if(pm) return `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}${escapeHtml(portalSyncFreshnessLabel())}">📡</span>`;
+        const suppressed = portalMatchSuppressedInfo(r);
+        if(suppressed) return `<span class="flag-icon" style="color:var(--amber)" title="Interview Portal has a record for this candidate under this team, but only for ${escapeHtml(suppressed.mostRecent)} — not for today (${escapeHtml(state.date)}) — so it's not shown here to avoid a wrong match. Click Sync Today to check for a current one.">⚠</span>`;
+        return '';
+      })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5627,9 +5689,13 @@ function renderTable(rows, conflictIds, clientConflicts){
       </td>` : ''}
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
         const pm = findPortalMatch(r);
-        if(!pm) return '';
-        const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
-        return `<button class="portal-check-btn" data-id="${r.id}" style="color:${differs?'var(--amber)':'var(--teal)'}" title="Interview Portal shows: ${escapeHtml(pm.handler||'Unassigned')}${pm.status?' — '+escapeHtml(pm.status):''}${differs?' (differs from local assignment)':''}${escapeHtml(portalSyncFreshnessLabel())}">📡</button>`;
+        if(pm){
+          const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
+          return `<button class="portal-check-btn" data-id="${r.id}" style="color:${differs?'var(--amber)':'var(--teal)'}" title="Interview Portal shows: ${escapeHtml(pm.handler||'Unassigned')}${pm.status?' — '+escapeHtml(pm.status):''}${differs?' (differs from local assignment)':''}${escapeHtml(portalSyncFreshnessLabel())}">📡</button>`;
+        }
+        const suppressed = portalMatchSuppressedInfo(r);
+        if(suppressed) return `<button class="portal-check-btn" data-id="${r.id}" style="color:var(--amber)" title="Interview Portal has a record for this candidate under this team, but only for ${escapeHtml(suppressed.mostRecent)} — not for today. Not shown as a match to avoid guessing wrong. Click Sync Today to check for a current record.">⚠</button>`;
+        return '';
       })()}${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="${colCount}"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
@@ -8273,7 +8339,11 @@ function portalSyncFreshnessLabel(){
   const stamp = new Date(state.portalSyncUpdatedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   return ` (as of last sync, ${stamp} — ${ageText})`;
 }
-function findPortalMatch(row){
+// Internal: candidate+team matches only, before any date narrowing. Shared
+// by findPortalMatch() (the real match, date-aware) and
+// portalMatchSuppressedInfo() (explains a null result), so the two never
+// drift out of sync on what counts as "the same candidate".
+function findPortalCandidatesRaw_(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
   // Only HYD, Pradeep Anna, and Dev are tracked in the Portal at all —
   // Marketing Team, Sai Team, Sandeep Anna Team, etc. have no corresponding
@@ -8282,7 +8352,12 @@ function findPortalMatch(row){
   const expectedTeamCode = assigneeToPortalTeamCode(row.assignee);
   if(!expectedTeamCode) return null;
   const key = normalizeCandidateForMatch(row.candidate);
-  let matches = state.portalAssignments.filter(p => normalizeCandidateForMatch(p.candidate) === key && p.teamCode === expectedTeamCode);
+  const matches = state.portalAssignments.filter(p => normalizeCandidateForMatch(p.candidate) === key && p.teamCode === expectedTeamCode);
+  return matches.length ? matches : null;
+}
+function findPortalMatch(row){
+  let matches = findPortalCandidatesRaw_(row);
+  if(!matches) return null;
   // A Full Sync pulls the entire call history with no date filter, so
   // state.portalAssignments can hold rows for many different dates at
   // once. Without this, a same-named candidate at a recurring time slot
@@ -8291,11 +8366,9 @@ function findPortalMatch(row){
   // match this function's own name/time/company tie-breaking was meant
   // to prevent, just across dates instead of across teams. Prefer
   // same-date rows whenever the Portal data actually carries a dateKey.
-  if(matches.length){
-    const dateMatches = matches.filter(p => p.dateKey && p.dateKey === state.date);
-    if(dateMatches.length) matches = dateMatches;
-    else matches = matches.filter(p => !p.dateKey); // drop confirmed-wrong-date rows; keep only undated (legacy) ones as a fallback
-  }
+  const dateMatches = matches.filter(p => p.dateKey && p.dateKey === state.date);
+  if(dateMatches.length) matches = dateMatches;
+  else matches = matches.filter(p => !p.dateKey); // drop confirmed-wrong-date rows; keep only undated (legacy) ones as a fallback
   if(!matches.length) return null;
   if(matches.length === 1) return matches[0];
   // Multiple same-name matches — this is the exact scenario that caused a
@@ -8312,6 +8385,22 @@ function findPortalMatch(row){
     if(companyMatches.length) matches = companyMatches;
   }
   return matches[0];
+}
+// Only meaningful when findPortalMatch(row) returned null — distinguishes
+// "no Portal data exists for this candidate at all" (nothing to show,
+// nothing suppressed) from "Portal has a record for this candidate under
+// this team, but only for a different date, so we're deliberately not
+// showing it" (a real fact worth surfacing, not silent nothing). Returns
+// null when there's nothing suppressed to report.
+function portalMatchSuppressedInfo(row){
+  const matches = findPortalCandidatesRaw_(row);
+  if(!matches) return null;
+  const dateMatches = matches.filter(p => p.dateKey && p.dateKey === state.date);
+  if(dateMatches.length) return null; // a real match exists — not suppressed
+  const undated = matches.filter(p => !p.dateKey);
+  if(undated.length) return null; // legacy fallback still available — not suppressed
+  const distinctDates = Array.from(new Set(matches.map(p=>p.dateKey).filter(Boolean))).sort();
+  return { count: matches.length, dates: distinctDates, mostRecent: distinctDates[distinctDates.length-1] };
 }
 
 // One-tap "paste from clipboard" for every import textarea (calls,
