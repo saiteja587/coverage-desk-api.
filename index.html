@@ -5587,7 +5587,7 @@ function renderTable(rows, conflictIds, clientConflicts){
     return `<span class="mini-badge mini-badge-confirm-student" data-candidate="${escapeHtml(r.candidate)}" data-candidate-key="${escapeHtml(normalizeNameKey(r.candidate))}" data-matched-id="${escapeHtml(info.student.id)}" data-pair-key="${escapeHtml(info.pairKey)}" title="Possibly the same as “${escapeHtml(info.student.name)}” in Students Master (${escapeHtml(info.reason)}) — not an exact match, click to confirm">?</span>`;
   }
   return `<span class="mini-badge mini-badge-newstudent quick-add-student" data-candidate="${escapeHtml(r.candidate)}" title="Not found in Students Master — click to add \u201c${escapeHtml(r.candidate)}\u201d">N</span>`;
-})()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
+})()}</span>${(()=>{ const pm = findPortalMatch(r); return pm ? `<span class="flag-icon" style="color:var(--teal)" title="Interview Portal shows: ${escapeHtml(pm.handler||'unassigned')} is handling this call${pm.client?' at '+escapeHtml(pm.client):''}${escapeHtml(portalSyncFreshnessLabel())}">📡</span>` : ''; })()}<input class="cell-input" data-field="candidate" value="${escapeHtml(r.candidate)}">
       </td>
       <td data-label="Country">
         <select class="cell-input" data-field="country" style="font-size:11.5px;padding:5px 4px;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238B93A0' stroke-width='1.3' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 4px center;padding-right:16px;">
@@ -5629,7 +5629,7 @@ function renderTable(rows, conflictIds, clientConflicts){
         const pm = findPortalMatch(r);
         if(!pm) return '';
         const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
-        return `<button class="portal-check-btn" data-id="${r.id}" style="color:${differs?'var(--amber)':'var(--teal)'}" title="Interview Portal shows: ${escapeHtml(pm.handler||'Unassigned')}${pm.status?' — '+escapeHtml(pm.status):''}${differs?' (differs from local assignment)':''}">📡</button>`;
+        return `<button class="portal-check-btn" data-id="${r.id}" style="color:${differs?'var(--amber)':'var(--teal)'}" title="Interview Portal shows: ${escapeHtml(pm.handler||'Unassigned')}${pm.status?' — '+escapeHtml(pm.status):''}${differs?' (differs from local assignment)':''}${escapeHtml(portalSyncFreshnessLabel())}">📡</button>`;
       })()}${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="${colCount}"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
@@ -8258,6 +8258,21 @@ function normalizeCandidateForMatch(name){
     .trim()
     .toLowerCase();
 }
+function portalSyncFreshnessLabel(){
+  // Human-readable "as of" text for the last Portal sync, used in the
+  // 📡 badge tooltips so staleness is visible right on the call row
+  // instead of only in the separate sync-panel hint line.
+  if(!state.portalSyncUpdatedAt) return '';
+  const ageMs = Date.now() - state.portalSyncUpdatedAt;
+  const ageMin = Math.round(ageMs / 60000);
+  let ageText;
+  if(ageMin < 1) ageText = 'just now';
+  else if(ageMin < 60) ageText = ageMin + ' min ago';
+  else if(ageMin < 1440) ageText = Math.round(ageMin/60) + ' hr ago';
+  else ageText = Math.round(ageMin/1440) + ' days ago';
+  const stamp = new Date(state.portalSyncUpdatedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  return ` (as of last sync, ${stamp} — ${ageText})`;
+}
 function findPortalMatch(row){
   if(!row.candidate || !state.portalAssignments || !state.portalAssignments.length) return null;
   // Only HYD, Pradeep Anna, and Dev are tracked in the Portal at all —
@@ -8268,6 +8283,19 @@ function findPortalMatch(row){
   if(!expectedTeamCode) return null;
   const key = normalizeCandidateForMatch(row.candidate);
   let matches = state.portalAssignments.filter(p => normalizeCandidateForMatch(p.candidate) === key && p.teamCode === expectedTeamCode);
+  // A Full Sync pulls the entire call history with no date filter, so
+  // state.portalAssignments can hold rows for many different dates at
+  // once. Without this, a same-named candidate at a recurring time slot
+  // (e.g. "1:30") on a DIFFERENT day can match here and show a handler
+  // that was never confirmed for today's call — the exact kind of wrong
+  // match this function's own name/time/company tie-breaking was meant
+  // to prevent, just across dates instead of across teams. Prefer
+  // same-date rows whenever the Portal data actually carries a dateKey.
+  if(matches.length){
+    const dateMatches = matches.filter(p => p.dateKey && p.dateKey === state.date);
+    if(dateMatches.length) matches = dateMatches;
+    else matches = matches.filter(p => !p.dateKey); // drop confirmed-wrong-date rows; keep only undated (legacy) ones as a fallback
+  }
   if(!matches.length) return null;
   if(matches.length === 1) return matches[0];
   // Multiple same-name matches — this is the exact scenario that caused a
