@@ -2001,10 +2001,20 @@ function matchOrCreateRosterName(name){
   state.roster.push({id:uid(), name:canonical, team:'Needs Team Assignment', advanced:true});
   return canonical;
 }
+// A country parenthetical isn't always JUST the country name — real
+// messages also write "(uk local)", "(UK Local)", or "(local uk)" to mean
+// the candidate is a UK-based/local candidate. Stripping the word "local"
+// (and the whitespace it leaves behind) before matching means all of those
+// are recognized the same as a bare "(UK)", instead of only the exact
+// bare-name form being detected and "uk local" silently falling through to
+// the USA default.
+function normalizeCountryParenText(text){
+  return (text||'').trim().toLowerCase().replace(/\blocal\b/g,'').replace(/\s+/g,' ').trim();
+}
 function countryFromParens(parens){
-  const p = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test((x||'').trim()));
+  const p = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test(normalizeCountryParenText(x)));
   if(!p) return 'USA';
-  const t = p.trim().toLowerCase();
+  const t = normalizeCountryParenText(p);
   return t==='uk' ? 'UK' : (t.charAt(0).toUpperCase()+t.slice(1));
 }
 const MONTH_ABBR_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
@@ -2239,7 +2249,7 @@ function parseDetailedLine(line, defaultRound){
   // "(Marketing Operations Specialist)". Whatever's left over after country/
   // round/duration are matched is that role — captured here since it was
   // previously just discarded.
-  const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test((x||'').trim()));
+  const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test(normalizeCountryParenText(x)));
   const durParenForRole = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
   // A paren that's purely a round-TYPE note ("Given Coderpad Link", "Loop
   // round") isn't the candidate's target role — exclude it here so it
@@ -2439,9 +2449,13 @@ function parseImportText(text, baseDate, defaultRound){
       const timeRaw = m[2];
       const assigneeRaw = m[4];
       let country = 'USA';
-      const countryMatch = name.match(/\((UK|Ireland|Canada|Germany)\)/i);
-      if(countryMatch){
-        country = countryMatch[1].toLowerCase()==='uk' ? 'UK' : titleCase(countryMatch[1]);
+      // Same "local" tolerance as countryFromParens() below — "(uk local)"
+      // means the same thing as "(UK)" in real messages, not just the bare
+      // country name.
+      const countryMatch = name.match(/\(([^)]*)\)/);
+      if(countryMatch && /^(uk|ireland|canada|germany)$/i.test(normalizeCountryParenText(countryMatch[1]))){
+        const normalized = normalizeCountryParenText(countryMatch[1]);
+        country = normalized==='uk' ? 'UK' : titleCase(normalized);
         name = name.replace(countryMatch[0],'').replace(/\s+/g,' ').trim();
       }
       let assignee = '';
