@@ -868,6 +868,10 @@ let state = {
   showClientSearch: false,
   clientSearchQuery: '',
   clientSearchResults: null,
+  showUniversalSearch: false,
+  universalSearchQuery: '',
+  universalSearchResults: null,
+  universalSearchLoading: false,
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
@@ -3882,6 +3886,7 @@ function closeAllPanels(){
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showClientSearch = false;
+  state.showUniversalSearch = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -3903,6 +3908,7 @@ function getActivePanelName(){
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showClientSearch) return 'clientSearch';
+  if(state.showUniversalSearch) return 'universalSearch';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -3930,6 +3936,7 @@ function renderActivePanel(name){
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'clientSearch') return renderClientSearchPanel();
+  if(name === 'universalSearch') return renderUniversalSearchPanel();
   return '';
 }
 function panelTitle(name){
@@ -3938,7 +3945,8 @@ function panelTitle(name){
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
-    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search'
+    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
+    universalSearch:'Search Everywhere'
   };
   return titles[name] || '';
 }
@@ -4037,6 +4045,7 @@ function render(){
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
+            <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once">🔎 Search Everywhere</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
@@ -4672,6 +4681,51 @@ function renderClientSearchPanel(){
     <div class="add-row" style="margin-top:0;margin-bottom:12px">
       <input type="text" id="clientSearchInput" placeholder="Client / company name…" value="${escapeHtml(state.clientSearchQuery||'')}" style="flex:1">
       <button class="btn primary" id="runClientSearchBtn">🔍 Search</button>
+    </div>
+    ${body}
+  </div>`;
+}
+
+// A single box that scans candidate, company, AND assignee together across
+// every saved date at once — meant to be the first place to check "have I
+// seen this person/company before, anywhere", instead of having to first
+// decide whether that's a job for Client History Search (company-only,
+// fuzzy-normalized) or the All Dates browse list (today's date range only
+// unless you load everything). Deliberately a plain case-insensitive
+// substring match on all three fields rather than fuzzy normalization —
+// simpler to reason about for a "search everything" box, and the other two
+// panels remain available for their more specific fuzzy-matching behavior.
+function renderUniversalSearchPanel(){
+  const q = (state.universalSearchQuery||'').trim();
+  let body;
+  if(state.universalSearchLoading){
+    body = `<div class="hint">Searching every saved date…</div>`;
+  } else if(state.universalSearchResults === null){
+    body = `<div class="hint">Type a candidate name, company, or assignee — this checks every date you've ever saved calls for, not just today.</div>`;
+  } else if(state.universalSearchResults.length === 0){
+    body = `<div class="hint">No calls found matching "${escapeHtml(q)}".</div>`;
+  } else {
+    const rowsHtml = state.universalSearchResults.map(r=>`
+      <div class="notif-row">
+        <div class="notif-name">${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</div>
+        <div class="notif-detail">
+          <span class="notif-chip">${escapeHtml(r._date)}</span>
+          <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
+          <span class="notif-chip">${escapeHtml(r.company||'no company')}</span>
+          <span class="notif-chip">${escapeHtml(r.round||'round n/a')}</span>
+          ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
+        </div>
+      </div>
+    `).join('');
+    const uniqueCandidates = new Set(state.universalSearchResults.map(r=>(r.candidate||'').trim().toLowerCase()).filter(Boolean)).size;
+    const uniqueDates = new Set(state.universalSearchResults.map(r=>r._date)).size;
+    body = `<div class="hint" style="margin-bottom:10px">${state.universalSearchResults.length} call(s) across ${uniqueDates} date(s)${uniqueCandidates?`, ${uniqueCandidates} matching candidate(s)`:''}, most recent first.</div>${rowsHtml}`;
+  }
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Searches candidate, company, and assignee together, across every saved date.</div>
+    <div class="add-row" style="margin-top:0;margin-bottom:12px">
+      <input type="text" id="universalSearchInput" placeholder="Candidate, company, or assignee…" value="${escapeHtml(state.universalSearchQuery||'')}" style="flex:1">
+      <button class="btn primary" id="runUniversalSearchBtn">🔎 Search</button>
     </div>
     ${body}
   </div>`;
@@ -6674,6 +6728,29 @@ function attachHandlers(conflictIds){
   const clientSearchInput = document.getElementById('clientSearchInput');
   if(clientSearchInput) clientSearchInput.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runClientSearchBtn').click(); }
+  });
+  const toggleUniversalSearchBtn = document.getElementById('toggleUniversalSearch');
+  if(toggleUniversalSearchBtn) toggleUniversalSearchBtn.onclick = ()=>{ openOnlyPanel('showUniversalSearch'); render(); };
+  const runUniversalSearchBtn = document.getElementById('runUniversalSearchBtn');
+  if(runUniversalSearchBtn) runUniversalSearchBtn.onclick = async ()=>{
+    const input = document.getElementById('universalSearchInput');
+    const q = input ? input.value.trim() : '';
+    state.universalSearchQuery = q;
+    if(!q){ state.universalSearchResults = []; render(); return; }
+    state.universalSearchLoading = true;
+    render();
+    const allRows = await fetchAllRowsAcrossDates(true);
+    const qLower = q.toLowerCase();
+    const results = allRows
+      .filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.assignee||'').toLowerCase().includes(qLower))
+      .sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
+    state.universalSearchResults = results;
+    state.universalSearchLoading = false;
+    render();
+  };
+  const universalSearchInput = document.getElementById('universalSearchInput');
+  if(universalSearchInput) universalSearchInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runUniversalSearchBtn').click(); }
   });
   // These small badges (P, ↻, C, !, ⚕/🎓 category, 📡 portal match, ⏰
   // conflict, the status pill) put their real information in a hover
