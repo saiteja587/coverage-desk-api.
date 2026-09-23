@@ -5064,12 +5064,16 @@ function renderMissedCheckPanel(){
     } else if(!r.flagged.length){
       body = `<div class="hint" style="color:var(--teal)">✅ Nothing missed — all ${r.checkedCount} call-shaped message(s) found in that text already have a matching row for <b>${escapeHtml(state.date)}</b>.</div>`;
     } else {
+      // Deliberately just the extracted fields, not the raw WhatsApp text —
+      // that's already reflected in candidate/company/time below, and
+      // showing both was pure clutter. The original text isn't lost: it's
+      // still what the Copy button copies and what the review screen can
+      // show on request, just not repeated inline here.
       const rowsHtml = r.flagged.map((f,i)=>`
         <div class="notif-row">
           <div class="notif-name">${escapeHtml(f.candidate)}${f.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(f.company)}</span>`:''}</div>
           <div class="notif-detail">
             ${f.time?`<span class="notif-chip">${escapeHtml(f.time)}</span>`:''}
-            <span class="notif-chip" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(f.raw)}">${escapeHtml(f.raw)}</span>
           </div>
           <button type="button" class="btn ghost missed-copy-btn" data-idx="${i}" style="margin-top:6px;font-size:11.5px;padding:4px 10px">📋 Copy text</button>
         </div>
@@ -5111,8 +5115,11 @@ function renderMissedCheckReviewPanel(){
   const items = state.missedCheckReviewItems || [];
   const includedCount = items.filter(it=>it.include).length;
   const itemsHtml = items.map((it, idx)=>`<div class="resched-item ${it.include?'':'unmatched'}" data-idx="${idx}">
-      <div class="resched-raw">${escapeHtml(it.raw)}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <details style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:11.5px;color:var(--text-muted)">Original message</summary>
+        <div class="resched-raw" style="margin-top:6px">${escapeHtml(it.raw)}</div>
+      </details>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <div style="flex:1;min-width:140px">
           <label class="hint" style="display:block;margin-bottom:4px">Candidate</label>
           <input type="text" class="missed-review-field" data-idx="${idx}" data-field="candidate" value="${escapeHtml(it.candidate)}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
@@ -5129,16 +5136,23 @@ function renderMissedCheckReviewPanel(){
           <label class="hint" style="display:block;margin-bottom:4px">Round</label>
           <input type="text" class="missed-review-field" data-idx="${idx}" data-field="round" value="${escapeHtml(it.round||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
         </div>
+        <div style="flex:1;min-width:160px">
+          <label class="hint" style="display:block;margin-bottom:4px">Assign to</label>
+          <select class="missed-review-field" data-idx="${idx}" data-field="assignee" data-assignee-value="${escapeHtml(it.assignee||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+            <option value="">— unassigned —</option>
+            ${buildRosterOptions(it.round, it.assignee)}
+          </select>
+        </div>
       </div>
       <label style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:5px;white-space:nowrap;margin-top:8px">
         <input type="checkbox" class="missed-review-include" data-idx="${idx}" ${it.include?'checked':''}> Add this one
       </label>
     </div>`).join('');
   return `<div class="import-panel">
-    <div class="resched-warning-banner">⚠ Confirm before saving: this will add ${includedCount} new call(s) to <b>${escapeHtml(state.date)}</b>. Nothing is saved until you tap "Confirm &amp; Add" below — check each one first.</div>
+    <div class="resched-warning-banner">⚠ Confirm before saving: this will add ${includedCount} new call(s) to <b>${escapeHtml(state.date)}</b>, including who each one gets assigned to below — nothing is saved until you tap "Confirm &amp; Add".</div>
     ${itemsHtml || '<div class="hint">Nothing to review.</div>'}
     <div class="row">
-      <div class="hint">Unchecked items are left out entirely — nothing is added for them.</div>
+      <div class="hint">Unchecked items are left out entirely — nothing is added for them. "Assign to" is a suggestion, same as the normal import's auto-routing — change it if it's wrong.</div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelMissedCheckReview">Cancel</button>
         <button class="btn primary" id="confirmMissedCheckApply" ${state.missedCheckApplying || !includedCount ? 'disabled':''}>${state.missedCheckApplying?'<span class="spinner"></span>Saving…':`Confirm & Add (${includedCount})`}</button>
@@ -7358,23 +7372,52 @@ function attachHandlers(conflictIds){
   const reviewMissedBtn = document.getElementById('reviewMissedBtn');
   if(reviewMissedBtn) reviewMissedBtn.onclick = ()=>{
     const flagged = (state.missedCheckResults && state.missedCheckResults.flagged) || [];
-    state.missedCheckReviewItems = flagged.map(f=>({
+    // Preview the same auto-routing the confirm step would apply, on cloned
+    // rows only — nothing here touches state.rows — so the review screen
+    // can show a real suggested team/assignee instead of deciding it
+    // silently at confirm time.
+    const previewRows = flagged.map(f=>{
+      const base = f.row ? Object.assign({}, f.row) : {};
+      return Object.assign({}, base, {
+        candidate: f.candidate,
+        company: f.company || '',
+        time: f.time || '',
+        round: base.round || '1st',
+        assignee: base.assignee || '',
+      });
+    });
+    autoRouteRows(previewRows, state.rows.slice());
+    state.missedCheckReviewItems = flagged.map((f,i)=>({
       include: true,
       candidate: f.candidate,
       company: f.company || '',
       time: f.time || '',
       round: (f.row && f.row.round) || '1st',
+      assignee: previewRows[i].assignee || '',
       raw: f.raw,
       _row: f.row,
     }));
     render();
   };
   document.querySelectorAll('.missed-review-field').forEach(input=>{
-    input.oninput = ()=>{
+    const onEdit = ()=>{
       const idx = Number(input.dataset.idx);
       const field = input.dataset.field;
-      if(state.missedCheckReviewItems && state.missedCheckReviewItems[idx]) state.missedCheckReviewItems[idx][field] = input.value;
+      if(!state.missedCheckReviewItems || !state.missedCheckReviewItems[idx]) return;
+      if(field==='assignee' && input.value===CUSTOM_ASSIGNEE_SENTINEL){
+        const item = state.missedCheckReviewItems[idx];
+        const typed = prompt('Type the person\'s name (for someone not in the roster, e.g. a Development Team member added manually):', item.assignee && item.assignee !== CUSTOM_ASSIGNEE_SENTINEL ? item.assignee : '');
+        item.assignee = (typed && typed.trim()) ? typed.trim() : (item.assignee || '');
+        render();
+        return;
+      }
+      state.missedCheckReviewItems[idx][field] = input.value;
     };
+    // Select fires both 'input' and 'change' on a pick in modern browsers —
+    // bind only 'change' for it (matches the rest of the app's assignee
+    // dropdowns) so the custom-name prompt above doesn't fire twice.
+    if(input.tagName==='SELECT'){ input.onchange = onEdit; }
+    else { input.oninput = onEdit; input.onchange = onEdit; }
   });
   document.querySelectorAll('.missed-review-include').forEach(chk=>{
     chk.onchange = ()=>{
@@ -7396,12 +7439,14 @@ function attachHandlers(conflictIds){
     // Same pre-add safety net the normal "📥 Import" button uses — an
     // undoable backup taken before anything is added.
     await createBackup('pre-import', state.date, state.rows);
-    const beforeRows = state.rows.slice();
     // Turn each reviewed item into a real call row. Starts from the full
     // parsed row this item came from (round/duration/assignee/country/
     // doubts already worked out by the parser) so nothing found during the
     // original check gets thrown away, then layers the person's own edits
     // (candidate/company/time/round, editable above) on top.
+    // Assignee comes straight from the review screen above — reviewed and
+    // possibly edited by hand — not recomputed here, so nothing about who
+    // gets the call is decided invisibly at confirm time.
     const newRows = items.map(it=>{
       const base = it._row || {};
       return Object.assign({}, base, {
@@ -7410,14 +7455,14 @@ function attachHandlers(conflictIds){
         company: it.company,
         time: it.time,
         round: it.round || base.round || '1st',
+        assignee: it.assignee || '',
       });
     });
-    const routed = autoRouteRows(newRows, beforeRows);
-    state.rows = [...state.rows, ...routed];
-    state.lastImportedIds = routed.map(r=>r.id);
-    state.lastImportedCount = routed.length;
+    state.rows = [...state.rows, ...newRows];
+    state.lastImportedIds = newRows.map(r=>r.id);
+    state.lastImportedCount = newRows.length;
     state.lastImportMergedCount = 0;
-    state.recentImportIds = new Set(routed.map(r=>r.id));
+    state.recentImportIds = new Set(newRows.map(r=>r.id));
     markDirty();
     state.missedCheckApplying = false;
     state.missedCheckReviewItems = null;
@@ -7427,9 +7472,9 @@ function attachHandlers(conflictIds){
     try{ await saveAllChanges(); }
     catch(e){ saveErr = e && e.message ? e.message : 'could not reach the server'; }
     if(saveErr){
-      alert(`Added ${routed.length} call(s) locally, but saving failed: ${saveErr}. Try "Save changes" again.`);
+      alert(`Added ${newRows.length} call(s) locally, but saving failed: ${saveErr}. Try "Save changes" again.`);
     } else {
-      alert(`Added ${routed.length} call(s) to ${state.date} and saved.\nIf this added anything unwanted, use the ↩ Undo import banner at the top to remove just these new call(s) in one click.`);
+      alert(`Added ${newRows.length} call(s) to ${state.date} and saved.\nIf this added anything unwanted, use the ↩ Undo import banner at the top to remove just these new call(s) in one click.`);
     }
     scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
     scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
