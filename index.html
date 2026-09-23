@@ -880,6 +880,8 @@ let state = {
   missedCheckResults: null,
   missedCheckLoading: false,
   missedCheckError: null,
+  missedCheckReviewItems: null,
+  missedCheckApplying: false,
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
@@ -4092,6 +4094,7 @@ function closeAllPanels(){
   state.showClientSearch = false;
   state.showUniversalSearch = false;
   state.showMissedCheck = false;
+  state.missedCheckReviewItems = null;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4114,6 +4117,7 @@ function getActivePanelName(){
   if(state.showConflicts) return 'conflicts';
   if(state.showClientSearch) return 'clientSearch';
   if(state.showUniversalSearch) return 'universalSearch';
+  if(state.missedCheckReviewItems) return 'missedCheckReview';
   if(state.showMissedCheck) return 'missedCheck';
   return null;
 }
@@ -4144,6 +4148,7 @@ function renderActivePanel(name){
   if(name === 'clientSearch') return renderClientSearchPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
   if(name === 'missedCheck') return renderMissedCheckPanel();
+  if(name === 'missedCheckReview') return renderMissedCheckReviewPanel();
   return '';
 }
 function panelTitle(name){
@@ -4153,7 +4158,7 @@ function panelTitle(name){
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
-    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages'
+    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls'
   };
   return titles[name] || '';
 }
@@ -5037,7 +5042,10 @@ function computeMissedMessages(exportText, rows){
         return normalizeCandidateForMatch(r.candidate) === candKey;
       });
       if(!matched){
-        flagged.push({ candidate: p.candidate, company: p.company, time: p.time, raw: (p.raw || msg).trim() });
+        // Keeps the full parsed row (round/duration/assignee/country/doubts
+        // etc.), not just the display fields — needed so "Review & Add" can
+        // turn this straight into a real call row without re-parsing.
+        flagged.push({ candidate: p.candidate, company: p.company, time: p.time, raw: (p.raw || msg).trim(), row: p });
       }
     });
   });
@@ -5067,7 +5075,10 @@ function renderMissedCheckPanel(){
         </div>
       `).join('');
       body = `<div class="hint" style="margin-bottom:10px">Checked ${r.checkedCount} call-shaped message(s) against <b>${escapeHtml(state.date)}</b>'s list — ${r.flagged.length} don't have a matching row yet:</div>${rowsHtml}
-      <div class="hint" style="margin-top:12px">Copy any of these, then use "📥 Import" → "📋 Paste from clipboard" to bring it in the normal way.</div>`;
+      <div class="row" style="margin-top:12px">
+        <div class="hint">Copy any single one to bring it in via "📥 Import" → "📋 Paste from clipboard" — or review and add them all at once below.</div>
+        <button type="button" class="btn primary" id="reviewMissedBtn">➕ Review &amp; Add Missing Calls</button>
+      </div>`;
     }
   } else {
     body = `<div class="hint">Paste a WhatsApp chat export below, or upload the .txt file (group name → More → Export Chat → Without Media). This checks against whichever date is currently selected (<b>${escapeHtml(state.date)}</b>) — switch dates above first if you're checking a different day.</div>`;
@@ -5086,6 +5097,53 @@ function renderMissedCheckPanel(){
       <button class="btn primary" id="runMissedCheckBtn">🔍 Check</button>
     </div>
     ${body}
+  </div>`;
+}
+// The review-before-commit screen for "Review & Add Missing Calls" — same
+// pattern as the existing reschedule/closure confirm panels: nothing is
+// written anywhere until "Confirm & Add" is tapped, every field is editable
+// first, and any item can be excluded with its checkbox. Adding calls (not
+// a status tag or a separate closures table) uses the exact same commit
+// path the normal "📥 Import" → "Parse & add calls" button uses —
+// auto-routing, a pre-add backup, and the same "↩ Undo import" banner —
+// rather than a bespoke save path that would behave subtly differently.
+function renderMissedCheckReviewPanel(){
+  const items = state.missedCheckReviewItems || [];
+  const includedCount = items.filter(it=>it.include).length;
+  const itemsHtml = items.map((it, idx)=>`<div class="resched-item ${it.include?'':'unmatched'}" data-idx="${idx}">
+      <div class="resched-raw">${escapeHtml(it.raw)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <div style="flex:1;min-width:140px">
+          <label class="hint" style="display:block;margin-bottom:4px">Candidate</label>
+          <input type="text" class="missed-review-field" data-idx="${idx}" data-field="candidate" value="${escapeHtml(it.candidate)}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label class="hint" style="display:block;margin-bottom:4px">Company</label>
+          <input type="text" class="missed-review-field" data-idx="${idx}" data-field="company" value="${escapeHtml(it.company||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <div style="flex:0 0 110px">
+          <label class="hint" style="display:block;margin-bottom:4px">Time</label>
+          <input type="text" class="missed-review-field" data-idx="${idx}" data-field="time" value="${escapeHtml(it.time||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+        <div style="flex:0 0 90px">
+          <label class="hint" style="display:block;margin-bottom:4px">Round</label>
+          <input type="text" class="missed-review-field" data-idx="${idx}" data-field="round" value="${escapeHtml(it.round||'')}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:12.5px">
+        </div>
+      </div>
+      <label style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:5px;white-space:nowrap;margin-top:8px">
+        <input type="checkbox" class="missed-review-include" data-idx="${idx}" ${it.include?'checked':''}> Add this one
+      </label>
+    </div>`).join('');
+  return `<div class="import-panel">
+    <div class="resched-warning-banner">⚠ Confirm before saving: this will add ${includedCount} new call(s) to <b>${escapeHtml(state.date)}</b>. Nothing is saved until you tap "Confirm &amp; Add" below — check each one first.</div>
+    ${itemsHtml || '<div class="hint">Nothing to review.</div>'}
+    <div class="row">
+      <div class="hint">Unchecked items are left out entirely — nothing is added for them.</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="cancelMissedCheckReview">Cancel</button>
+        <button class="btn primary" id="confirmMissedCheckApply" ${state.missedCheckApplying || !includedCount ? 'disabled':''}>${state.missedCheckApplying?'<span class="spinner"></span>Saving…':`Confirm & Add (${includedCount})`}</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -7297,6 +7355,85 @@ function attachHandlers(conflictIds){
       }
     };
   });
+  const reviewMissedBtn = document.getElementById('reviewMissedBtn');
+  if(reviewMissedBtn) reviewMissedBtn.onclick = ()=>{
+    const flagged = (state.missedCheckResults && state.missedCheckResults.flagged) || [];
+    state.missedCheckReviewItems = flagged.map(f=>({
+      include: true,
+      candidate: f.candidate,
+      company: f.company || '',
+      time: f.time || '',
+      round: (f.row && f.row.round) || '1st',
+      raw: f.raw,
+      _row: f.row,
+    }));
+    render();
+  };
+  document.querySelectorAll('.missed-review-field').forEach(input=>{
+    input.oninput = ()=>{
+      const idx = Number(input.dataset.idx);
+      const field = input.dataset.field;
+      if(state.missedCheckReviewItems && state.missedCheckReviewItems[idx]) state.missedCheckReviewItems[idx][field] = input.value;
+    };
+  });
+  document.querySelectorAll('.missed-review-include').forEach(chk=>{
+    chk.onchange = ()=>{
+      const idx = Number(chk.dataset.idx);
+      if(state.missedCheckReviewItems && state.missedCheckReviewItems[idx]){
+        state.missedCheckReviewItems[idx].include = chk.checked;
+        render();
+      }
+    };
+  });
+  const cancelMissedCheckReview = document.getElementById('cancelMissedCheckReview');
+  if(cancelMissedCheckReview) cancelMissedCheckReview.onclick = ()=>{ state.missedCheckReviewItems = null; render(); };
+  const confirmMissedCheckApply = document.getElementById('confirmMissedCheckApply');
+  if(confirmMissedCheckApply) confirmMissedCheckApply.onclick = async ()=>{
+    const items = (state.missedCheckReviewItems || []).filter(it=>it.include);
+    if(!items.length) return;
+    state.missedCheckApplying = true;
+    render();
+    // Same pre-add safety net the normal "📥 Import" button uses — an
+    // undoable backup taken before anything is added.
+    await createBackup('pre-import', state.date, state.rows);
+    const beforeRows = state.rows.slice();
+    // Turn each reviewed item into a real call row. Starts from the full
+    // parsed row this item came from (round/duration/assignee/country/
+    // doubts already worked out by the parser) so nothing found during the
+    // original check gets thrown away, then layers the person's own edits
+    // (candidate/company/time/round, editable above) on top.
+    const newRows = items.map(it=>{
+      const base = it._row || {};
+      return Object.assign({}, base, {
+        id: uid(),
+        candidate: it.candidate,
+        company: it.company,
+        time: it.time,
+        round: it.round || base.round || '1st',
+      });
+    });
+    const routed = autoRouteRows(newRows, beforeRows);
+    state.rows = [...state.rows, ...routed];
+    state.lastImportedIds = routed.map(r=>r.id);
+    state.lastImportedCount = routed.length;
+    state.lastImportMergedCount = 0;
+    state.recentImportIds = new Set(routed.map(r=>r.id));
+    markDirty();
+    state.missedCheckApplying = false;
+    state.missedCheckReviewItems = null;
+    state.showMissedCheck = false;
+    render();
+    let saveErr = '';
+    try{ await saveAllChanges(); }
+    catch(e){ saveErr = e && e.message ? e.message : 'could not reach the server'; }
+    if(saveErr){
+      alert(`Added ${routed.length} call(s) locally, but saving failed: ${saveErr}. Try "Save changes" again.`);
+    } else {
+      alert(`Added ${routed.length} call(s) to ${state.date} and saved.\nIf this added anything unwanted, use the ↩ Undo import banner at the top to remove just these new call(s) in one click.`);
+    }
+    scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
+    scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
+  };
   // These small badges (P, ↻, C, !, ⚕/🎓 category, 📡 portal match, ⏰
   // conflict, the status pill) put their real information in a hover
   // tooltip — completely inaccessible on a touchscreen, which has no
