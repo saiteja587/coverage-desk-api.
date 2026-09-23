@@ -875,6 +875,11 @@ let state = {
   universalSearchQuery: '',
   universalSearchResults: null,
   universalSearchLoading: false,
+  showMissedCheck: false,
+  missedCheckText: '',
+  missedCheckResults: null,
+  missedCheckLoading: false,
+  missedCheckError: null,
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
@@ -4086,6 +4091,7 @@ function closeAllPanels(){
   state.showConflicts = false;
   state.showClientSearch = false;
   state.showUniversalSearch = false;
+  state.showMissedCheck = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4108,6 +4114,7 @@ function getActivePanelName(){
   if(state.showConflicts) return 'conflicts';
   if(state.showClientSearch) return 'clientSearch';
   if(state.showUniversalSearch) return 'universalSearch';
+  if(state.showMissedCheck) return 'missedCheck';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -4136,6 +4143,7 @@ function renderActivePanel(name){
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'clientSearch') return renderClientSearchPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
+  if(name === 'missedCheck') return renderMissedCheckPanel();
   return '';
 }
 function panelTitle(name){
@@ -4145,7 +4153,7 @@ function panelTitle(name){
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
-    universalSearch:'Search Everywhere'
+    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages'
   };
   return titles[name] || '';
 }
@@ -4245,6 +4253,7 @@ function render(){
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once">🔎 Search Everywhere</button>
+            <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
@@ -4988,6 +4997,97 @@ function renderUniversalSearchPanel(){
   </div>`;
 }
 
+// A safety net against a missed WhatsApp message, without any live
+// connection to WhatsApp — you export the group chat yourself (group name
+// → More → Export Chat → Without Media, fully built into WhatsApp, no
+// automation, no account risk) and upload that .txt (or paste a chunk of
+// it) here. Every message in it is run through the same parser the normal
+// import uses, then cross-checked against the currently selected date's
+// rows — anything that looks like a real call but has no matching row yet
+// gets flagged for a quick look. Only messages the parser recognized via a
+// real structured shape count as "call-shaped" (the parser's own generic
+// "could not parse this line" catch-all is excluded here) — otherwise
+// ordinary chat ("ok", "thanks", emoji reactions typed as text) would
+// flood the results with false positives.
+function computeMissedMessages(exportText, rows){
+  const messages = splitClipboardIntoMessages(exportText);
+  const flagged = [];
+  let checkedCount = 0;
+  messages.forEach(msg=>{
+    if(!msg || !msg.trim()) return;
+    let parsed;
+    try{ parsed = parseImportText(msg, state.date, '1st'); }catch(e){ return; }
+    (parsed||[]).forEach(p=>{
+      if(!p.candidate) return;
+      const isUnrecognized = (p.doubts||[]).some(d => d.indexOf('Could not automatically parse this line') === 0);
+      if(isUnrecognized) return; // not confidently a call — most likely ordinary chat, skip
+      checkedCount++;
+      const candKey = normalizeCandidateForMatch(p.candidate);
+      const compKey = p.company ? normalizeCompanyKey(p.company) : null;
+      const matched = rows.some(r=>{
+        if(compKey){
+          if(normalizeCandidateForMatch(r.candidate) === candKey && normalizeCompanyKey(r.company) === compKey) return true;
+          // Same spelling/abbreviation-variant fallback used elsewhere,
+          // anchored to the same company so it stays unambiguous.
+          if(normalizeCompanyKey(r.company) === compKey && sameCandidateFuzzyMatch(p.candidate, r.candidate)) return true;
+          return false;
+        }
+        // No company to anchor a fuzzy check against — exact match only,
+        // same caution as everywhere else a company isn't available.
+        return normalizeCandidateForMatch(r.candidate) === candKey;
+      });
+      if(!matched){
+        flagged.push({ candidate: p.candidate, company: p.company, time: p.time, raw: (p.raw || msg).trim() });
+      }
+    });
+  });
+  return { checkedCount, totalMessages: messages.length, flagged };
+}
+function renderMissedCheckPanel(){
+  const r = state.missedCheckResults;
+  let body = '';
+  if(state.missedCheckLoading){
+    body = `<div class="hint"><span class="spinner"></span> Checking…</div>`;
+  } else if(state.missedCheckError){
+    body = `<div class="hint" style="color:var(--coral)">${escapeHtml(state.missedCheckError)}</div>`;
+  } else if(r){
+    if(!r.checkedCount){
+      body = `<div class="hint">No call-shaped messages recognized in that text — either nothing to check, or the export format wasn't recognized. If you pasted a genuine chat export and this looks wrong, paste a smaller chunk to double check.</div>`;
+    } else if(!r.flagged.length){
+      body = `<div class="hint" style="color:var(--teal)">✅ Nothing missed — all ${r.checkedCount} call-shaped message(s) found in that text already have a matching row for <b>${escapeHtml(state.date)}</b>.</div>`;
+    } else {
+      const rowsHtml = r.flagged.map((f,i)=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(f.candidate)}${f.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(f.company)}</span>`:''}</div>
+          <div class="notif-detail">
+            ${f.time?`<span class="notif-chip">${escapeHtml(f.time)}</span>`:''}
+            <span class="notif-chip" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(f.raw)}">${escapeHtml(f.raw)}</span>
+          </div>
+          <button type="button" class="btn ghost missed-copy-btn" data-idx="${i}" style="margin-top:6px;font-size:11.5px;padding:4px 10px">📋 Copy text</button>
+        </div>
+      `).join('');
+      body = `<div class="hint" style="margin-bottom:10px">Checked ${r.checkedCount} call-shaped message(s) against <b>${escapeHtml(state.date)}</b>'s list — ${r.flagged.length} don't have a matching row yet:</div>${rowsHtml}
+      <div class="hint" style="margin-top:12px">Copy any of these, then use "📥 Import" → "📋 Paste from clipboard" to bring it in the normal way.</div>`;
+    }
+  } else {
+    body = `<div class="hint">Paste a WhatsApp chat export below, or upload the .txt file (group name → More → Export Chat → Without Media). This checks against whichever date is currently selected (<b>${escapeHtml(state.date)}</b>) — switch dates above first if you're checking a different day.</div>`;
+  }
+  return `<div class="import-panel">
+    <div class="add-row" style="margin-top:0;margin-bottom:10px;flex-wrap:wrap;gap:10px;align-items:center">
+      <label class="btn ghost" style="cursor:pointer;margin:0">
+        ⬆ Upload .txt export
+        <input type="file" id="missedCheckFileInput" accept=".txt" style="display:none">
+      </label>
+      <div class="hint" style="margin:0">or paste below</div>
+    </div>
+    <textarea id="missedCheckText" placeholder="Paste an exported chat, or a chunk of it…">${escapeHtml(state.missedCheckText||'')}</textarea>
+    <div class="row">
+      <div class="hint">Nothing here is sent anywhere automatically — this only checks the text you give it, once, when you tap Check.</div>
+      <button class="btn primary" id="runMissedCheckBtn">🔍 Check</button>
+    </div>
+    ${body}
+  </div>`;
+}
 
 function renderNotificationsPanel(){
   const tabs = [
@@ -7138,6 +7238,64 @@ function attachHandlers(conflictIds){
   const universalSearchInput = document.getElementById('universalSearchInput');
   if(universalSearchInput) universalSearchInput.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runUniversalSearchBtn').click(); }
+  });
+  const toggleMissedCheckBtn = document.getElementById('toggleMissedCheck');
+  if(toggleMissedCheckBtn) toggleMissedCheckBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
+  const missedCheckFileInput = document.getElementById('missedCheckFileInput');
+  if(missedCheckFileInput) missedCheckFileInput.addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      state.missedCheckText = text;
+      render();
+      const runBtn = document.getElementById('runMissedCheckBtn');
+      if(runBtn) runBtn.click();
+    }catch(err){
+      state.missedCheckError = 'Could not read that file: ' + (err && err.message ? err.message : err);
+      render();
+    }
+    missedCheckFileInput.value = '';
+  });
+  const runMissedCheckBtn = document.getElementById('runMissedCheckBtn');
+  if(runMissedCheckBtn) runMissedCheckBtn.onclick = async ()=>{
+    const textEl = document.getElementById('missedCheckText');
+    const text = textEl ? textEl.value : state.missedCheckText;
+    state.missedCheckText = text;
+    if(!text || !text.trim()){
+      state.missedCheckError = 'Paste some text or upload a .txt file first.';
+      state.missedCheckResults = null;
+      render();
+      return;
+    }
+    state.missedCheckError = null;
+    state.missedCheckLoading = true;
+    render();
+    try{
+      state.missedCheckResults = computeMissedMessages(text, state.rows);
+    }catch(err){
+      state.missedCheckError = 'Something went wrong checking that text: ' + (err && err.message ? err.message : err);
+      state.missedCheckResults = null;
+    }
+    state.missedCheckLoading = false;
+    render();
+    const textElAfter = document.getElementById('missedCheckText');
+    if(textElAfter) textElAfter.value = state.missedCheckText;
+  };
+  document.querySelectorAll('.missed-copy-btn').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const idx = Number(btn.dataset.idx);
+      const flagged = state.missedCheckResults && state.missedCheckResults.flagged;
+      const item = flagged && flagged[idx];
+      if(!item) return;
+      try{
+        await navigator.clipboard.writeText(item.raw);
+        btn.textContent = '✓ Copied';
+        setTimeout(()=>{ btn.textContent = '📋 Copy text'; }, 1500);
+      }catch(err){
+        alert('Could not copy — select and copy the text manually instead.');
+      }
+    };
   });
   // These small badges (P, ↻, C, !, ⚕/🎓 category, 📡 portal match, ⏰
   // conflict, the status pill) put their real information in a hover
