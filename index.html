@@ -3051,12 +3051,36 @@ function parseClosureText(text){
   });
   return results;
 }
+// A reschedule/detail message is typed independently from the original
+// call list, often by a different person on a different day, so an exact
+// candidate-name match can miss a genuine spelling/abbreviation variant of
+// the same person (the same gap crossReferenceClosure() had for closures).
+// Falls back to the narrow, same-company-scoped sameCandidateFuzzyMatch
+// check, and only when it resolves to exactly one candidate — otherwise
+// refuses to guess, same as an exact miss would.
+function findFuzzyCandidateRows(rows, candidateName, company){
+  if(!candidateName) return [];
+  const compKey = company ? normalizeCompanyKey(company) : null;
+  const pool = compKey ? rows.filter(r => normalizeCompanyKey(r.company) === compKey) : rows;
+  const uniqueFuzzy = new Map(); // normalized candidate name -> rows[]
+  pool.forEach(r=>{
+    if(!r.candidate) return;
+    if(sameCandidateFuzzyMatch(candidateName, r.candidate)){
+      const key = r.candidate.trim().toLowerCase();
+      if(!uniqueFuzzy.has(key)) uniqueFuzzy.set(key, []);
+      uniqueFuzzy.get(key).push(r);
+    }
+  });
+  if(uniqueFuzzy.size !== 1) return [];
+  return Array.from(uniqueFuzzy.values())[0];
+}
 // Matches a parsed reschedule message to an existing row — by candidate
 // name (fuzzy/case-insensitive) and time. Company is used as a tiebreaker
 // when there are multiple same-name/same-time matches.
 function matchRescheduleToRow(parsed, rows){
   const key = parsed.candidate.trim().toLowerCase();
-  const candidates = rows.filter(r => (r.candidate||'').trim().toLowerCase() === key);
+  let candidates = rows.filter(r => (r.candidate||'').trim().toLowerCase() === key);
+  if(!candidates.length) candidates = findFuzzyCandidateRows(rows, parsed.candidate, parsed.company);
   if(!candidates.length) return null;
   const timeMatches = candidates.filter(r => (r.time||'').replace(/\s+/g,' ').toUpperCase() === parsed.time.toUpperCase());
   const pool = timeMatches.length ? timeMatches : candidates;
@@ -3078,7 +3102,8 @@ function matchRescheduleToRow(parsed, rows){
 function findExistingCallMatch(parsedRow, existingRows){
   const key = (parsedRow.candidate||'').trim().toLowerCase();
   if(!key) return null;
-  const candidates = existingRows.filter(r => (r.candidate||'').trim().toLowerCase() === key);
+  let candidates = existingRows.filter(r => (r.candidate||'').trim().toLowerCase() === key);
+  if(!candidates.length) candidates = findFuzzyCandidateRows(existingRows, parsedRow.candidate, parsedRow.company);
   if(!candidates.length) return null;
   const normTime = (t)=> (t||'').replace(/\s+/g,'').toUpperCase();
   const timeMatches = candidates.filter(r => normTime(r.time) === normTime(parsedRow.time));
@@ -3122,16 +3147,31 @@ function findExistingCallMatch(parsedRow, existingRows){
 // This is a broader safety net than the "undo last import" banner, which
 // only knows about the single most recent import.
 function findDuplicateCallGroups(rows){
-  const byKey = {};
+  // Group by time+round first (same as before), then cluster candidates
+  // within each of those buckets — exact name match first, falling back to
+  // the narrow sameCandidateFuzzyMatch check for a same-time,
+  // same-round entry whose name is a spelling/abbreviation variant of one
+  // already in the cluster. Same time AND round is already a strong-enough
+  // anchor to allow that fuzzy check here, same reasoning as elsewhere.
+  const byTimeRound = {};
   rows.forEach(r=>{
     if(!r.candidate) return;
-    const key = r.candidate.trim().toLowerCase() + '|' +
-      (r.time||'').replace(/\s+/g,'').toUpperCase() + '|' +
-      (r.round||'').trim().toLowerCase();
-    byKey[key] = byKey[key] || [];
-    byKey[key].push(r);
+    const trKey = (r.time||'').replace(/\s+/g,'').toUpperCase() + '|' + (r.round||'').trim().toLowerCase();
+    byTimeRound[trKey] = byTimeRound[trKey] || [];
+    byTimeRound[trKey].push(r);
   });
-  return Object.values(byKey).filter(g=>g.length>1);
+  const groups = [];
+  Object.values(byTimeRound).forEach(bucket=>{
+    const clusters = [];
+    bucket.forEach(r=>{
+      const key = r.candidate.trim().toLowerCase();
+      let cluster = clusters.find(c => c.key === key) ||
+        clusters.find(c => sameCandidateFuzzyMatch(c.rows[0].candidate, r.candidate));
+      if(cluster){ cluster.rows.push(r); } else { clusters.push({ key, rows: [r] }); }
+    });
+    clusters.forEach(c=>{ if(c.rows.length>1) groups.push(c.rows); });
+  });
+  return groups;
 }
 // When collapsing a duplicate group down to one row, keep whichever copy
 // has the most information filled in (interviewer/role/company/etc) rather
@@ -3176,7 +3216,13 @@ function computeClientTimeConflicts(rows){
     for(let i=0;i<calls.length;i++){
       for(let j=i+1;j<calls.length;j++){
         const a = calls[i], b = calls[j];
-        if((a.candidate||'').trim().toLowerCase() === (b.candidate||'').trim().toLowerCase()) continue; // same candidate, different rounds — not a client conflict
+        // Same candidate, different rounds, isn't a client conflict — already
+        // scoped to the same company (via byCompany above), so it's safe to
+        // also catch a spelling/abbreviation variant of the same person here
+        // rather than only an exact name match, to avoid a false alarm.
+        const sameCandidate = (a.candidate||'').trim().toLowerCase() === (b.candidate||'').trim().toLowerCase() ||
+          sameCandidateFuzzyMatch(a.candidate, b.candidate);
+        if(sameCandidate) continue;
         if(timeToMinutes(a.time) !== timeToMinutes(b.time)) continue;
         const msg = (self, other) => `${self.company} also has ${other.candidate||'another candidate'} scheduled at the exact same time (${other.time}) — the client's interviewer may not be able to do both.`;
         conflictMap.set(a.id, msg(a, b));
@@ -3622,9 +3668,19 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
     // single candidate progressing through their own 2nd round then 3rd
     // round at the same company is normal round progression, not a case of
     // "someone else went through this client before" (that's what the
-    // Repeat Candidates tab is for).
-    const uniqueCandidates = new Set(occ.map(o=>(o.candidate||'').trim().toLowerCase()));
-    if(occ.length > 1 && uniqueCandidates.size > 1){
+    // Repeat Candidates tab is for). Clustered by exact name first, falling
+    // back to sameCandidateFuzzyMatch (already scoped to this one
+    // company via byCompany above) so a spelling/abbreviation variant of
+    // the same candidate across two of their own rounds doesn't get
+    // miscounted as two different people and trigger a false flag.
+    const clusters = [];
+    occ.forEach(o=>{
+      const oKey = (o.candidate||'').trim().toLowerCase();
+      let cluster = clusters.find(c => c.key === oKey) ||
+        clusters.find(c => sameCandidateFuzzyMatch(c.key, o.candidate));
+      if(cluster){ cluster.count++; } else { clusters.push({ key: oKey, count: 1 }); }
+    });
+    if(occ.length > 1 && clusters.length > 1){
       // Most recent date first — today's occurrence (like Reshma's) shows
       // before older ones, so the newest call is what you see immediately.
       occ.sort((a,b)=> b.date.localeCompare(a.date));
@@ -3708,10 +3764,20 @@ async function computeClosuresPerformance(forceRefresh){
     const candKey = normalizeCandidateForMatch(c.candidate);
     const compKey = normalizeCompanyKey(c.company);
     if(!candKey || !compKey){ unmatchedCount++; return; }
-    const match = allRows
-      .slice()
-      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
-      .find(r => normalizeCandidateForMatch(r.candidate) === candKey && normalizeCompanyKey(r.company) === compKey);
+    const sortedRows = allRows.slice().sort((a,b)=> (b._date||'').localeCompare(a._date||''));
+    let match = sortedRows.find(r => normalizeCandidateForMatch(r.candidate) === candKey && normalizeCompanyKey(r.company) === compKey);
+    if(!match){
+      // No exact candidate match — same spelling/abbreviation-variant fallback
+      // as crossReferenceClosure() (e.g. "Sushmitha Polisetti" closure vs.
+      // "Susmitha P" call record), scoped to the SAME company so it stays
+      // unambiguous. Only used when exactly one call at that company fuzzy-
+      // matches; two plausible candidates means refuse to guess and count it
+      // unmatched, same as an exact miss would be.
+      const fuzzyRows = sortedRows.filter(r => r.candidate && normalizeCompanyKey(r.company) === compKey && sameCandidateFuzzyMatch(c.candidate, r.candidate));
+      const uniqueFuzzy = new Map();
+      fuzzyRows.forEach(r=>{ const k = r.candidate.trim().toLowerCase(); if(!uniqueFuzzy.has(k)) uniqueFuzzy.set(k, r); });
+      if(uniqueFuzzy.size === 1) match = Array.from(uniqueFuzzy.values())[0];
+    }
     if(!match || !match.assignee){ unmatchedCount++; return; }
     if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
     const handler = match.assignee;
@@ -6140,6 +6206,26 @@ function firstNameLastInitialFuzzyMatch(nameA, nameB){
     return shortFirstKey.length >= 5 && fullFirstKey.length >= 5 && levenshteinDistance(shortFirstKey, fullFirstKey) <= 2;
   }
   return attempt(nameA, nameB) || attempt(nameB, nameA);
+}
+// Broader "is this plausibly the same real person, typed slightly
+// differently" check used by the cross-reference fixes below (reschedule
+// matching, duplicate detection, repeat-candidate history, client-conflict
+// exclusion, repeat-client round-progression). firstNameLastInitialFuzzyMatch
+// alone only covers an ABBREVIATED name ("First L.") against a full one —
+// it doesn't catch two FULL names that are just spelled slightly
+// differently ("Ramesh Nagulapalli" vs "Ramesh Nagulapally"), which is at
+// least as common in independently-typed WhatsApp messages. Adds exactly
+// the same whole-name typo-tolerance pathway Students Master already uses
+// (normalizeNameKey, length >= 10, Levenshtein <= 2) — same thresholds, same
+// reasoning: only applied to names long enough that a couple of edits is
+// clearly a spelling variant, never a coincidental short-name collision.
+function sameCandidateFuzzyMatch(nameA, nameB){
+  if(firstNameLastInitialFuzzyMatch(nameA, nameB)) return true;
+  const keyA = normalizeNameKey(nameA);
+  const keyB = normalizeNameKey(nameB);
+  if(!keyA || !keyB || keyA.length < 10 || keyB.length < 10) return false;
+  if(Math.abs(keyA.length - keyB.length) > 2) return false;
+  return levenshteinDistance(keyA, keyB) <= 2;
 }
 // Checks a parsed closure against every call record on file (any date,
 // not just today) — the whole point being that a closure message and the
@@ -8874,13 +8960,29 @@ async function startApp(){
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
   loadClosures().catch(()=>{});
 }
+// The repeat-candidate scan (scanForRepeatCandidates) groups occurrences by
+// an exact lowercase candidate-name key, so a candidate typed slightly
+// differently on a later date (e.g. from a different coordinator) silently
+// never finds their own prior history — the "handled before"/"already
+// rescheduled once" badges below just never fire, with no visible sign
+// anything was missed. Same gap crossReferenceClosure() had for closures.
+// Falls back to the narrow sameCandidateFuzzyMatch check, refusing
+// to guess (returning null, same as an exact miss) if more than one entry
+// in the whole history looks like a fuzzy match.
+function findNotificationEntryForCandidate(candidateName){
+  if(!candidateName || !state.notifications) return null;
+  const key = candidateName.trim().toLowerCase();
+  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  if(entry) return entry;
+  const fuzzyMatches = state.notifications.filter(n => sameCandidateFuzzyMatch(candidateName, n.candidate));
+  return fuzzyMatches.length === 1 ? fuzzyMatches[0] : null;
+}
 // Looks up the most recent PRIOR occurrence of this candidate (any date/round
 // other than this exact row) from the repeat-candidate scan results, for the
 // automatic "handled before" hint on each row.
 function findPriorOccurrence(row){
   if(!row.candidate || !state.notifications) return null;
-  const key = row.candidate.trim().toLowerCase();
-  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  const entry = findNotificationEntryForCandidate(row.candidate);
   if(!entry) return null;
   const prior = entry.occurrences.filter(o =>
     !(o.date === state.date && o.time === row.time && o.round === row.round)
@@ -8900,8 +9002,7 @@ function findPriorRescheduleWarning(row){
   if(!row.candidate || !state.notifications) return null;
   const rowCompanyKey = normalizeCompanyKey(row.company);
   if(!rowCompanyKey) return null; // no client on this row — can't confirm it's the same client, so don't guess
-  const key = row.candidate.trim().toLowerCase();
-  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  const entry = findNotificationEntryForCandidate(row.candidate);
   if(!entry) return null;
   return entry.occurrences.find(o =>
     o.status && ['rescheduled','cancelled','not_responded'].includes(o.status) &&
@@ -8923,8 +9024,7 @@ function findPriorSameClientOccurrence(row){
   if(!row.candidate || !row.company || !state.notifications) return null;
   const rowCompanyKey = normalizeCompanyKey(row.company);
   if(!rowCompanyKey) return null;
-  const key = row.candidate.trim().toLowerCase();
-  const entry = state.notifications.find(n => n.candidate.trim().toLowerCase() === key);
+  const entry = findNotificationEntryForCandidate(row.candidate);
   if(!entry) return null;
   const matches = entry.occurrences.filter(o =>
     !(o.date === state.date && o.time === row.time && o.round === row.round) &&
