@@ -6109,6 +6109,38 @@ function classifyCompany(company){
 function normalizeCompanyKey(company){
   return (company||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 }
+// Same idea as the "First L." abbreviation matching in
+// findStudentMasterMatchWithConfidence() above, but symmetric (either name
+// can be the abbreviated one) and with a small amount of typo tolerance on
+// the first name specifically — "Sushmitha Polisetti" in a closure message
+// vs. "Susmitha P" on the original call record needs BOTH the abbreviation
+// (Polisetti -> P) AND a one-letter spelling variant (Sushmitha -> Susmitha)
+// recognized together, which neither the abbreviation check nor the
+// whole-name typo check above catches on its own. Only ever a single,
+// narrow pathway — not the full multi-pathway cascade used for Students
+// Master — because crossReferenceClosure() below additionally scopes this
+// to candidates who had a call at the SAME company, which is a much
+// stronger extra signal than Students Master matching has available, so a
+// single well-targeted check stays safely unambiguous without needing
+// several independent pathways to agree.
+function firstNameLastInitialFuzzyMatch(nameA, nameB){
+  function attempt(shortName, fullName){
+    const shortParts = (shortName||'').trim().split(/\s+/);
+    if(shortParts.length !== 2 || !/^[A-Za-z]\.?$/.test(shortParts[1])) return false;
+    const fullParts = (fullName||'').trim().split(/\s+/);
+    if(fullParts.length < 2) return false;
+    if(fullParts[fullParts.length-1][0].toLowerCase() !== shortParts[1][0].toLowerCase()) return false;
+    const shortFirstKey = normalizeNameKey(shortParts[0]);
+    const fullFirstKey = normalizeNameKey(fullParts[0]);
+    if(!shortFirstKey || !fullFirstKey) return false;
+    if(shortFirstKey === fullFirstKey) return true;
+    // Typo tolerance only on names long enough that a 1-2 letter edit is
+    // clearly a spelling variant rather than a coincidental short-name
+    // collision (e.g. never lets "Sam" fuzzy-match "Sid").
+    return shortFirstKey.length >= 5 && fullFirstKey.length >= 5 && levenshteinDistance(shortFirstKey, fullFirstKey) <= 2;
+  }
+  return attempt(nameA, nameB) || attempt(nameB, nameA);
+}
 // Checks a parsed closure against every call record on file (any date,
 // not just today) — the whole point being that a closure message and the
 // original interview record are two independently-typed pieces of data,
@@ -6120,24 +6152,50 @@ function crossReferenceClosure(candidate, company, allRows){
   const candKey = (candidate||'').trim().toLowerCase();
   if(!candKey) return { status: 'no_match', message: 'No candidate name to check against.' };
   const matches = allRows.filter(r => (r.candidate||'').trim().toLowerCase() === candKey);
-  if(!matches.length){
-    return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started.' };
+  if(matches.length){
+    const compKey = normalizeCompanyKey(company);
+    const matchingCall = matches
+      .slice()
+      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+      .find(r => normalizeCompanyKey(r.company) === compKey);
+    if(matchingCall){
+      return { status: 'match', message: `Matches an existing call — ${matchingCall._date}, "${matchingCall.company}".` };
+    }
+    const companiesOnFile = [...new Set(matches.map(r=>r.company).filter(Boolean))];
+    return {
+      status: 'mismatch',
+      message: companiesOnFile.length
+        ? `Found call(s) for this candidate, but none at "${company}". On file: ${companiesOnFile.join(', ')}.`
+        : `Found call(s) for this candidate, but none had a company on file to compare against.`
+    };
   }
+
+  // No exact name match anywhere on file. Before giving up, check for a
+  // spelling/abbreviation variant of this SAME candidate at this SAME
+  // company — deliberately scoped to that one company (a real extra
+  // signal beyond the name alone) so this stays a safe, unambiguous check
+  // rather than fuzzy-matching a name against every candidate the
+  // business has ever seen, anywhere.
   const compKey = normalizeCompanyKey(company);
-  const matchingCall = matches
-    .slice()
-    .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
-    .find(r => normalizeCompanyKey(r.company) === compKey);
-  if(matchingCall){
-    return { status: 'match', message: `Matches an existing call — ${matchingCall._date}, "${matchingCall.company}".` };
+  if(compKey){
+    const uniqueFuzzyMatches = new Map(); // normalized candidate name -> row
+    allRows.forEach(r=>{
+      if(!r.candidate || normalizeCompanyKey(r.company) !== compKey) return;
+      if(firstNameLastInitialFuzzyMatch(candidate, r.candidate)){
+        const key = r.candidate.trim().toLowerCase();
+        if(!uniqueFuzzyMatches.has(key)) uniqueFuzzyMatches.set(key, r);
+      }
+    });
+    if(uniqueFuzzyMatches.size === 1){
+      const fuzzyRow = Array.from(uniqueFuzzyMatches.values())[0];
+      return {
+        status: 'match',
+        message: `Matches an existing call at "${fuzzyRow.company}" on ${fuzzyRow._date}, entered there as "${fuzzyRow.candidate}" — close enough in spelling/abbreviation that this looks like the same person, but worth a glance.`
+      };
+    }
   }
-  const companiesOnFile = [...new Set(matches.map(r=>r.company).filter(Boolean))];
-  return {
-    status: 'mismatch',
-    message: companiesOnFile.length
-      ? `Found call(s) for this candidate, but none at "${company}". On file: ${companiesOnFile.join(', ')}.`
-      : `Found call(s) for this candidate, but none had a company on file to compare against.`
-  };
+
+  return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started.' };
 }
 
 // A 1st round call running longer than 30 minutes is unusual — worth a second
