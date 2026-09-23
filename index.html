@@ -849,6 +849,9 @@ let state = {
   notifSearchReliability: '',
   hideAllNotifReliability: false,
   trendsData: null,
+  predictiveCapacityWarnings: null,
+  closuresView: 'list',
+  closuresPerformance: null,
   showSummary: false,
   backingUp: false,
   showUsers: false,
@@ -3467,6 +3470,43 @@ async function backupAllData(){
   }
   return backup;
 }
+// When the last full backup was downloaded — tracked per-browser in
+// localStorage, not in the database, since it's purely a local reminder of
+// "did I take a safety-net copy", not app data anyone else needs to see.
+// Deliberately best-effort: a browser that's cleared its storage, or a
+// second device, will just re-prompt sooner than strictly necessary, which
+// is the harmless direction for this kind of nudge to fail in.
+function getLastBackupAt(){
+  try{ return Number(localStorage.getItem('coverage-desk-last-backup-at') || 0); }catch(e){ return 0; }
+}
+function markBackupTaken(){
+  try{ localStorage.setItem('coverage-desk-last-backup-at', String(Date.now())); }catch(e){}
+}
+const BACKUP_REMINDER_DAYS = 14;
+// Shared by the "Backup all data" button in Database Settings and the
+// quick-access one in the Reports menu — same download, two entry points,
+// so it's actually easy to find instead of buried behind Connect Database.
+async function downloadFullBackup(){
+  state.backingUp = true;
+  render();
+  try{
+    const backup = await backupAllData();
+    const text = JSON.stringify(backup, null, 2);
+    const blob = new Blob([text], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `coverage-desk-backup-${state.date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    markBackupTaken();
+  } finally {
+    state.backingUp = false;
+    render();
+  }
+}
 
 // Shared by both cross-date scans below, so we only fetch every date's data
 // once instead of twice.
@@ -3629,6 +3669,44 @@ async function scanClientReliability(forceRefresh){
     .sort((a,b)=> b.rate - a.rate || b.total - a.total);
   return results;
 }
+// Closures (recorded job offers) don't carry a handler field of their own —
+// they're keyed only by candidate/company/salary, from whatever closure
+// message got pasted in. To answer "who's actually closing these", each
+// closure is cross-referenced against every saved call record (candidate +
+// company match, same idea as crossReferenceClosure() above) to recover the
+// call's assignee. A team-level assignee (never an individual) can't be
+// credited to any one person, so those — and any closure with no matching
+// call at all — are counted separately rather than silently dropped.
+async function computeClosuresPerformance(forceRefresh){
+  if(!state.closuresLoaded) await loadClosures();
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  function teamOf(assignee){
+    if(!assignee) return null;
+    if(teamNames.has(assignee)) return assignee;
+    const p = state.roster.find(p=>p.name===assignee);
+    return p ? p.team : null;
+  }
+  const byHandler = {};
+  let unmatchedCount = 0;
+  let teamOnlyCount = 0;
+  (state.closures || []).forEach(c=>{
+    const candKey = normalizeCandidateForMatch(c.candidate);
+    const compKey = normalizeCompanyKey(c.company);
+    if(!candKey || !compKey){ unmatchedCount++; return; }
+    const match = allRows
+      .slice()
+      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+      .find(r => normalizeCandidateForMatch(r.candidate) === candKey && normalizeCompanyKey(r.company) === compKey);
+    if(!match || !match.assignee){ unmatchedCount++; return; }
+    if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
+    const handler = match.assignee;
+    if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0 };
+    byHandler[handler].closures++;
+  });
+  const rows = Object.values(byHandler).sort((a,b)=> b.closures - a.closures);
+  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length };
+}
 // Monday-anchored week key for bucketing calls into weeks. Dates are stored
 // as plain YYYY-MM-DD calendar-date strings (no time component), so this
 // works entirely in UTC-space (Date.UTC in, getUTCDay/setUTCDate/toISOString
@@ -3656,7 +3734,18 @@ const TRENDS_MIN_HANDLER_CALLS = 5; // below this a per-handler rate is too nois
 async function scanCallTrends(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
   const teamNames = new Set(state.roster.map(p=>p.team));
+  function teamOf(assignee){
+    if(!assignee) return null;
+    if(teamNames.has(assignee)) return assignee;
+    const p = state.roster.find(p=>p.name===assignee);
+    return p ? p.team : null;
+  }
   const byWeek = {};
+  // Per-team weekly volume, alongside the overall per-week rollup above —
+  // feeds computePredictiveCapacityWarnings() below. Only rows with a
+  // resolvable team (an actual assignee, not left blank) count, same as
+  // the per-handler reschedule-rate breakdown just below.
+  const byTeamWeek = {};
   allRows.forEach(row=>{
     if(!row._date || row.woi) return;
     const wk = weekStartDateKey(row._date);
@@ -3665,8 +3754,17 @@ async function scanCallTrends(forceRefresh){
     w.total++;
     if(row.status && RESCHED_STATUSES.includes(row.status)) w.bad++;
     if(row.roundType) w.roundTypeCounts[row.roundType] = (w.roundTypeCounts[row.roundType]||0) + 1;
+    const team = teamOf(row.assignee);
+    if(team){
+      byTeamWeek[team] = byTeamWeek[team] || {};
+      byTeamWeek[team][wk] = (byTeamWeek[team][wk] || 0) + 1;
+    }
   });
   const weeks = Object.values(byWeek).sort((a,b)=> a.week.localeCompare(b.week));
+  const teamWeeks = {};
+  Object.entries(byTeamWeek).forEach(([team, wkMap])=>{
+    teamWeeks[team] = Object.entries(wkMap).map(([week,total])=>({week,total})).sort((a,b)=>a.week.localeCompare(b.week));
+  });
 
   const handlerTotals = {}, handlerBad = {};
   allRows.forEach(row=>{
@@ -3679,7 +3777,28 @@ async function scanCallTrends(forceRefresh){
     .map(name => ({ name, total: handlerTotals[name], bad: handlerBad[name]||0, rate: (handlerBad[name]||0) / handlerTotals[name] }))
     .sort((a,b)=> b.rate - a.rate);
 
-  return { weeks, handlerRates };
+  return { weeks, handlerRates, teamWeeks };
+}
+// Trend-only capacity warning — deliberately NOT based on any assumed
+// "calls per person" ceiling (nothing in this app establishes what that
+// ceiling should be, and inventing one would be a guess dressed up as a
+// rule). Instead this only flags a team whose weekly volume has risen for
+// 3 straight weeks in a row, paired with today's headcount for context, so
+// a human can judge whether that's actually a problem — same "flag it,
+// don't decide it" approach as computeWorkloadWarnings/computeCapacityRiskWarnings.
+function computePredictiveCapacityWarnings(trendsData){
+  if(!trendsData || !trendsData.teamWeeks) return [];
+  const results = [];
+  Object.entries(trendsData.teamWeeks).forEach(([team, weeks])=>{
+    if(weeks.length < 3) return; // not enough history for a real trend
+    const last3 = weeks.slice(-3);
+    const risingEachWeek = last3[0].total < last3[1].total && last3[1].total < last3[2].total;
+    if(!risingEachWeek) return;
+    const growthPct = last3[0].total > 0 ? Math.round(((last3[2].total - last3[0].total) / last3[0].total) * 100) : null;
+    const headcount = state.roster.filter(p=>p.team===team).length;
+    results.push({ team, weeks: last3.map(w=>w.total), growthPct, headcount });
+  });
+  return results;
 }
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
@@ -4052,6 +4171,7 @@ function render(){
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="quickBackupBtn" ${state.backingUp?'disabled':''} title="Downloads every date you've ever saved — calls, roster, notes — as one JSON file, for safekeeping outside this app">${state.backingUp?'⬇ Preparing backup…':'🗄️ Backup All Data'}</button>` : ''}
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
@@ -4081,6 +4201,18 @@ function render(){
     ` : `
     ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
     ${(()=>{ const risk = computeCapacityRiskWarnings(); return risk.length ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim,rgba(255,107,107,0.12));border:1px solid var(--coral);padding:10px 14px;border-radius:8px;margin-bottom:16px">🚨 ${risk.map(t=>`${escapeHtml(t.name)} is down to ${t.capacity} of ${t.total} today (${t.absent} absent)`).join('. ')} — even a normal day's volume could overload them. Worth planning overflow ahead of time rather than after calls start piling up.</div>` : ''; })()}
+    ${(()=>{ const pred = state.predictiveCapacityWarnings||[]; return pred.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim,rgba(245,182,66,0.12));border:1px solid var(--amber);padding:10px 14px;border-radius:8px;margin-bottom:16px">📈 ${pred.map(p=>`${escapeHtml(p.team)}'s weekly volume has risen for 3 weeks running (${p.weeks.join(' → ')}), headcount is ${p.headcount}`).join('. ')} — from the last Trends scan. Worth a look before it becomes a capacity problem. See Reports → Trends Over Time.</div>` : ''; })()}
+    ${(()=>{
+      if(CURRENT_ROLE!=='admin') return '';
+      const lastBackupAt = getLastBackupAt();
+      const daysSince = lastBackupAt ? Math.floor((Date.now()-lastBackupAt)/86400000) : null;
+      if(daysSince !== null && daysSince < BACKUP_REMINDER_DAYS) return '';
+      const msg = daysSince===null ? "You haven't taken a full backup yet" : `It's been ${daysSince} days since your last full backup`;
+      return `<div class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+        <span>🗄️ ${msg} — worth downloading a copy of everything for safekeeping outside this app.</span>
+        <button class="btn ghost" id="backupReminderBtn" ${state.backingUp?'disabled':''} style="flex-shrink:0">${state.backingUp?'⬇ Preparing…':'⬇ Backup Now'}</button>
+      </div>`;
+    })()}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
       <label for="shiftNoteInput" class="shift-note-label-row">
         <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
@@ -4426,11 +4558,32 @@ function renderSummaryPanel(){
     `<div class="summary-detail-row"><span>${escapeHtml(team)}</span><span>${count}</span></div>`
   ).join('');
 
+  // "At a glance" pulls together everything that's already computed
+  // elsewhere for individual banners/panels (absences, overload, capacity
+  // risk, long calls, repeat clients) into one place — meant to answer
+  // "what does today actually look like" without opening five different
+  // panels to piece it together.
+  const absentCount = state.absentIds.length;
+  const workloadWarnings = computeWorkloadWarnings(all);
+  const capacityRisk = computeCapacityRiskWarnings();
+  const longCalls = findLongFirstRoundCalls(all);
+  const repeatClientsToday = findRepeatClients(all);
+  const glanceLines = [
+    { ok: absentCount === 0, text: absentCount ? `🚫 ${absentCount} absent today` : '✓ Full attendance today' },
+    { ok: capacityRisk.length === 0, text: capacityRisk.length ? `🚨 ${capacityRisk.map(t=>`${t.name} down to ${t.capacity}/${t.total}`).join(', ')}` : '✓ No team is down to critical capacity' },
+    { ok: workloadWarnings.length === 0, text: workloadWarnings.length ? `⚠ ${workloadWarnings.map(w=>`${w.name} has ${w.count} calls (avg ${w.avg})`).join(', ')}` : '✓ No one is carrying a lopsided load' },
+    { ok: longCalls.length === 0, text: longCalls.length ? `⏱ ${longCalls.length} 1st round call(s) running over 30 min` : '✓ No unusually long 1st round calls' },
+    { ok: repeatClientsToday.length === 0, text: repeatClientsToday.length ? `🏢 ${repeatClientsToday.length} client(s) have more than one candidate today` : '✓ No client double-booked today' },
+  ];
+  const glanceHtml = glanceLines.map(l=>`<div class="summary-detail-row" style="${l.ok?'':'color:var(--amber)'}"><span>${escapeHtml(l.text)}</span></div>`).join('');
+
   return `<div class="import-panel summary-panel">
     <div class="strip-title" style="margin-bottom:12px"><span>📊 Daily Summary — ${escapeHtml(state.date)}</span>
       <span style="display:flex;gap:6px"><button class="btn ghost" id="copyDailySummaryBtn" style="font-size:11.5px">📋 Copy Daily</button><button class="btn ghost" id="copyWeeklySummaryBtn" style="font-size:11.5px">📋 Copy Weekly</button></span>
     </div>
-    <div class="summary-big-grid">
+    <div class="strip-title" style="margin-bottom:6px"><span>🚦 Today at a Glance</span></div>
+    ${glanceHtml}
+    <div class="summary-big-grid" style="margin-top:14px">
       <div class="summary-big-cell"><div class="summary-big-num">${sum.total}</div><div class="summary-big-lbl">Total Calls</div></div>
       <div class="summary-big-cell sbg-teal"><div class="summary-big-num">${sum.assigned}</div><div class="summary-big-lbl">Assigned</div></div>
       <div class="summary-big-cell sbg-coral"><div class="summary-big-num">${sum.unassigned}</div><div class="summary-big-lbl">Unassigned</div></div>
@@ -4470,6 +4623,29 @@ function buildDailySummaryText(dateKey, rows){
     teamCounts[t] = (teamCounts[t]||0)+1;
   });
   const teamLines = Object.entries(teamCounts).sort((a,b)=>b[1]-a[1]).map(([t,c])=>`  ${t}: ${c}`);
+  // Only meaningful for dateKey === state.date — absences, capacity risk,
+  // and today's workload are all tied to today's live state, not to
+  // whichever date's rows happen to be passed in. This function is only
+  // ever called with (state.date, state.rows), so that always holds, but
+  // it's guarded explicitly anyway rather than silently assuming a caller
+  // never changes.
+  const glanceLines = [];
+  if(dateKey === state.date){
+    const absentCount = state.absentIds.length;
+    const workloadWarnings = computeWorkloadWarnings(rows);
+    const capacityRisk = computeCapacityRiskWarnings();
+    const longCalls = findLongFirstRoundCalls(rows);
+    const repeatClientsToday = findRepeatClients(rows);
+    glanceLines.push(
+      '',
+      'Today at a Glance:',
+      `  ${absentCount ? `${absentCount} absent today` : 'Full attendance today'}`,
+      `  ${capacityRisk.length ? capacityRisk.map(t=>`${t.name} down to ${t.capacity}/${t.total}`).join(', ') : 'No team down to critical capacity'}`,
+      `  ${workloadWarnings.length ? workloadWarnings.map(w=>`${w.name} has ${w.count} calls (avg ${w.avg})`).join(', ') : 'No one carrying a lopsided load'}`,
+      `  ${longCalls.length ? `${longCalls.length} 1st round call(s) running over 30 min` : 'No unusually long 1st round calls'}`,
+      `  ${repeatClientsToday.length ? `${repeatClientsToday.length} client(s) have more than one candidate today` : 'No client double-booked today'}`
+    );
+  }
   return [
     `Coverage Desk — Daily Summary for ${dateKey}`,
     `Total calls: ${sum.total}`,
@@ -4478,6 +4654,7 @@ function buildDailySummaryText(dateKey, rows){
     `1st Round: ${firstRound} | 2nd Round & Above: ${advanced}`,
     `Healthcare/Education: ${healthEdu}`,
     `Doubts needing review: ${doubts}`,
+    ...glanceLines,
     '',
     'By Team:',
     ...(teamLines.length ? teamLines : ['  No assignments yet.'])
@@ -4925,6 +5102,14 @@ function renderNotificationsPanel(){
           <div class="notif-name">${escapeHtml(h.name)} <span class="notif-warn" style="color:${barColor}">${pct}% (${h.bad} of ${h.total})</span></div>
         </div>`;
       }).join('') : `<div class="hint">No handler has ${TRENDS_MIN_HANDLER_CALLS}+ individually-assigned calls on file yet.</div>`;
+      const predWarnings = state.predictiveCapacityWarnings || [];
+      const predHtml = predWarnings.length ? `
+        <div style="font-weight:700;font-size:13px;margin:14px 0 6px">📈 Predictive capacity warnings</div>
+        <div class="hint" style="margin-bottom:8px">A team whose weekly volume has risen for 3 weeks running — not a hard rule, just a heads-up worth a look before it becomes a same-day scramble.</div>
+        ${predWarnings.map(p=>`<div class="notif-row">
+          <div class="notif-name">${escapeHtml(p.team)} <span class="notif-warn" style="color:var(--amber)">${p.weeks.join(' → ')} calls/week${p.growthPct!=null?` (+${p.growthPct}%)`:''}</span></div>
+          <div class="notif-detail"><span class="notif-chip">Current headcount: ${p.headcount}</span></div>
+        </div>`).join('')}` : '';
       content = `
         <div class="row" style="margin-bottom:8px">
           <div class="hint">${state.trendsData.weeks.length} week(s) on file, oldest first.</div>
@@ -4933,7 +5118,8 @@ function renderNotificationsPanel(){
         <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume &amp; reschedule rate by week</div>
         ${weeksHtml}
         <div style="font-weight:700;font-size:13px;margin:14px 0 6px">Reschedule rate by handler</div>
-        ${handlerHtml}`;
+        ${handlerHtml}
+        ${predHtml}`;
     }
   }
 
@@ -5259,13 +5445,39 @@ function renderClosuresPanel(){
     </div>`;
   }).join('');
 
+  const view = state.closuresView || 'list';
+  const perf = state.closuresPerformance;
+  let perfHtml;
+  if(view === 'byHandler'){
+    if(!perf || perf.loading){
+      perfHtml = `<div class="hint">${perf && perf.loading ? '<span class="spinner"></span>Cross-referencing closures against call records…' : 'Loading…'}</div>`;
+    } else if(perf.error){
+      perfHtml = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(perf.error)}</div>`;
+    } else if(!perf.rows.length){
+      perfHtml = `<div class="hint">No closure could be matched to a handler yet — either no closures are recorded, or none matched a call record's candidate/company on file.</div>`;
+    } else {
+      const rowsHtml = perf.rows.map(r=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(r.handler)}${r.team?` <span class="notif-chip">${escapeHtml(r.team)}</span>`:''} <span class="notif-warn" style="color:var(--teal)">${r.closures} closure${r.closures===1?'':'s'}</span></div>
+        </div>
+      `).join('');
+      const notes = [];
+      if(perf.teamOnlyCount) notes.push(`${perf.teamOnlyCount} matched only to a team-level assignment, not an individual`);
+      if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
+      perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
+    }
+  }
   return `<div class="import-panel">
     ${renderClosureImportSection()}
     <div class="summary" style="margin-bottom:14px">
       <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
       <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
     </div>
-    ${list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>'}
+    <div class="notif-tabs" style="margin-bottom:10px">
+      <button class="notif-tab-btn ${view==='list'?'active':''}" data-closuresview="list">📋 All Closures</button>
+      <button class="notif-tab-btn ${view==='byHandler'?'active':''}" data-closuresview="byHandler">🏆 By Handler</button>
+    </div>
+    ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
   </div>`;
 }
 
@@ -6528,6 +6740,7 @@ function attachHandlers(conflictIds){
   if(runTrendsBtn) runTrendsBtn.onclick = async ()=>{
     runTrendsBtn.textContent = 'Scanning…';
     state.trendsData = await scanCallTrends(true);
+    state.predictiveCapacityWarnings = computePredictiveCapacityWarnings(state.trendsData);
     render();
   };
   const hideAllReschedBtn = document.getElementById('hideAllResched');
@@ -6540,9 +6753,25 @@ function attachHandlers(conflictIds){
     render();
   });
   document.querySelectorAll('.notif-tab-btn').forEach(btn=>{
-    btn.onclick = ()=>{
-      state.notifTab = btn.dataset.notiftab;
-      render();
+    btn.onclick = async ()=>{
+      if(btn.dataset.notiftab){
+        state.notifTab = btn.dataset.notiftab;
+        render();
+        return;
+      }
+      if(btn.dataset.closuresview){
+        state.closuresView = btn.dataset.closuresview;
+        if(btn.dataset.closuresview === 'byHandler' && !state.closuresPerformance){
+          state.closuresPerformance = { loading: true, rows: [] };
+          render();
+          try{
+            state.closuresPerformance = await computeClosuresPerformance(false);
+          }catch(e){
+            state.closuresPerformance = { loading: false, rows: [], error: e && e.message ? e.message : 'Could not compute.' };
+          }
+        }
+        render();
+      }
     };
   });
 
@@ -7053,23 +7282,11 @@ function attachHandlers(conflictIds){
   const topLogoutBtn = document.getElementById('topLogoutBtn');
   if(topLogoutBtn) topLogoutBtn.onclick = doLogout;
   const backupAllBtn = document.getElementById('backupAllBtn');
-  if(backupAllBtn) backupAllBtn.onclick = async ()=>{
-    state.backingUp = true;
-    render();
-    const backup = await backupAllData();
-    const text = JSON.stringify(backup, null, 2);
-    const blob = new Blob([text], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `coverage-desk-backup-${state.date}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url), 1000);
-    state.backingUp = false;
-    render();
-  };
+  if(backupAllBtn) backupAllBtn.onclick = downloadFullBackup;
+  const quickBackupBtn = document.getElementById('quickBackupBtn');
+  if(quickBackupBtn) quickBackupBtn.onclick = ()=>{ state.showMoreMenu = false; downloadFullBackup(); };
+  const backupReminderBtn = document.getElementById('backupReminderBtn');
+  if(backupReminderBtn) backupReminderBtn.onclick = downloadFullBackup;
   const toggleConflictsBtn = document.getElementById('toggleConflicts');
   if(toggleConflictsBtn) toggleConflictsBtn.onclick = ()=>{ openOnlyPanel('showConflicts'); render(); };
   document.querySelectorAll('.conflict-reassign').forEach(sel=>{
