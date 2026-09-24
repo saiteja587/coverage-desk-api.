@@ -837,6 +837,7 @@ let state = {
   saveError: '',
   portalSyncedAt: '',
   portalDrivingPersonFillCount: 0,
+  portalDrivingPersonSaveError: '',
   notifTab: 'absent',
   repeatClientsAdvanced: null,
   notifSearchCandidates: '',
@@ -1089,6 +1090,17 @@ async function apiCall(resource, opts){
 //     (fetchPortalSync), never on page load or date change, matching the
 //     existing "never auto-load Portal data" rule
 // Returns how many rows it actually filled, so the sync panel can say so.
+// Deliberately does NOT call markDirty() — Driving Person is its own
+// self-saving field (see the per-row select's onchange handler below, and
+// saveDrivingPersons() above), completely separate from the batched
+// "Save changes" flow that saveAllChanges() drives. Relying on the dirty
+// flag here was the actual bug reported 2026-09-24: filled values showed
+// "Remember to Save", but the general Save button (and autosave, and
+// Ctrl+S) only ever calls saveAllChanges(), which never touches the
+// driving_person endpoint — so a portal-filled value was never actually
+// persisted no matter how many times "Save" was clicked. The caller
+// (fetchPortalSync) now saves the fill immediately instead, exactly like
+// a manual edit to the same field does.
 function fillDrivingPersonFromPortal(){
   if(CURRENT_ROLE !== 'admin' && CURRENT_ROLE !== 'team_lead') return 0;
   let filled = 0;
@@ -1100,7 +1112,6 @@ function fillDrivingPersonFromPortal(){
       filled++;
     }
   });
-  if(filled) markDirty();
   return filled;
 }
 async function fetchPortalSync(mode){
@@ -1140,6 +1151,18 @@ async function fetchPortalSync(mode){
     state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
     state.portalSyncedAt = new Date().toLocaleTimeString();
     state.portalDrivingPersonFillCount = fillDrivingPersonFromPortal();
+    state.portalDrivingPersonSaveError = '';
+    // Persist the fill right away, the same way a manual edit to this field
+    // saves itself — the general Save button never covers Driving Person
+    // (see the comment on fillDrivingPersonFromPortal), so without this the
+    // filled names would show on screen but silently vanish on next reload.
+    if(state.portalDrivingPersonFillCount > 0){
+      try{
+        await saveDrivingPersons();
+      }catch(saveErr){
+        state.portalDrivingPersonSaveError = 'Filled ' + state.portalDrivingPersonFillCount + ' Driving Person value(s) from this sync, but saving them failed: ' + (saveErr && saveErr.message ? saveErr.message : saveErr) + '. They are showing on screen but are NOT saved yet — try syncing again.';
+      }
+    }
   }catch(e){
     state.portalSyncError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
   }
@@ -1149,14 +1172,40 @@ async function fetchPortalSync(mode){
 // Shows whatever was last saved in the database instantly, without
 // waiting on the slow Apps Script bridge — used the moment the panel
 // opens, before the person even asks for a fresh pull.
+//
+// FIX (2026-09-24): this used to only ever ask for the cache under
+// today's date-scoped key ("assignments:<date>"), which is the key a
+// "Sync Today" run writes to — but a "Full Sync" run writes its cache
+// under a DIFFERENT key ("assignments:ALL"), since it has no single date
+// of its own. So if the last real sync anyone ran was a Full Sync, this
+// date-scoped lookup found nothing and the panel looked empty on
+// reopen/refresh even though a fresh copy really was sitting in the
+// database — just under the other key. Now falls back to the ALL-scoped
+// cache when the date-scoped one comes back empty.
+//
+// Also now restores state.portalAssignments (not just state.portalSyncData,
+// which only feeds this panel's own table) from whichever cache actually
+// has data — previously the 📡 per-row "Portal shows a different
+// assignee" badges and the Driving Person auto-fill stayed blank from a
+// cache load alone, only ever repopulating once the slower live re-sync
+// that follows this call finished (or silently stayed blank if that live
+// call failed, e.g. the Apps Script bridge being down).
 async function loadPortalSyncCache(){
   if(!API_BASE_URL) return;
   try{
     const dateQs = '&date=' + encodeURIComponent(state.date);
-    const [assignmentsResult, incentivesResult] = await Promise.all([
+    let [assignmentsResult, incentivesResult] = await Promise.all([
       apiCall('portal_sync', {qs:'type=assignments&cached=1' + dateQs}),
       apiCall('portal_sync', {qs:'type=incentives&cached=1'})
     ]);
+    if(!assignmentsResult.data){
+      // Nothing cached under today's date-scoped key — fall back to the
+      // Full Sync's cache key (no date param at all) before giving up.
+      try{
+        const fullResult = await apiCall('portal_sync', {qs:'type=assignments&cached=1'});
+        if(fullResult.data) assignmentsResult = fullResult;
+      }catch(e){ /* fallback is best-effort too */ }
+    }
     if(assignmentsResult.data || incentivesResult.data){
       state.portalSyncData = {
         assignments: assignmentsResult.data || [],
@@ -1164,6 +1213,9 @@ async function loadPortalSyncCache(){
       };
       state.portalSyncUpdatedAt = assignmentsResult.generatedAt ? new Date(assignmentsResult.generatedAt).getTime() : null;
       state.portalSyncFromCache = true;
+      if(assignmentsResult.data){
+        state.portalAssignments = assignmentsResult.data.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
+      }
       render();
     }
   }catch(e){ /* cache is best-effort; a manual sync still works without it */ }
@@ -1619,6 +1671,7 @@ async function loadDay(dateStr){
   // date the sync happened on, so switching dates doesn't leave a stale
   // "filled N calls" message pointing at a sync that ran on a different day.
   state.portalDrivingPersonFillCount = 0;
+  state.portalDrivingPersonSaveError = '';
   if(API_BASE_URL){
     try{
       const [callsData, notesData, finalData, statusData] = await Promise.all([
@@ -6145,7 +6198,7 @@ function renderPortalSyncPanel(){
   }
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). "Sync Today" is fast and covers just this date; "Full Sync" pulls the entire call history (~20 seconds) — use it sparingly. Every successful sync is saved to Coverage Desk's database so it's still here after a refresh. This never writes anything back to the Portal.</div>
-    ${state.portalDrivingPersonFillCount ? `<div class="hint" style="color:var(--teal);margin-bottom:10px">✓ Filled Driving Person for ${state.portalDrivingPersonFillCount} 1st Round call${state.portalDrivingPersonFillCount===1?'':'s'} from this sync (existing values left untouched). Remember to Save.</div>` : ''}
+    ${state.portalDrivingPersonSaveError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.portalDrivingPersonSaveError)}</div>` : (state.portalDrivingPersonFillCount ? `<div class="hint" style="color:var(--teal);margin-bottom:10px">✓ Filled and saved Driving Person for ${state.portalDrivingPersonFillCount} 1st Round call${state.portalDrivingPersonFillCount===1?'':'s'} from this sync (existing values left untouched).</div>` : '')}
     <div class="row" style="margin-bottom:12px">
       <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
