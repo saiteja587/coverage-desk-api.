@@ -2,6 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// Applied as early as possible (before the stylesheet paints anything) so
+// switching to light mode doesn't show a flash of the dark theme first on
+// every load. Best-effort: if localStorage is blocked (private browsing,
+// cleared site data), this silently falls back to dark, same as before
+// light mode existed.
+try{
+  if(localStorage.getItem('coverage-desk-theme') === 'light'){
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}catch(e){}
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0A0C10">
 <meta name="mobile-web-app-capable" content="yes">
@@ -49,6 +61,44 @@
   --mono:'IBM Plex Mono',monospace;
   --shadow-sm:0 1px 0 rgba(255,255,255,.03) inset, 0 2px 6px rgba(0,0,0,.35);
   --shadow-md:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px rgba(0,0,0,.5);
+}
+/* LIGHT MODE — every rule in this file reads colors through these CSS
+   variables rather than hardcoding them, so overriding them here re-colors
+   the entire app without touching any component's own CSS. Accent colors
+   (teal/amber/coral/etc) are darkened relative to their dark-mode values
+   specifically because several are also used as plain TEXT color on a
+   white background (e.g. save-pending button text, status badges) — the
+   dark-mode values are tuned for contrast against a near-black background
+   and would be too washed-out to read here. */
+:root[data-theme="light"]{
+  --bg:#F4F5F7;
+  --surface:#FFFFFF;
+  --surface-2:#EFF1F4;
+  --surface-3:#E3E6EB;
+  --border:#D7DBE1;
+  --border-soft:#E6E9ED;
+  --text:#1A1D24;
+  --text-muted:#565F6E;
+  --text-faint:#8790A0;
+  --teal:#0E8E7F;
+  --teal-dim:#DEF3EF;
+  --amber:#A8701A;
+  --amber-dim:#FAEBD3;
+  --coral:#C13A2E;
+  --coral-dim:#FBE2DF;
+  --violet:#6A4FD1;
+  --green:#2A8236;
+  --green-dim:#E0F3E2;
+  --sky:#15859F;
+  --sky-dim:#DEF1F6;
+  --blue:#2C5EB0;
+  --violet-dim:#EBE5FC;
+  --gold:#8E6A2C;
+  --pink:#AE4494;
+  --onsite:#B0349B;
+  --onsite-dim:#FBE1F2;
+  --shadow-sm:0 1px 0 rgba(255,255,255,.6) inset, 0 2px 6px rgba(20,25,35,.08);
+  --shadow-md:0 1px 0 rgba(255,255,255,.7) inset, 0 8px 24px rgba(20,25,35,.12);
 }
 *{box-sizing:border-box;}
 /* Removed the blanket html{scroll-behavior:smooth} rule — it animated
@@ -369,6 +419,15 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .notif-tab-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:11.5px;font-weight:600;padding:7px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;}
 .notif-tab-btn.active{background:var(--teal-dim);border-color:#1F4A43;color:var(--teal);}
 .notif-tab-btn .n{margin-left:4px;opacity:.8;}
+
+/* CALENDAR VIEW */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-grid-header{margin-bottom:4px;}
+.cal-weekday{text-align:center;font-size:10.5px;color:var(--text-faint);font-weight:600;padding:2px 0;}
+.cal-cell{position:relative;aspect-ratio:1/1;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px;font-family:var(--mono);}
+.cal-cell-empty{border:none;background:transparent;cursor:default;}
+.cal-daynum{font-size:11px;color:var(--text-muted);}
+.cal-count{font-size:12px;font-weight:700;color:var(--text);margin-top:1px;}
 .notif-tab-content{min-height:60px;}
 .notif-search{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;}
 .notif-row:last-child{border-bottom:none;}
@@ -793,6 +852,11 @@ function isAdvancedRound(round){
 }
 
 let state = {
+  // Reflects whatever the early inline script (see <head>) already applied
+  // to <html data-theme>, so the toggle button's icon is correct on the
+  // very first render rather than defaulting to dark and flipping a moment
+  // later.
+  theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
   date: todayStr(),
   rows: [],
   roster: [],
@@ -812,9 +876,12 @@ let state = {
   rescheduleApplying: false,
   duplicatesReview: null,
   duplicatesRemoving: false,
+  clearAllReview: null,
+  clearAllRemoving: false,
   showPortalSync: false,
   portalSyncData: null,
   portalSyncError: '',
+  portalSyncCacheWarning: '',
   portalSyncLoading: false,
   portalSyncUpdatedAt: null,
   portalSyncMode: 'today',
@@ -829,6 +896,12 @@ let state = {
   incentivesLoading: false,
   incentivesError: '',
   incentivesUpdatedAt: null,
+  showHelp: false,
+  showCalendarView: false,
+  calendarMonth: '',
+  calendarData: null,
+  calendarLoading: false,
+  calendarError: '',
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
@@ -880,13 +953,14 @@ let state = {
   showAllDates: false,
   mobileNoteExpanded: false,
   mobileStripExpanded: false,
-  showClientSearch: false,
-  clientSearchQuery: '',
-  clientSearchResults: null,
   showUniversalSearch: false,
   universalSearchQuery: '',
   universalSearchResults: null,
   universalSearchLoading: false,
+  // Merged in Client History Search's fuzzy company-only matching (2026-09-24)
+  // as a mode here, instead of keeping two separate lookup panels — see
+  // renderUniversalSearchPanel().
+  universalSearchCompanyOnly: false,
   showMissedCheck: false,
   missedCheckText: '',
   missedCheckResults: null,
@@ -1150,6 +1224,12 @@ async function fetchPortalSync(mode){
     };
     state.portalSyncUpdatedAt = Date.now();
     state.portalSyncError = '';
+    // The backend saves this sync to portal_sync_cache so it survives a
+    // refresh; that write used to be able to fail silently (only logged
+    // server-side). It now reports a cacheWarning on the response instead —
+    // surface it so a save failure is visible instead of invisible until
+    // the data mysteriously "disappears" on next load.
+    state.portalSyncCacheWarning = [assignmentsResult.cacheWarning, incentivesResult.cacheWarning].filter(Boolean).join(' ');
     // Also feeds the inline per-row "Portal shows a different assignee"
     // badges (findPortalMatch()) — this used to need its own separate
     // "Sync Portal" quick action buried in a different menu, fetching the
@@ -1284,6 +1364,29 @@ async function fetchIncentivesMonth(monthKey){
     state.incentivesError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
   }
   state.incentivesLoading = false;
+  render();
+}
+// Call-volume-per-day for a whole month, for the Calendar view — reuses the
+// same cross-date fetcher every other "across all dates" report already
+// shares (fetchAllRowsAcrossDates), rather than a separate per-day query
+// loop, so this is one bulk read, not N.
+async function fetchCalendarMonth(monthKey){
+  state.calendarMonth = monthKey;
+  state.calendarLoading = true;
+  state.calendarError = '';
+  render();
+  try{
+    const allRows = await fetchAllRowsAcrossDates(true);
+    const counts = {};
+    allRows.forEach(r=>{
+      if(!r._date || !r._date.startsWith(monthKey)) return;
+      counts[r._date] = (counts[r._date]||0) + 1;
+    });
+    state.calendarData = counts;
+  }catch(e){
+    state.calendarError = e && e.message ? e.message : 'Could not load call history for this month.';
+  }
+  state.calendarLoading = false;
   render();
 }
 async function refreshRole(){
@@ -1664,6 +1767,16 @@ function studentMatchBadgeInfo(candidateName){
   if(state.confirmedStudentMatches.has(pairKey)) return null;
   if(state.rejectedStudentMatches.has(pairKey)) return { kind: 'new' };
   return { kind: 'confirm', student: info.student, reason: info.reason, pairKey };
+}
+// Toggles the light/dark theme by setting the same data-theme attribute
+// the early <head> script reads on next load, and persists the choice
+// (best-effort — a blocked/cleared localStorage just means it won't be
+// remembered next visit, not a broken toggle this session).
+function applyTheme(mode){
+  state.theme = mode;
+  if(mode === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  else document.documentElement.removeAttribute('data-theme');
+  try{ localStorage.setItem('coverage-desk-theme', mode); }catch(e){}
 }
 function todayDateString(){
   const d = new Date();
@@ -2699,6 +2812,49 @@ function exportDayToExcel(){
   XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
 
   XLSX.writeFile(wb, `Coverage-Desk-${state.date}.xlsx`);
+}
+// Same idea as exportDayToExcel, but for the Incentives panel's monthly
+// data instead of a single day's calls — a per-handler sheet plus a
+// per-team summary sheet, matching the numbers already shown in the panel
+// exactly (same source data, just written to a file for management).
+function exportIncentivesToExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('The Excel library did not load (probably a network/ad-blocker issue) — try refreshing the page.');
+    return;
+  }
+  const d = state.incentivesData;
+  const monthKey = state.incentivesMonth || currentMonthKey();
+  const byHandler = (d && d.byHandler) || [];
+  if(!byHandler.length){
+    alert(`There is no incentive data loaded for ${monthKeyLabel(monthKey)} to export.`);
+    return;
+  }
+  const byTeam = (d && d.byTeam) || {};
+  const grandTotal = Number((d && d.grandTotal) || 0);
+
+  const handlerRows = byHandler.slice().sort((a,b)=> Number(b.total||0) - Number(a.total||0)).map(r=>({
+    'Team': r.team || r.teamCode || '',
+    'Handler': r.handler || '',
+    'Promotion': Number(r.promotion||0),
+    'Selection': Number(r.selection||0),
+    'Total': Number(r.total||0),
+    'Records': Number(r.records||0),
+  }));
+  const teamRows = [
+    { 'Team': 'Grand Total', 'Total': grandTotal },
+    ...Object.keys(byTeam).map(code=>({ 'Team': byTeam[code].label || code, 'Total': Number(byTeam[code].total||0) })),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const handlerSheet = XLSX.utils.json_to_sheet(handlerRows);
+  handlerSheet['!cols'] = [{wch:20},{wch:22},{wch:12},{wch:12},{wch:12},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, handlerSheet, 'By Handler');
+
+  const teamSheet = XLSX.utils.json_to_sheet(teamRows);
+  teamSheet['!cols'] = [{wch:22},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, teamSheet, 'By Team');
+
+  XLSX.writeFile(wb, `Coverage-Desk-Incentives-${monthKey}.xlsx`);
 }
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
@@ -4260,11 +4416,13 @@ function closeAllPanels(){
   state.showClosures = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
-  state.showClientSearch = false;
   state.showUniversalSearch = false;
+  state.showCalendarView = false;
+  state.showHelp = false;
   state.showMissedCheck = false;
   state.missedCheckReviewItems = null;
   state.duplicatesReview = null;
+  state.clearAllReview = null;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4285,11 +4443,13 @@ function getActivePanelName(){
   if(state.showClosures) return 'closures';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
-  if(state.showClientSearch) return 'clientSearch';
   if(state.showUniversalSearch) return 'universalSearch';
+  if(state.showCalendarView) return 'calendarView';
+  if(state.showHelp) return 'help';
   if(state.missedCheckReviewItems) return 'missedCheckReview';
   if(state.showMissedCheck) return 'missedCheck';
   if(state.duplicatesReview) return 'duplicatesReview';
+  if(state.clearAllReview) return 'clearAllReview';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -4316,11 +4476,13 @@ function renderActivePanel(name){
   if(name === 'closures') return renderClosuresPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
-  if(name === 'clientSearch') return renderClientSearchPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
+  if(name === 'calendarView') return renderCalendarViewPanel();
+  if(name === 'help') return renderHelpPanel();
   if(name === 'missedCheck') return renderMissedCheckPanel();
   if(name === 'missedCheckReview') return renderMissedCheckReviewPanel();
   if(name === 'duplicatesReview') return renderDuplicatesReviewPanel();
+  if(name === 'clearAllReview') return renderClearAllReviewPanel();
   return '';
 }
 function panelTitle(name){
@@ -4329,9 +4491,9 @@ function panelTitle(name){
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
-    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
+    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
-    duplicatesReview:'Confirm Remove Duplicates'
+    duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts'
   };
   return titles[name] || '';
 }
@@ -4430,12 +4592,13 @@ function render(){
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
-            <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once">🔎 Search Everywhere</button>
+            <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
+            <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
+            <button class="more-menu-item" id="toggleHelp" title="Keyboard shortcuts and a quick reference for where things live">❔ Help &amp; Shortcuts</button>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
-            <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
             ${CURRENT_ROLE==='admin' ? (()=>{
@@ -4452,6 +4615,7 @@ function render(){
           </div>` : ''}
         </div>
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${state.dirty ? 'save-pending' : ''}" id="saveAllBtn" ${state.saving?'disabled':''}>${state.saving ? '<span class="spinner"></span>Saving…' : (state.dirty ? '💾 Save changes' : '✓ All saved')}</button>` : ''}
+        <button class="arrow-btn" id="toggleThemeBtn" title="${state.theme==='light' ? 'Switch to dark mode' : 'Switch to light mode'}">${state.theme==='light' ? '🌙' : '☀️'}</button>
       </div>
     </div>
     ${state.loadError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
@@ -4470,6 +4634,10 @@ function render(){
       <span>📡 Portal sync error: ${escapeHtml(state.portalSyncError)}</span>
       <button class="btn ghost" id="portalSyncErrorRetryBtn" style="flex-shrink:0">↻ Retry</button>
     </div>` : ''}
+    ${(state.portalSyncCacheWarning && !state.portalSyncError) ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>⚠ ${escapeHtml(state.portalSyncCacheWarning)}</span>
+      <button class="btn ghost" id="dismissPortalCacheWarningBtn" style="flex-shrink:0">Dismiss</button>
+    </div>` : ''}
     ${(state.portalSyncedAt && !state.portalSyncError) ? `<div class="hint" style="background:var(--panel-2,rgba(255,255,255,0.04));border:1px solid var(--border);padding:8px 14px;border-radius:8px;margin:-10px 0 16px">📡 Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
     ${activePanel ? `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
@@ -4478,9 +4646,33 @@ function render(){
     </div>
     ${renderActivePanel(activePanel)}
     ` : `
-    ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
-    ${(()=>{ const risk = computeCapacityRiskWarnings(); return risk.length ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim,rgba(255,107,107,0.12));border:1px solid var(--coral);padding:10px 14px;border-radius:8px;margin-bottom:16px">🚨 ${risk.map(t=>`${escapeHtml(t.name)} is down to ${t.capacity} of ${t.total} today (${t.absent} absent)`).join('. ')} — even a normal day's volume could overload them. Worth planning overflow ahead of time rather than after calls start piling up.</div>` : ''; })()}
-    ${(()=>{ const pred = state.predictiveCapacityWarnings||[]; return pred.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim,rgba(245,182,66,0.12));border:1px solid var(--amber);padding:10px 14px;border-radius:8px;margin-bottom:16px">📈 ${pred.map(p=>`${escapeHtml(p.team)}'s weekly volume has risen for 3 weeks running (${p.weeks.join(' → ')}), headcount is ${p.headcount}`).join('. ')} — from the last Trends scan. Worth a look before it becomes a capacity problem. See Reports → Trends Over Time.</div>` : ''; })()}
+    ${(()=>{
+      // Staffing/capacity alerts used to each render as their own fully
+      // separate bordered box, stacked with a gap between — fine with one,
+      // but three at once (a real possibility: overloaded handler + low
+      // capacity + a rising trend can all be true the same day) looked like
+      // three unrelated pop-ups rather than one coherent "today's staffing
+      // picture". Now grouped under one shared card (2+ active) so they
+      // read as one alert with a few lines, not three; severity colors
+      // (coral for capacity risk, amber for the other two) are kept per
+      // row so nothing gets visually downgraded.
+      const items = [];
+      const warnings = computeWorkloadWarnings(state.rows);
+      if(warnings.length) items.push({ color:'var(--amber)', icon:'⚠', text: `${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.` });
+      const risk = computeCapacityRiskWarnings();
+      if(risk.length) items.push({ color:'var(--coral)', icon:'🚨', text: `${risk.map(t=>`${escapeHtml(t.name)} is down to ${t.capacity} of ${t.total} today (${t.absent} absent)`).join('. ')} — even a normal day's volume could overload them. Worth planning overflow ahead of time rather than after calls start piling up.` });
+      const pred = state.predictiveCapacityWarnings||[];
+      if(pred.length) items.push({ color:'var(--amber)', icon:'📈', text: `${pred.map(p=>`${escapeHtml(p.team)}'s weekly volume has risen for 3 weeks running (${p.weeks.join(' → ')}), headcount is ${p.headcount}`).join('. ')} — from the last Trends scan. Worth a look before it becomes a capacity problem. See Reports → Trends Over Time.` });
+      if(!items.length) return '';
+      if(items.length === 1){
+        const it = items[0];
+        return `<div class="hint" style="color:${it.color};background:var(--surface-2);border:1px solid ${it.color};padding:10px 14px;border-radius:8px;margin-bottom:16px">${it.icon} ${it.text}</div>`;
+      }
+      return `<div class="alert-group" style="border:1px solid var(--border);border-radius:8px;margin-bottom:16px;overflow:hidden">
+        <div style="padding:8px 14px;background:var(--surface-2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint)">Today's staffing alerts</div>
+        ${items.map(it=>`<div class="hint" style="color:${it.color};padding:9px 14px;border-top:1px solid var(--border-soft)">${it.icon} ${it.text}</div>`).join('')}
+      </div>`;
+    })()}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
       <label for="shiftNoteInput" class="shift-note-label-row">
         <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
@@ -5093,44 +5285,6 @@ function renderConflictsPanel(){
   </div>`;
 }
 
-// Dedicated client-only search across every saved date — distinct from the
-// candidate-focused "Repeat Candidates" scan and the plain "All Dates"
-// browse list, this is specifically for "has this client ever had a
-// scheduling issue with us before" questions, matched with the same fuzzy
-// company-name normalization used everywhere else (so "Sallie Mae" finds
-// "Salliemae" too).
-function renderClientSearchPanel(){
-  const q = (state.clientSearchQuery||'').trim();
-  let body;
-  if(state.clientSearchResults === null){
-    body = `<div class="hint">Type a client name and search — this checks every date you've ever saved calls for, not just today.</div>`;
-  } else if(state.clientSearchResults.length === 0){
-    body = `<div class="hint">No calls found for a client matching "${escapeHtml(q)}".</div>`;
-  } else {
-    const rowsHtml = state.clientSearchResults.map(r=>`
-      <div class="notif-row">
-        <div class="notif-name">${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</div>
-        <div class="notif-detail">
-          <span class="notif-chip">${escapeHtml(r._date)}</span>
-          <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
-          <span class="notif-chip">${escapeHtml(r.company||'')}</span>
-          <span class="notif-chip">${escapeHtml(r.round||'round n/a')}</span>
-          ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
-        </div>
-      </div>
-    `).join('');
-    const uniqueClients = new Set(state.clientSearchResults.map(r=>r.company)).size;
-    body = `<div class="hint" style="margin-bottom:10px">${state.clientSearchResults.length} call(s) across ${uniqueClients} matching client name(s), most recent first.</div>${rowsHtml}`;
-  }
-  return `<div class="import-panel">
-    <div class="add-row" style="margin-top:0;margin-bottom:12px">
-      <input type="text" id="clientSearchInput" placeholder="Client / company name…" value="${escapeHtml(state.clientSearchQuery||'')}" style="flex:1">
-      <button class="btn primary" id="runClientSearchBtn">🔍 Search</button>
-    </div>
-    ${body}
-  </div>`;
-}
-
 // A single box that scans candidate, company, AND assignee together across
 // every saved date at once — meant to be the first place to check "have I
 // seen this person/company before, anywhere", instead of having to first
@@ -5167,11 +5321,15 @@ function renderUniversalSearchPanel(){
     body = `<div class="hint" style="margin-bottom:10px">${state.universalSearchResults.length} call(s) across ${uniqueDates} date(s)${uniqueCandidates?`, ${uniqueCandidates} matching candidate(s)`:''}, most recent first.</div>${rowsHtml}`;
   }
   return `<div class="import-panel">
-    <div class="hint" style="margin-bottom:10px">Searches candidate, company, and assignee together, across every saved date.</div>
+    <div class="hint" style="margin-bottom:10px">${state.universalSearchCompanyOnly ? 'Company-only mode: fuzzy-matches client/company names (tolerates slightly different spelling or punctuation).' : 'Searches candidate, company, and assignee together, across every saved date.'}</div>
     <div class="add-row" style="margin-top:0;margin-bottom:12px">
-      <input type="text" id="universalSearchInput" placeholder="Candidate, company, or assignee…" value="${escapeHtml(state.universalSearchQuery||'')}" style="flex:1">
+      <input type="text" id="universalSearchInput" placeholder="${state.universalSearchCompanyOnly ? 'Client / company name…' : 'Candidate, company, or assignee…'}" value="${escapeHtml(state.universalSearchQuery||'')}" style="flex:1">
       <button class="btn primary" id="runUniversalSearchBtn">🔎 Search</button>
     </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);margin:-6px 0 14px;cursor:pointer">
+      <input type="checkbox" id="universalSearchCompanyOnlyToggle" ${state.universalSearchCompanyOnly?'checked':''}>
+      Company only (fuzzy match) — for looking up a client's history specifically
+    </label>
     ${body}
   </div>`;
 }
@@ -5378,6 +5536,23 @@ function renderDuplicatesReviewPanel(){
   </div>`;
 }
 
+function renderClearAllReviewPanel(){
+  const rows = state.clearAllReview || [];
+  const rowsHtml = rows.map(r=>`<div class="resched-item" style="margin-bottom:8px;padding:8px 10px">
+    <div style="font-weight:600;font-size:13px">${escapeHtml(r.candidate||'(no name)')} — ${escapeHtml(r.time||'no time')} · ${escapeHtml(r.round||'')}</div>
+    <div class="hint">Company: ${escapeHtml(r.company||'—')} · Assignee: ${escapeHtml(r.assignee||'—')}</div>
+  </div>`).join('');
+  return `<div class="import-panel">
+    <div class="resched-warning-banner">⚠ Confirm before clearing: all ${rows.length} call(s) for ${escapeHtml(state.date)} will be removed — listed below. A backup is saved first, so this can still be undone from 🕐 Backups afterward. Nothing is removed until you tap "Confirm &amp; Clear All".</div>
+    ${rowsHtml || '<div class="hint">Nothing to review.</div>'}
+    <div class="row">
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="cancelClearAllReview">Cancel</button>
+        <button class="btn primary" id="confirmClearAll" ${state.clearAllRemoving || !rows.length ? 'disabled':''} style="background:var(--coral);border-color:var(--coral)">${state.clearAllRemoving?'<span class="spinner"></span>Clearing…':`Confirm & Clear All (${rows.length})`}</button>
+      </div>
+    </div>
+  </div>`;
+}
 
 function renderNotificationsPanel(){
   const tabs = [
@@ -6045,6 +6220,78 @@ function renderClosuresPanel(){
   </div>`;
 }
 
+// A month-at-a-glance view of call volume, so a busy/light day is visible
+// without opening every date one by one. Shading is relative to this
+// month's own busiest day (not a fixed scale), since "busy" varies a lot
+// month to month; tapping any day jumps straight there, same confirm-if-
+// dirty guard the date picker and prev/next day buttons already use.
+function renderCalendarViewPanel(){
+  const monthKey = state.calendarMonth || currentMonthKey();
+  const [y, m] = monthKey.split('-').map(Number);
+  const firstOfMonth = new Date(y, m - 1, 1);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const startWeekday = firstOfMonth.getDay(); // 0=Sun
+  const counts = state.calendarData || {};
+  const maxCount = Math.max(1, ...Object.values(counts));
+  const today = todayDateString();
+
+  const cells = [];
+  for(let i=0;i<startWeekday;i++) cells.push('<div class="cal-cell cal-cell-empty"></div>');
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = monthKey + '-' + String(day).padStart(2,'0');
+    const count = counts[dateStr] || 0;
+    const intensity = count ? Math.min(1, count / maxCount) : 0;
+    const bg = count ? `rgba(94,209,178,${(0.12 + intensity*0.55).toFixed(2)})` : 'transparent';
+    const isToday = dateStr === today;
+    const isSelected = dateStr === state.date;
+    cells.push(`<button class="cal-cell" data-cal-date="${dateStr}" style="background:${bg};${isSelected?'box-shadow:inset 0 0 0 2px var(--teal);':''}${isToday && !isSelected?'box-shadow:inset 0 0 0 1px var(--text-muted);':''}" title="${count} call(s) on ${dateStr}">
+      <span class="cal-daynum">${day}</span>
+      ${count ? `<span class="cal-count">${count}</span>` : ''}
+    </button>`);
+  }
+
+  return `<div class="import-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px">
+      <button class="btn ghost" id="calendarPrevMonth">‹</button>
+      <div style="font-weight:700">${escapeHtml(monthKeyLabel(monthKey))}</div>
+      <button class="btn ghost" id="calendarNextMonth">›</button>
+    </div>
+    ${state.calendarError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.calendarError)}</div>` : ''}
+    ${state.calendarLoading ? `<div class="hint" style="margin-bottom:10px"><span class="spinner"></span>Loading…</div>` : ''}
+    <div class="cal-grid cal-grid-header">
+      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-weekday">${d}</div>`).join('')}
+    </div>
+    <div class="cal-grid">${cells.join('')}</div>
+    <div class="hint" style="margin-top:12px">Tap a day to open it. Shading shows call volume relative to this month's busiest day.</div>
+  </div>`;
+}
+
+// Plain reference panel — no data fetching, just documents behavior that
+// otherwise only lives in tooltips or gets learned by trial and error
+// (which menu things live under, what the keyboard shortcuts do).
+function renderHelpPanel(){
+  return `<div class="import-panel">
+    <div style="font-weight:700;font-size:14px;margin-bottom:8px">Keyboard shortcuts</div>
+    <div class="hint" style="margin-bottom:16px">These work whenever you're not typing in a text field.</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:20px">
+      <tbody>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">1 – 5</td><td style="padding:7px 4px">Switch between All Calls / 1st Round / 2nd Round &amp; Above / Doubts / Rescheduled tabs</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">Ctrl/Cmd + S</td><td style="padding:7px 4px">Save changes (admin only)</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">↑ / ↓</td><td style="padding:7px 4px">While editing a text field (Time, Candidate, Company, Round, Duration), jumps to the same field on the row above/below</td></tr>
+      </tbody>
+    </table>
+    <div style="font-weight:700;font-size:14px;margin-bottom:8px">Where things live</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <tbody>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">📊 Reports</td><td style="padding:7px 4px">Search, Calendar, Summary, All Dates, Students Master, Team Sync, Missed Messages check, backups reminder, this Help panel</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">🔧 Admin</td><td style="padding:7px 4px">Team roster, Users, Incentives, Backups, Remove Duplicates, Clear All calls — account/data maintenance, not day-to-day lookups</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">🔔 Notifications</td><td style="padding:7px 4px">Every cross-date report lives here as a tab: absences, repeat candidates/clients, client reliability, trends, WOI aging, workload heatmap, weekly recap</td></tr>
+      </tbody>
+    </table>
+    <div class="hint" style="margin-top:16px">Swipe a row left/right on mobile to quick-assign or delete. Long lists of tabs/menus scroll — swipe them if something looks cut off.</div>
+  </div>`;
+}
+
 function renderIncentivesPanel(){
   const monthKey = state.incentivesMonth || currentMonthKey();
   const d = state.incentivesData;
@@ -6122,6 +6369,7 @@ function renderIncentivesPanel(){
       </div>
       <div style="display:flex;gap:8px;">
         <div class="hint" style="align-self:center">Last updated: ${updatedLabel}</div>
+        ${(d && (d.byHandler||[]).length) ? `<button class="btn ghost" id="exportIncentivesExcelBtn" title="Download this month's incentive totals as an Excel file">📊 Export to Excel</button>` : ''}
         <button class="btn ghost" id="closeIncentives">Close</button>
         <button class="btn primary" id="refreshIncentives" ${state.incentivesLoading?'disabled':''}>${state.incentivesLoading?'<span class="spinner"></span>Loading…':'Refresh'}</button>
       </div>
@@ -7218,6 +7466,8 @@ function attachHandlers(conflictIds){
   if(incentivesNextBtn) incentivesNextBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), 1)); };
   const refreshIncentivesBtn = document.getElementById('refreshIncentives');
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
+  const exportIncentivesExcelBtn = document.getElementById('exportIncentivesExcelBtn');
+  if(exportIncentivesExcelBtn) exportIncentivesExcelBtn.onclick = exportIncentivesToExcel;
   const toggleBackupsBtn = document.getElementById('toggleBackups');
   if(toggleBackupsBtn) toggleBackupsBtn.onclick = async ()=>{
     openOnlyPanel('showBackups');
@@ -7253,12 +7503,33 @@ function attachHandlers(conflictIds){
     addBlankCallRow();
   };
   const clearAllBtn = document.getElementById('clearAll');
-  if(clearAllBtn) clearAllBtn.onclick = async ()=>{
+  if(clearAllBtn) clearAllBtn.onclick = ()=>{
     if(!state.rows.length) return;
-    const ok = confirm(`Remove all ${state.rows.length} calls for ${state.date}? A backup is saved automatically first, so this can be undone from 🕐 Backups if needed.`);
-    if(ok){
-      await createBackup('pre-clear-all', state.date, state.rows);
-      state.rows = []; markDirty(); render();
+    state.showMoreMenu = false;
+    state.clearAllReview = state.rows.map(r=>({ id:r.id, candidate:r.candidate||'', company:r.company||'', time:r.time||'', round:r.round||'', assignee:r.assignee||'' }));
+    render();
+  };
+  const cancelClearAllReview = document.getElementById('cancelClearAllReview');
+  if(cancelClearAllReview) cancelClearAllReview.onclick = ()=>{ state.clearAllReview = null; render(); };
+  const confirmClearAll = document.getElementById('confirmClearAll');
+  if(confirmClearAll) confirmClearAll.onclick = async ()=>{
+    if(!state.clearAllReview || !state.clearAllReview.length) return;
+    state.clearAllRemoving = true;
+    render();
+    await createBackup('pre-clear-all', state.date, state.rows);
+    const clearedCount = state.rows.length;
+    state.rows = [];
+    markDirty();
+    await saveAllChanges();
+    state.clearAllRemoving = false;
+    if(state.saveError){
+      state.clearAllReview = null;
+      render();
+      alert(`Cleared ${clearedCount} call(s) locally, but saving failed: ${state.saveError}. Try "Save changes" again — until then this isn't saved to the database yet.`);
+    } else {
+      state.clearAllReview = null;
+      render();
+      alert(`Cleared all ${clearedCount} call(s) for ${state.date} and saved.\nA backup was taken first — use 🕐 Backups to restore it if needed.`);
     }
   };
   const finalizeBtn = document.getElementById('finalizeBtn');
@@ -7515,6 +7786,16 @@ function attachHandlers(conflictIds){
   if(portalSyncErrorRetryBtn) portalSyncErrorRetryBtn.onclick = ()=>{
     fetchPortalSync(state.portalSyncMode || 'today');
   };
+  const dismissPortalCacheWarningBtn = document.getElementById('dismissPortalCacheWarningBtn');
+  if(dismissPortalCacheWarningBtn) dismissPortalCacheWarningBtn.onclick = ()=>{
+    state.portalSyncCacheWarning = '';
+    render();
+  };
+  const toggleThemeBtn = document.getElementById('toggleThemeBtn');
+  if(toggleThemeBtn) toggleThemeBtn.onclick = ()=>{
+    applyTheme(state.theme === 'light' ? 'dark' : 'light');
+    render();
+  };
   const goHomeBtn = document.getElementById('goHomeBtn');
   if(goHomeBtn) goHomeBtn.onclick = async ()=>{
     if(state.dirty && CURRENT_ROLE==='admin'){
@@ -7592,27 +7873,6 @@ function attachHandlers(conflictIds){
     }
     render();
   };
-  const toggleClientSearchBtn = document.getElementById('toggleClientSearch');
-  if(toggleClientSearchBtn) toggleClientSearchBtn.onclick = ()=>{ openOnlyPanel('showClientSearch'); render(); };
-  const runClientSearchBtn = document.getElementById('runClientSearchBtn');
-  if(runClientSearchBtn) runClientSearchBtn.onclick = async ()=>{
-    const input = document.getElementById('clientSearchInput');
-    const q = input ? input.value.trim() : '';
-    state.clientSearchQuery = q;
-    if(!q){ state.clientSearchResults = []; render(); return; }
-    runClientSearchBtn.textContent = 'Searching…';
-    const allRows = await fetchAllRowsAcrossDates(true);
-    const qKey = normalizeCompanyKey(q);
-    const results = allRows
-      .filter(r => r.company && normalizeCompanyKey(r.company).includes(qKey))
-      .sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
-    state.clientSearchResults = results;
-    render();
-  };
-  const clientSearchInput = document.getElementById('clientSearchInput');
-  if(clientSearchInput) clientSearchInput.addEventListener('keydown', (e)=>{
-    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runClientSearchBtn').click(); }
-  });
   const toggleUniversalSearchBtn = document.getElementById('toggleUniversalSearch');
   if(toggleUniversalSearchBtn) toggleUniversalSearchBtn.onclick = ()=>{ openOnlyPanel('showUniversalSearch'); render(); };
   const runUniversalSearchBtn = document.getElementById('runUniversalSearchBtn');
@@ -7624,17 +7884,62 @@ function attachHandlers(conflictIds){
     state.universalSearchLoading = true;
     render();
     const allRows = await fetchAllRowsAcrossDates(true);
-    const qLower = q.toLowerCase();
-    const results = allRows
-      .filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.assignee||'').toLowerCase().includes(qLower))
-      .sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
+    let results;
+    if(state.universalSearchCompanyOnly){
+      // Client History Search's original behavior, folded in here as a mode
+      // (2026-09-24) rather than kept as a second, separate panel: fuzzy-
+      // normalized company matching only (normalizeCompanyKey), so slightly
+      // different spellings/punctuation of the same client name still match.
+      const qKey = normalizeCompanyKey(q);
+      results = allRows.filter(r => r.company && normalizeCompanyKey(r.company).includes(qKey));
+    } else {
+      const qLower = q.toLowerCase();
+      results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.assignee||'').toLowerCase().includes(qLower));
+    }
+    results.sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
     state.universalSearchResults = results;
     state.universalSearchLoading = false;
     render();
   };
+  const universalSearchCompanyOnlyToggle = document.getElementById('universalSearchCompanyOnlyToggle');
+  if(universalSearchCompanyOnlyToggle) universalSearchCompanyOnlyToggle.onchange = (e)=>{
+    state.universalSearchCompanyOnly = e.target.checked;
+    if(runUniversalSearchBtn && state.universalSearchQuery) runUniversalSearchBtn.click();
+    else render();
+  };
   const universalSearchInput = document.getElementById('universalSearchInput');
   if(universalSearchInput) universalSearchInput.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runUniversalSearchBtn').click(); }
+  });
+  const toggleHelpBtn = document.getElementById('toggleHelp');
+  if(toggleHelpBtn) toggleHelpBtn.onclick = ()=>{ openOnlyPanel('showHelp'); render(); };
+  const toggleCalendarViewBtn = document.getElementById('toggleCalendarView');
+  if(toggleCalendarViewBtn) toggleCalendarViewBtn.onclick = ()=>{
+    const wasOpen = state.showCalendarView;
+    openOnlyPanel('showCalendarView');
+    render();
+    if(!wasOpen) fetchCalendarMonth(state.calendarMonth || currentMonthKey());
+  };
+  const calendarPrevMonthBtn = document.getElementById('calendarPrevMonth');
+  if(calendarPrevMonthBtn) calendarPrevMonthBtn.onclick = ()=>{ fetchCalendarMonth(shiftMonthKey(state.calendarMonth || currentMonthKey(), -1)); };
+  const calendarNextMonthBtn = document.getElementById('calendarNextMonth');
+  if(calendarNextMonthBtn) calendarNextMonthBtn.onclick = ()=>{ fetchCalendarMonth(shiftMonthKey(state.calendarMonth || currentMonthKey(), 1)); };
+  document.querySelectorAll('[data-cal-date]').forEach(cell=>{
+    cell.onclick = async ()=>{
+      const dateStr = cell.getAttribute('data-cal-date');
+      if(state.dirty && !confirm('You have unsaved changes that will be lost if you switch dates without saving. Switch anyway?')) return;
+      closeAllPanels();
+      state.date = dateStr;
+      state.dirty = false;
+      state.lastImportedIds = null;
+      state.dateSwitching = true;
+      render();
+      await loadDay(state.date);
+      state.dateSwitching = false;
+      render();
+      scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
+      scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
+    };
   });
   const toggleMissedCheckBtn = document.getElementById('toggleMissedCheck');
   if(toggleMissedCheckBtn) toggleMissedCheckBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
