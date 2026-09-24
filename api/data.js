@@ -673,6 +673,41 @@ async function handlePortalSyncFetch(req, res) {
           'INSERT INTO portal_sync_cache (cache_key, data_json) VALUES (?,?) ON DUPLICATE KEY UPDATE data_json = ?',
           [cacheKey, JSON.stringify(parsed.data), JSON.stringify(parsed.data)]
         );
+        // FIX (2026-09-24): a Full Sync (no `date` in the request) only ever
+        // wrote ONE cache row - "assignments:ALL" - covering every date it
+        // pulled. That key gets overwritten wholesale by the next Full Sync,
+        // so any date whose ONLY sync was ever a Full Sync had no snapshot
+        // of its own; the frontend could only ever show "whatever the most
+        // recent Full Sync happened to return", not what was true for that
+        // date at the time it was actually synced. Reported by Saiteja as
+        // Portal data looking wiped out when switching to those dates.
+        // Now also fans a Full Sync's assignments out into their own
+        // per-date cache keys ("assignments:<dateKey>"), same as a real
+        // "Sync Today" run for that date would have written - so every date
+        // a Full Sync ever covered gets its own real, independently-updated
+        // snapshot going forward, not just a share of the single ALL blob.
+        if (!date && resourceRequested === 'assignments' && Array.isArray(parsed.data)) {
+          const byDate = {};
+          for (const row of parsed.data) {
+            const d = row && row.dateKey;
+            if (!d) continue;
+            (byDate[d] = byDate[d] || []).push(row);
+          }
+          for (const [d, rows] of Object.entries(byDate)) {
+            const perDateKey = 'assignments:' + d;
+            const json = JSON.stringify(rows);
+            try {
+              await db.query(
+                'INSERT INTO portal_sync_cache (cache_key, data_json) VALUES (?,?) ON DUPLICATE KEY UPDATE data_json = ?',
+                [perDateKey, json, json]
+              );
+            } catch (perDateErr) {
+              // One date's write failing should never block the others or
+              // the overall sync - log and keep going.
+              console.error('portal_sync_cache per-date write failed for', perDateKey, perDateErr);
+            }
+          }
+        }
       } finally {
         await db.end();
       }
