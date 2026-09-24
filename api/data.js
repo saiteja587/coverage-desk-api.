@@ -252,9 +252,10 @@ module.exports = async (req, res) => {
     if (resource === 'student_match_decisions') return await handleStudentMatchDecisions(req, res, db);
     if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
     if (resource === 'closures') return await handleClosures(req, res, db);
+    if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|users|whoami' });
   } catch (err) {
     console.error(err);
     // The full error (including internal details like table/column names,
@@ -873,6 +874,39 @@ async function handleClosures(req, res, db) {
       [values]
     );
     return res.status(200).json({ ok: true, count: values.length });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- closure_manual_match: manual closure<->call pointers ----------
+// A closure is append-only (see handleClosures above) — this table is
+// deliberately separate, not a column on `closures` itself, so a manual
+// match stays a correctable "this closure's real candidate/company
+// spelling, as it appears on an actual call record" pointer layered on
+// top, never a rewrite of the original historical closure text. One row
+// per closure (closure_id is the primary key), so re-matching the same
+// closure a second time just overwrites its own pointer — that's fine,
+// this is current-best-guess routing data, not a historical fact the way
+// the closure itself is. GET returns every override on file; POST
+// upserts exactly one.
+async function handleClosureManualMatch(req, res, db) {
+  if (req.method === 'GET') {
+    const [rows] = await db.query(
+      'SELECT closure_id AS closureId, candidate, company FROM closure_manual_matches'
+    );
+    return res.status(200).json({ rows });
+  }
+  if (req.method === 'POST') {
+    const { closureId, candidate, company } = req.body || {};
+    const cid = Number(closureId);
+    if (!cid || !Number.isInteger(cid)) return res.status(400).json({ error: 'closureId (integer) required' });
+    const cand = (candidate || '').trim(), comp = (company || '').trim();
+    if (!cand || !comp) return res.status(400).json({ error: 'candidate and company (matching an existing call record) are required' });
+    await db.query(
+      'INSERT INTO closure_manual_matches (closure_id, candidate, company) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE candidate = VALUES(candidate), company = VALUES(company)',
+      [cid, cand, comp]
+    );
+    return res.status(200).json({ ok: true });
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
