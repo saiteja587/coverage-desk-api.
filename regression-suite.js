@@ -1247,6 +1247,14 @@ async function main() {
     closeAllPanels();
     render();
   });
+  // Clear All also now opens a review-before-commit screen instead of a
+  // bare confirm() dialog — smoke-test it opens and cancels cleanly. Lives
+  // under the "🔧 Admin" menu (toggleToolsMenu), not "☰ More".
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleToolsMenu', 100);
+  await click('clearAll', 200);
+  await click('cancelClearAllReview', 150);
+  await sPage.evaluate(() => { state.clearAllReview = null; closeAllPanels(); render(); });
   for (const view of ['all', '1st', '2nd', 'doubts', 'rescheduled']) {
     await sPage.evaluate((v) => { closeAllPanels(); state.view = v; render(); }, view);
     await sPage.waitForTimeout(100);
