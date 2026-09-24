@@ -338,6 +338,8 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .mini-badge-newstudent{color:var(--text-muted);border:1px dashed var(--text-faint);cursor:pointer;}
 .mini-badge-confirm-student{color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-weight:800;}
 .mini-badge-recent-import{color:var(--teal);border:1px solid var(--teal);background:var(--teal-dim);}
+.mini-badge-noshow{color:var(--coral);border:1px solid var(--coral);width:auto;min-width:17px;padding:0 3px;}
+.mini-badge-reliability{color:var(--amber);border:1px solid var(--amber);width:auto;min-width:17px;padding:0 3px;font-size:9px;}
 .mini-badge-newstudent:hover{color:var(--text);border-color:var(--text-muted);}
 .doubt-icon{color:var(--amber);}
 .doubt-note-row td{background:var(--amber-dim);color:var(--amber);font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
@@ -882,6 +884,15 @@ let state = {
   missedCheckError: null,
   missedCheckReviewItems: null,
   missedCheckApplying: false,
+  showWoiAging: false,
+  woiAgingData: null,
+  woiAgingLoading: false,
+  showWeeklyRecap: false,
+  weeklyRecapData: null,
+  weeklyRecapLoading: false,
+  showWorkloadHeatmap: false,
+  micListening: false,
+  micTargetId: null,
   allDatesData: null,
   allDatesLoading: false,
   absentIds: [],
@@ -3550,6 +3561,18 @@ function markBackupTaken(){
   try{ localStorage.setItem('coverage-desk-last-backup-at', String(Date.now())); }catch(e){}
 }
 const BACKUP_REMINDER_DAYS = 14;
+// Same localStorage-timestamp pattern as the backup reminder above, but for
+// nudging a "Check for Missed Messages" pass before the day is considered
+// closed out — that check only actually helps if it gets run, and it's easy
+// to forget on a busy day. Keyed per-date (not globally) since "did I check
+// today" resets every day, unlike backups.
+function getLastMissedCheckRunAt(dateKey){
+  try{ return Number(localStorage.getItem('coverage-desk-missed-check-run-'+dateKey) || 0); }catch(e){ return 0; }
+}
+function markMissedCheckRun(){
+  try{ localStorage.setItem('coverage-desk-missed-check-run-'+state.date, String(Date.now())); }catch(e){}
+}
+const MISSED_CHECK_NUDGE_HOUR = 18; // local hour (24h) after which the nudge starts showing, if not yet run today
 // Shared by the "Backup all data" button in Database Settings and the
 // quick-access one in the Reports menu — same download, two entry points,
 // so it's actually easy to find instead of buried behind Connect Database.
@@ -3746,6 +3769,22 @@ async function scanClientReliability(forceRefresh){
     .sort((a,b)=> b.rate - a.rate || b.total - a.total);
   return results;
 }
+// Surfaces the same reliability signal the Client Reliability tab already
+// computes, right on the row where a call is actually being assigned —
+// looking it up separately used to mean opening a whole other tab before
+// noticing a client reschedules constantly. Only flags companies already
+// past scanClientReliability's own CLIENT_RELIABILITY_MIN_CALLS threshold
+// (so a brand-new client with one bad call never shows as "unreliable"),
+// and only once the rate is genuinely notable.
+const COMPANY_RELIABILITY_FLAG_THRESHOLD = 0.3;
+function findCompanyReliabilityFlag(company){
+  if(!company || !state.clientReliabilityData) return null;
+  const key = normalizeCompanyKey(company);
+  if(!key) return null;
+  const entry = state.clientReliabilityData.find(c => normalizeCompanyKey(c.company) === key);
+  if(!entry || entry.rate < COMPANY_RELIABILITY_FLAG_THRESHOLD) return null;
+  return entry;
+}
 // Closures (recorded job offers) don't carry a handler field of their own —
 // they're keyed only by candidate/company/salary, from whatever closure
 // message got pasted in. To answer "who's actually closing these", each
@@ -3886,6 +3925,77 @@ function computePredictiveCapacityWarnings(trendsData){
     results.push({ team, weeks: last3.map(w=>w.total), growthPct, headcount });
   });
   return results;
+}
+// WOI ("Waiting for Invite") rows have no scheduled time yet, so they're
+// easy to lose track of once they've scrolled off the day they were first
+// logged — this pulls every WOI row across every saved date and sorts by
+// how long it's been waiting, oldest first, so nothing sits forgotten.
+async function scanWoiAging(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const todayKey = todayStr();
+  const daysBetween = (a,b)=>{
+    const da = new Date(a+'T00:00:00Z').getTime();
+    const db = new Date(b+'T00:00:00Z').getTime();
+    return Math.max(0, Math.round((db-da)/86400000));
+  };
+  return allRows
+    .filter(r => r.woi && r.candidate)
+    .map(r => ({
+      candidate: r.candidate,
+      company: r.company || '',
+      round: r.round || '',
+      date: r._date || '',
+      daysWaiting: r._date ? daysBetween(r._date, todayKey) : 0,
+    }))
+    .sort((a,b)=> a.date.localeCompare(b.date)); // oldest first
+}
+// Per-coordinator call count for the currently selected date — deliberately
+// synchronous/instant (no cross-date fetch) since it's meant to be glanced
+// at constantly, not run as a manual scan like the other Reports tools.
+function computeAssigneeWorkloadToday(){
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  const counts = {};
+  state.rows.forEach(r=>{
+    if(!r.assignee || r.woi || teamNames.has(r.assignee)) return; // individual assignments only, same exclusion used elsewhere
+    counts[r.assignee] = (counts[r.assignee]||0) + 1;
+  });
+  return Object.entries(counts)
+    .map(([name,count])=>({ name, count, team: (state.roster.find(p=>p.name===name)||{}).team || '' }))
+    .sort((a,b)=> b.count - a.count);
+}
+// A weekly recap per team, built from the same trend + closure data the
+// Trends and Closures tabs already compute — just re-shaped into one
+// "how did this week go, per team" summary instead of requiring five
+// different panels to piece it together.
+async function scanWeeklyRecap(forceRefresh){
+  const [trends, closuresPerf] = await Promise.all([
+    scanCallTrends(forceRefresh),
+    computeClosuresPerformance(forceRefresh),
+  ]);
+  const teamNames = state.roster.map(p=>p.team).filter((t,i,arr)=>arr.indexOf(t)===i);
+  const handlerTeam = {};
+  state.roster.forEach(p=>{ handlerTeam[p.name] = p.team; });
+  const closuresByTeam = {};
+  (closuresPerf.rows||[]).forEach(r=>{
+    const team = r.team || handlerTeam[r.handler];
+    if(!team) return;
+    closuresByTeam[team] = (closuresByTeam[team]||0) + r.closures;
+  });
+  const teams = teamNames.map(team=>{
+    const weeks = (trends.teamWeeks && trends.teamWeeks[team]) || [];
+    const thisWeek = weeks.length ? weeks[weeks.length-1].total : 0;
+    const lastWeek = weeks.length > 1 ? weeks[weeks.length-2].total : null;
+    const changePct = (lastWeek !== null && lastWeek > 0) ? Math.round(((thisWeek-lastWeek)/lastWeek)*100) : null;
+    return {
+      team,
+      callsThisWeek: thisWeek,
+      callsLastWeek: lastWeek,
+      changePct,
+      closures: closuresByTeam[team] || 0,
+      headcount: state.roster.filter(p=>p.team===team).length,
+    };
+  }).filter(t=>t.callsThisWeek>0 || t.closures>0);
+  return { teams, generatedAt: new Date().toISOString() };
 }
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
@@ -4095,6 +4205,9 @@ function closeAllPanels(){
   state.showUniversalSearch = false;
   state.showMissedCheck = false;
   state.missedCheckReviewItems = null;
+  state.showWoiAging = false;
+  state.showWeeklyRecap = false;
+  state.showWorkloadHeatmap = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4119,6 +4232,9 @@ function getActivePanelName(){
   if(state.showUniversalSearch) return 'universalSearch';
   if(state.missedCheckReviewItems) return 'missedCheckReview';
   if(state.showMissedCheck) return 'missedCheck';
+  if(state.showWoiAging) return 'woiAging';
+  if(state.showWeeklyRecap) return 'weeklyRecap';
+  if(state.showWorkloadHeatmap) return 'workloadHeatmap';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -4149,6 +4265,9 @@ function renderActivePanel(name){
   if(name === 'universalSearch') return renderUniversalSearchPanel();
   if(name === 'missedCheck') return renderMissedCheckPanel();
   if(name === 'missedCheckReview') return renderMissedCheckReviewPanel();
+  if(name === 'woiAging') return renderWoiAgingPanel();
+  if(name === 'weeklyRecap') return renderWeeklyRecapPanel();
+  if(name === 'workloadHeatmap') return renderWorkloadHeatmapPanel();
   return '';
 }
 function panelTitle(name){
@@ -4158,7 +4277,8 @@ function panelTitle(name){
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
-    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls'
+    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
+    woiAging:'WOI Aging Tracker', weeklyRecap:'Weekly Team Recap', workloadHeatmap:'Workload Heatmap'
   };
   return titles[name] || '';
 }
@@ -4259,6 +4379,9 @@ function render(){
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages</button>
+            <button class="more-menu-item" id="toggleWoiAging" title="Every 'Waiting for Invite' candidate across all saved dates, oldest first">⏳ WOI Aging Tracker</button>
+            <button class="more-menu-item" id="toggleWorkloadHeatmap" title="Today's call count per coordinator, at a glance">📶 Workload Heatmap</button>
+            <button class="more-menu-item" id="toggleWeeklyRecap" title="Auto-generated weekly recap — call volume, closures, and reliability trend per team">📈 Weekly Team Recap</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
@@ -4305,6 +4428,15 @@ function render(){
       return `<div class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
         <span>🗄️ ${msg} — worth downloading a copy of everything for safekeeping outside this app.</span>
         <button class="btn ghost" id="backupReminderBtn" ${state.backingUp?'disabled':''} style="flex-shrink:0">${state.backingUp?'⬇ Preparing…':'⬇ Backup Now'}</button>
+      </div>`;
+    })()}
+    ${(()=>{
+      const hour = new Date().getHours();
+      if(hour < MISSED_CHECK_NUDGE_HOUR) return '';
+      if(getLastMissedCheckRunAt(state.date)) return ''; // already run today
+      return `<div class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+        <span>🔍 Haven't run "Check for Missed Messages" for ${escapeHtml(state.date)} yet today — worth a quick pass against today's WhatsApp export before calling it done.</span>
+        <button class="btn ghost" id="missedCheckNudgeBtn" style="flex-shrink:0">Check Now</button>
       </div>`;
     })()}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
@@ -4673,7 +4805,7 @@ function renderSummaryPanel(){
 
   return `<div class="import-panel summary-panel">
     <div class="strip-title" style="margin-bottom:12px"><span>📊 Daily Summary — ${escapeHtml(state.date)}</span>
-      <span style="display:flex;gap:6px"><button class="btn ghost" id="copyDailySummaryBtn" style="font-size:11.5px">📋 Copy Daily</button><button class="btn ghost" id="copyWeeklySummaryBtn" style="font-size:11.5px">📋 Copy Weekly</button></span>
+      <span style="display:flex;gap:6px"><button class="btn ghost" id="copyDailySummaryBtn" style="font-size:11.5px">📋 Copy Daily</button><button class="btn ghost" id="copyWeeklySummaryBtn" style="font-size:11.5px">📋 Copy Weekly</button><button class="btn ghost" id="shareWhatsAppBtn" style="font-size:11.5px" title="Opens WhatsApp with the daily summary pre-filled — WhatsApp's own official share link, nothing automated">💬 Share via WhatsApp</button></span>
     </div>
     <div class="strip-title" style="margin-bottom:6px"><span>🚦 Today at a Glance</span></div>
     ${glanceHtml}
@@ -5161,6 +5293,96 @@ function renderMissedCheckReviewPanel(){
   </div>`;
 }
 
+function renderWoiAgingPanel(){
+  const data = state.woiAgingData;
+  let body = '';
+  if(state.woiAgingLoading){
+    body = `<div class="hint"><span class="spinner"></span> Scanning every saved date for WOI candidates…</div>`;
+  } else if(!data){
+    body = `<div class="hint">Scans every saved date for candidates still marked "Waiting for Invite" and lists them oldest-first, so none sit forgotten.</div>`;
+  } else if(!data.length){
+    body = `<div class="hint" style="color:var(--teal)">✅ No WOI candidates outstanding on any saved date.</div>`;
+  } else {
+    const rowsHtml = data.map(w=>{
+      const urgent = w.daysWaiting >= 7;
+      return `<div class="notif-row">
+        <div class="notif-name">${escapeHtml(w.candidate)}${w.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(w.company)}</span>`:''}</div>
+        <div class="notif-detail">
+          <span class="notif-chip" style="${urgent?'color:var(--coral);border-color:var(--coral)':''}">${w.daysWaiting} day${w.daysWaiting===1?'':'s'} waiting</span>
+          ${w.date?`<span class="notif-chip">since ${escapeHtml(w.date)}</span>`:''}
+          ${w.round?`<span class="notif-chip">${escapeHtml(w.round)}</span>`:''}
+        </div>
+      </div>`;
+    }).join('');
+    body = `<div class="hint" style="margin-bottom:10px">${data.length} WOI candidate${data.length===1?'':'s'} outstanding, oldest first:</div>${rowsHtml}`;
+  }
+  return `<div class="import-panel">
+    ${body}
+    <div class="row" style="margin-top:12px">
+      <div class="hint">Open the candidate's date (via All Dates) to update their real scheduled time once you hear back.</div>
+      <button type="button" class="btn primary" id="runWoiAgingScan" ${state.woiAgingLoading?'disabled':''}>${state.woiAgingLoading?'Scanning…':'🔄 Scan'}</button>
+    </div>
+  </div>`;
+}
+
+function renderWorkloadHeatmapPanel(){
+  const data = computeAssigneeWorkloadToday();
+  let body = '';
+  if(!data.length){
+    body = `<div class="hint">No individual assignments yet for ${escapeHtml(state.date)}.</div>`;
+  } else {
+    const max = Math.max(...data.map(d=>d.count));
+    body = data.map(d=>{
+      const pct = max ? Math.round((d.count/max)*100) : 0;
+      return `<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px">
+          <span>${escapeHtml(d.name)}${d.team?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(d.team)}</span>`:''}</span>
+          <span class="notif-detail">${d.count} call${d.count===1?'':'s'}</span>
+        </div>
+        <div style="background:var(--surface-2);border-radius:6px;height:10px;overflow:hidden">
+          <div style="background:var(--teal);height:100%;width:${pct}%"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Individual call count for <b>${escapeHtml(state.date)}</b>, most-loaded first. Team-level assignments aren't counted here since there's no single person to compare against.</div>
+    ${body}
+  </div>`;
+}
+
+function renderWeeklyRecapPanel(){
+  const data = state.weeklyRecapData;
+  let body = '';
+  if(state.weeklyRecapLoading){
+    body = `<div class="hint"><span class="spinner"></span> Building this week's recap…</div>`;
+  } else if(!data){
+    body = `<div class="hint">Pulls this week's call volume (vs. last week) and closures per team into one recap, instead of checking Trends and Closures separately.</div>`;
+  } else if(!data.teams.length){
+    body = `<div class="hint">No team activity found for this week yet.</div>`;
+  } else {
+    const rowsHtml = data.teams.map(t=>{
+      const changeLabel = t.changePct === null ? '' : `<span class="notif-chip" style="${t.changePct>0?'color:var(--amber);border-color:var(--amber)':(t.changePct<0?'color:var(--teal);border-color:var(--teal)':'')}">${t.changePct>0?'▲':(t.changePct<0?'▼':'—')} ${Math.abs(t.changePct)}% vs last week</span>`;
+      return `<div class="notif-row">
+        <div class="notif-name">${escapeHtml(t.team)} <span class="notif-detail" style="font-weight:400">— ${t.headcount} on team</span></div>
+        <div class="notif-detail">
+          <span class="notif-chip">${t.callsThisWeek} call${t.callsThisWeek===1?'':'s'} this week</span>
+          ${changeLabel}
+          ${t.closures?`<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">🏆 ${t.closures} closure${t.closures===1?'':'s'}</span>`:''}
+        </div>
+      </div>`;
+    }).join('');
+    body = `<div class="hint" style="margin-bottom:10px">Week of ${escapeHtml(weekStartDateKey(state.date))} onward:</div>${rowsHtml}`;
+  }
+  return `<div class="import-panel">
+    ${body}
+    <div class="row" style="margin-top:12px">
+      <div class="hint">Rebuild this any time — it always reflects the current week relative to today's date.</div>
+      <button type="button" class="btn primary" id="runWeeklyRecapScan" ${state.weeklyRecapLoading?'disabled':''}>${state.weeklyRecapLoading?'Building…':'🔄 Build Recap'}</button>
+    </div>
+  </div>`;
+}
+
 function renderNotificationsPanel(){
   const tabs = [
     { key:'absent', label:'🚫 Absent', count: state.absentIds.length },
@@ -5497,9 +5719,22 @@ function renderStrip(rows, conflictIds){
 // and it works the same on every import panel (calls, reschedule/cancel,
 // closures) since they all just fill a textarea by id.
 function pasteButtonHtml(targetId){
-  return `<div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+  return `<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:4px">
+    ${micButtonHtml(targetId)}
     <button type="button" class="btn ghost paste-clipboard-btn" data-target="${targetId}" style="font-size:11.5px;padding:5px 10px" title="Paste the WhatsApp message you just copied">📋 Paste from clipboard</button>
   </div>`;
+}
+// Hands-free capture for logging a call detail while mid-conversation —
+// uses the browser's own built-in speech-to-text (Web Speech API), nothing
+// server-side and nothing sent anywhere outside the browser. Only rendered
+// where the browser actually supports it (feature-detected in JS at click
+// time, not here, since SSR-style string building can't check for
+// `window.SpeechRecognition` — the button always renders, and a click on
+// an unsupported browser just shows a plain explanation instead of failing
+// silently).
+function micButtonHtml(targetId){
+  const listening = state.micListening && state.micTargetId === targetId;
+  return `<button type="button" class="btn ghost mic-capture-btn ${listening?'active':''}" data-target="${targetId}" style="font-size:11.5px;padding:5px 10px${listening?';color:var(--coral);border-color:var(--coral)':''}" title="Speak the call details instead of typing — uses your browser's built-in speech-to-text">${listening?'⏹ Listening… (tap to stop)':'🎤 Speak'}</button>`;
 }
 
 function renderRescheduleImportPanel(){
@@ -6578,7 +6813,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
+        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
   const info = studentMatchBadgeInfo(r.candidate);
   if(!info) return '';
   if(info.kind === 'confirm'){
@@ -6602,7 +6837,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="Germany" ${r.country==='Germany'?'selected':''}>Germany</option>
         </select>
       </td>
-      <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
       <td data-label="Round"><input class="cell-input round-input ${roundClass}" data-field="round" value="${escapeHtml(r.round)}"></td>
       <td data-label="Duration">${longDuration?`<span class="flag-icon" title="1st round running over 30 min${category?' — also a '+category+' client':''}. Worth a second look.">⏱</span>`:''}<input class="cell-input" data-field="duration" value="${escapeHtml(r.duration)}" style="width:100%"></td>
       <td data-label="WOI">
@@ -7243,6 +7478,15 @@ function attachHandlers(conflictIds){
       if(toast){ toast.textContent = "Couldn't copy automatically — here it is to copy manually:\n\n" + text; toast.style.display = 'block'; toast.style.whiteSpace = 'pre-wrap'; }
     }
   };
+  // WhatsApp's own official web/app share link (wa.me) — opens WhatsApp
+  // with the message pre-filled in the compose box, exactly like tapping
+  // "Share" from any other app. No account connection, no automation, no
+  // ban risk — the person still picks the chat and taps Send themselves.
+  const shareWhatsAppBtn = document.getElementById('shareWhatsAppBtn');
+  if(shareWhatsAppBtn) shareWhatsAppBtn.onclick = ()=>{
+    const text = buildDailySummaryText(state.date, state.rows);
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  };
   const toggleAllDatesBtn = document.getElementById('toggleAllDates');
   if(toggleAllDatesBtn) toggleAllDatesBtn.onclick = ()=>{
     openOnlyPanel('showAllDates');
@@ -7313,6 +7557,28 @@ function attachHandlers(conflictIds){
   });
   const toggleMissedCheckBtn = document.getElementById('toggleMissedCheck');
   if(toggleMissedCheckBtn) toggleMissedCheckBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
+  const toggleWoiAgingBtn = document.getElementById('toggleWoiAging');
+  if(toggleWoiAgingBtn) toggleWoiAgingBtn.onclick = ()=>{ openOnlyPanel('showWoiAging'); render(); };
+  const toggleWorkloadHeatmapBtn = document.getElementById('toggleWorkloadHeatmap');
+  if(toggleWorkloadHeatmapBtn) toggleWorkloadHeatmapBtn.onclick = ()=>{ openOnlyPanel('showWorkloadHeatmap'); render(); };
+  const toggleWeeklyRecapBtn = document.getElementById('toggleWeeklyRecap');
+  if(toggleWeeklyRecapBtn) toggleWeeklyRecapBtn.onclick = ()=>{ openOnlyPanel('showWeeklyRecap'); render(); };
+  const runWoiAgingBtn = document.getElementById('runWoiAgingScan');
+  if(runWoiAgingBtn) runWoiAgingBtn.onclick = async ()=>{
+    state.woiAgingLoading = true;
+    render();
+    state.woiAgingData = await scanWoiAging(true);
+    state.woiAgingLoading = false;
+    render();
+  };
+  const runWeeklyRecapBtn = document.getElementById('runWeeklyRecapScan');
+  if(runWeeklyRecapBtn) runWeeklyRecapBtn.onclick = async ()=>{
+    state.weeklyRecapLoading = true;
+    render();
+    state.weeklyRecapData = await scanWeeklyRecap(true);
+    state.weeklyRecapLoading = false;
+    render();
+  };
   const missedCheckFileInput = document.getElementById('missedCheckFileInput');
   if(missedCheckFileInput) missedCheckFileInput.addEventListener('change', async (e)=>{
     const file = e.target.files && e.target.files[0];
@@ -7345,6 +7611,7 @@ function attachHandlers(conflictIds){
     render();
     try{
       state.missedCheckResults = computeMissedMessages(text, state.rows);
+      markMissedCheckRun(); // a real check actually ran — clears today's nudge banner
     }catch(err){
       state.missedCheckError = 'Something went wrong checking that text: ' + (err && err.message ? err.message : err);
       state.missedCheckResults = null;
@@ -7785,6 +8052,8 @@ function attachHandlers(conflictIds){
   if(quickBackupBtn) quickBackupBtn.onclick = ()=>{ state.showMoreMenu = false; downloadFullBackup(); };
   const backupReminderBtn = document.getElementById('backupReminderBtn');
   if(backupReminderBtn) backupReminderBtn.onclick = downloadFullBackup;
+  const missedCheckNudgeBtn = document.getElementById('missedCheckNudgeBtn');
+  if(missedCheckNudgeBtn) missedCheckNudgeBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
   const toggleConflictsBtn = document.getElementById('toggleConflicts');
   if(toggleConflictsBtn) toggleConflictsBtn.onclick = ()=>{ openOnlyPanel('showConflicts'); render(); };
   document.querySelectorAll('.conflict-reassign').forEach(sel=>{
@@ -9297,6 +9566,13 @@ async function startApp(){
     state.clientHistory = results;
     render();
   }).catch(()=>{});
+  // Same fire-and-forget idea, for the on-row reliability badge (company
+  // cell) — without this, that badge would stay invisible until someone
+  // happened to open the separate Client Reliability tab first.
+  scanClientReliability().then(results=>{
+    state.clientReliabilityData = results;
+    render();
+  }).catch(()=>{});
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
   loadClosures().catch(()=>{});
 }
@@ -9373,6 +9649,27 @@ function findPriorSameClientOccurrence(row){
   // entry.occurrences is already sorted most-recent-first, and filter()
   // preserves that order, so the first match here is the most recent one.
   return matches.length ? matches[0] : null;
+}
+
+// Candidate-level (not client-scoped) history check — deliberately broader
+// than findPriorRescheduleWarning() above, which only fires for a repeat at
+// the SAME company. This looks across every company the candidate has ever
+// been logged at and flags a genuine pattern: 2 or more prior
+// rescheduled/cancelled/not-responded outcomes, anywhere. One reschedule is
+// normal business; a candidate with a track record of it is worth knowing
+// about before committing a coordinator's time again, regardless of which
+// client this particular call is for.
+const REPEAT_NO_SHOW_MIN_COUNT = 2;
+function findRepeatNoShowFlag(row){
+  if(!row.candidate || !state.notifications) return null;
+  const entry = findNotificationEntryForCandidate(row.candidate);
+  if(!entry) return null;
+  const priorBad = entry.occurrences.filter(o =>
+    o.status && RESCHED_STATUSES.includes(o.status) &&
+    !(o.date === state.date && o.time === row.time && o.round === row.round)
+  );
+  if(priorBad.length < REPEAT_NO_SHOW_MIN_COUNT) return null;
+  return { count: priorBad.length, occurrences: priorBad };
 }
 
 // Same idea as the candidate history above, but grouped by CLIENT/COMPANY
@@ -9690,6 +9987,73 @@ function portalMatchSuppressedInfo(row){
     if(chk.checked) state.clipboardPickerSelected.add(idx);
     else state.clipboardPickerSelected.delete(idx);
     render();
+  });
+})();
+// Hands-free capture for any import textarea, using the browser's built-in
+// Web Speech API — nothing server-side, nothing sent anywhere outside the
+// browser itself. One active recognition session at a time (starting a new
+// one stops whatever was running). Not every browser supports this (mainly
+// Chrome-family), so unsupported browsers get a plain explanation on tap
+// rather than a silently broken button.
+(function setupMicCapture(){
+  const appEl = document.getElementById('app');
+  if(!appEl) return;
+  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  function stopListening(){
+    if(recognition){ try{ recognition.stop(); }catch(e){} }
+    recognition = null;
+    if(state.micListening){ state.micListening = false; state.micTargetId = null; render(); }
+  }
+  appEl.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.mic-capture-btn');
+    if(!btn) return;
+    const targetId = btn.dataset.target;
+    if(!targetId) return;
+    if(state.micListening && state.micTargetId === targetId){
+      stopListening();
+      return;
+    }
+    if(!SpeechRecognitionCtor){
+      alert('Speech-to-text isn\'t supported in this browser — try Chrome, or type/paste instead.');
+      return;
+    }
+    if(recognition){ try{ recognition.stop(); }catch(e){} recognition = null; }
+    const el = document.getElementById(targetId);
+    const existingValue = el ? el.value : '';
+    recognition = new SpeechRecognitionCtor();
+    recognition.lang = 'en-IN';
+    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.onresult = (ev)=>{
+      let finalText = '';
+      for(let i = ev.resultIndex; i < ev.results.length; i++){
+        if(ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+      }
+      if(!finalText.trim()) return;
+      const target = document.getElementById(targetId);
+      if(!target) return;
+      target.value = target.value.trim() ? (target.value.replace(/\s+$/,'') + ' ' + finalText.trim()) : finalText.trim();
+    };
+    recognition.onerror = ()=>{
+      stopListening();
+    };
+    recognition.onend = ()=>{
+      // Browser stopped it on its own (silence timeout, etc.) — reflect
+      // that in the UI rather than leaving the button stuck on "Listening…".
+      if(state.micListening) stopListening();
+    };
+    try{
+      recognition.start();
+      state.micListening = true;
+      state.micTargetId = targetId;
+      render();
+      const elAfter = document.getElementById(targetId);
+      if(elAfter) elAfter.value = existingValue;
+      hapticTap();
+    }catch(err){
+      alert('Couldn\'t start speech-to-text — your browser may need microphone permission.');
+    }
   });
 })();
 
