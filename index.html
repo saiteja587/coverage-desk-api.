@@ -872,6 +872,10 @@ let state = {
   showClosures: false,
   closures: [],
   closuresLoaded: false,
+  closureManualMatches: {}, // closureId -> {candidate, company} — see findClosureMatchWithOverride()
+  closureManualMatchPickerId: null, // which closure's "Match manually" picker is currently open, if any
+  closureManualMatchSaving: false,
+  closureMatchError: null,
   rescheduleReview: null,
   rescheduleApplying: false,
   duplicatesReview: null,
@@ -1568,6 +1572,38 @@ async function loadClosures(){
     // Backend doesn't have this resource yet, or the call failed — the
     // Closures panel just shows nothing rather than erroring loudly.
   }
+  loadClosureManualMatches(); // fire-and-forget, same non-essential fallback behavior
+}
+// Manual closure↔call matches (2026-09-24, pipeline-visibility follow-up):
+// when automatic matching (findClosureMatch(), now with fuzzy-company
+// tolerance too — see there) still can't find a call for a real closure —
+// a genuinely unusual spelling gap, or the call predates a name/company
+// correction — this lets someone point the closure at the correct call by
+// hand instead of that closure silently never counting toward anyone's
+// performance or the conversion/time-to-close numbers. Deliberately
+// stored as a SEPARATE table from `closures` itself, not an edit to the
+// closure's own candidate/company fields — closures are an append-only
+// historical log by design (see the backend's own comment on this), so
+// this is a correctable "pointer" layered on top, not a rewrite of the
+// original record. Same non-essential fallback behavior as loadClosures()
+// itself if the backend doesn't have this resource yet.
+async function loadClosureManualMatches(){
+  if(!API_BASE_URL) return;
+  try{
+    const data = await apiCall('closure_manual_match', {});
+    const map = {};
+    (data.rows||[]).forEach(r=>{ map[r.closureId] = { candidate: r.candidate, company: r.company }; });
+    state.closureManualMatches = map;
+    render();
+  }catch(e){
+    // Backend doesn't have this resource yet — automatic matching still
+    // works fine without it, this is purely an enhancement on top.
+  }
+}
+async function saveClosureManualMatch(closureId, candidate, company){
+  if(!API_BASE_URL) throw new Error('Manual matching requires the backend to be configured.');
+  await apiCall('closure_manual_match', {method:'POST', body:{ closureId, candidate, company }});
+  state.closureManualMatches[closureId] = { candidate, company };
 }
 // Appends newly-confirmed closures to the backend, then merges them into
 // local state so the list and the More-menu count update immediately
@@ -4039,6 +4075,50 @@ function findCompanyReliabilityFlag(company){
 // call's assignee. A team-level assignee (never an individual) can't be
 // credited to any one person, so those — and any closure with no matching
 // call at all — are counted separately rather than silently dropped.
+// Checks a manual override (set via the "🔗 Match manually" flow in the
+// Closures panel — see loadClosureManualMatches()/saveClosureManualMatch()
+// below) before falling back to findClosureMatch()'s automatic matching.
+// The override only ever stores the correct candidate/company SPELLING
+// as it appears on a real call record (never a row id directly) — kept
+// this way so it still works even if the underlying rows get re-fetched
+// or slightly re-ordered, and so it degrades gracefully (falls through to
+// automatic matching rather than silently crediting nothing) if that
+// exact row is ever removed.
+function findClosureMatchWithOverride(closure, allRows){
+  const override = closure && closure.id != null ? state.closureManualMatches[closure.id] : null;
+  if(override && override.candidate && override.company){
+    const overrideCandKey = override.candidate.trim().toLowerCase();
+    const overrideCompKey = normalizeCompanyKey(override.company);
+    const row = allRows.find(r => (r.candidate||'').trim().toLowerCase() === overrideCandKey && normalizeCompanyKey(r.company) === overrideCompKey);
+    if(row) return { row, matchType: 'manual' };
+  }
+  return findClosureMatch(closure.candidate, closure.company, allRows);
+}
+// A handful of plausible call records to offer in the "🔗 Match manually"
+// picker for a closure that couldn't be auto-matched — anything sharing a
+// first-name token with the closure's candidate, OR at a fuzzily-matching
+// company, so a genuinely different spelling still shows up as an option
+// to pick from by hand. Capped at 8 and sorted most-recent-first; this is
+// just a shortlist for a human to choose from, so it's deliberately more
+// permissive than the automatic matchers above — nothing here is ever
+// applied without an explicit click.
+function findClosureMatchSuggestions(closure, allRows){
+  const candFirst = (closure.candidate||'').trim().toLowerCase().split(/\s+/)[0] || '';
+  const seen = new Set();
+  return allRows
+    .filter(r=>{
+      if(!r.candidate) return false;
+      const key = r.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(r.company) + '|' + (r._date||'');
+      if(seen.has(key)) return false;
+      const companyLikely = fuzzyCompanyKeyMatch(r.company, closure.company) || normalizeCompanyKey(r.company).includes(normalizeCompanyKey(closure.company)) || normalizeCompanyKey(closure.company).includes(normalizeCompanyKey(r.company));
+      const nameLikely = candFirst && r.candidate.trim().toLowerCase().split(/\s+/)[0] === candFirst;
+      if(!companyLikely && !nameLikely) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+    .slice(0, 8);
+}
 async function computeClosuresPerformance(forceRefresh){
   if(!state.closuresLoaded) await loadClosures();
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
@@ -4052,32 +4132,27 @@ async function computeClosuresPerformance(forceRefresh){
   const byHandler = {};
   let unmatchedCount = 0;
   let teamOnlyCount = 0;
+  const unmatchedDetails = [];
   (state.closures || []).forEach(c=>{
-    const candKey = normalizeCandidateForMatch(c.candidate);
-    const compKey = normalizeCompanyKey(c.company);
-    if(!candKey || !compKey){ unmatchedCount++; return; }
-    const sortedRows = allRows.slice().sort((a,b)=> (b._date||'').localeCompare(a._date||''));
-    let match = sortedRows.find(r => normalizeCandidateForMatch(r.candidate) === candKey && normalizeCompanyKey(r.company) === compKey);
-    if(!match){
-      // No exact candidate match — same spelling/abbreviation-variant fallback
-      // as crossReferenceClosure() (e.g. "Sushmitha Polisetti" closure vs.
-      // "Susmitha P" call record), scoped to the SAME company so it stays
-      // unambiguous. Only used when exactly one call at that company fuzzy-
-      // matches; two plausible candidates means refuse to guess and count it
-      // unmatched, same as an exact miss would be.
-      const fuzzyRows = sortedRows.filter(r => r.candidate && normalizeCompanyKey(r.company) === compKey && sameCandidateFuzzyMatch(c.candidate, r.candidate));
-      const uniqueFuzzy = new Map();
-      fuzzyRows.forEach(r=>{ const k = r.candidate.trim().toLowerCase(); if(!uniqueFuzzy.has(k)) uniqueFuzzy.set(k, r); });
-      if(uniqueFuzzy.size === 1) match = Array.from(uniqueFuzzy.values())[0];
+    if(!c.candidate || !c.company){ unmatchedCount++; return; }
+    const found = findClosureMatchWithOverride(c, allRows);
+    const match = found ? found.row : null;
+    if(!match || !match.assignee){
+      unmatchedCount++;
+      unmatchedDetails.push({
+        closure: c,
+        reason: crossReferenceClosure(c.candidate, c.company, allRows).message,
+        suggestions: findClosureMatchSuggestions(c, allRows),
+      });
+      return;
     }
-    if(!match || !match.assignee){ unmatchedCount++; return; }
     if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
     const handler = match.assignee;
     if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0 };
     byHandler[handler].closures++;
   });
   const rows = Object.values(byHandler).sort((a,b)=> b.closures - a.closures);
-  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length };
+  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length, unmatchedDetails };
 }
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
@@ -4382,9 +4457,17 @@ function buildPipelineEntries(allRows, teamOf){
     }
   });
   (state.closures||[]).forEach(c=>{
-    const candKey = (c.candidate||'').trim().toLowerCase();
-    const compKey = normalizeCompanyKey(c.company);
-    const key = candKey + '|' + compKey;
+    if(!c.candidate || !c.company) return;
+    // Uses the same shared matcher (plus manual-override support) as
+    // computeClosuresPerformance() and crossReferenceClosure() — see
+    // findClosureMatchWithOverride() — instead of requiring an exact
+    // candidate+company key match here too, so a closure that's typed
+    // slightly differently (or whose company is "Bimbo Bakeries" here vs.
+    // "Bimbo Bakeries Inc" on the call) still marks the right pipeline
+    // entry as closed instead of silently leaving it open.
+    const found = findClosureMatchWithOverride(c, allRows);
+    if(!found) return;
+    const key = (found.row.candidate||'').trim().toLowerCase() + '|' + normalizeCompanyKey(found.row.company);
     if(pipelineMap[key]){ pipelineMap[key].closed = true; pipelineMap[key].closedAt = c.createdAt || null; }
   });
   return Object.values(pipelineMap);
@@ -6763,6 +6846,50 @@ function renderClosureConfirmPanel(){
     </div>
   </div>`;
 }
+// The unmatched-closures review list on the "By Handler" tab — previously
+// just a count ("N couldn't be matched"), which gave no way to actually do
+// anything about it. Each row shows the specific closure, why it didn't
+// match (crossReferenceClosure()'s own reason text), and a "🔗 Match
+// manually" button that opens a small picker of plausible candidates
+// (findClosureMatchSuggestions()) to point it at by hand.
+function renderUnmatchedClosuresHtml(unmatchedDetails){
+  if(!unmatchedDetails.length) return '';
+  const pickerId = state.closureManualMatchPickerId;
+  const rowsHtml = unmatchedDetails.map(({closure, reason, suggestions})=>{
+    const isOpen = pickerId === closure.id;
+    let pickerHtml = '';
+    if(isOpen){
+      const options = (suggestions||[]).map((r,i)=>
+        `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}</option>`
+      ).join('');
+      pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+        ${suggestions && suggestions.length ? `
+          <div class="hint" style="margin-bottom:6px">Pick the call this closure actually belongs to:</div>
+          <select id="closureMatchSelect-${closure.id}" style="width:100%;margin-bottom:8px">
+            ${options}
+          </select>
+          <div style="display:flex;gap:8px">
+            <button class="btn primary" data-confirm-closure-match="${closure.id}" ${state.closureManualMatchSaving?'disabled':''}>${state.closureManualMatchSaving?'<span class="spinner"></span>Saving…':'Confirm match'}</button>
+            <button class="btn ghost" data-cancel-closure-match="${closure.id}">Cancel</button>
+          </div>
+        ` : `<div class="hint">No plausible call record found automatically — check the candidate/company spelling on the original call, or this closure may predate your records. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>`}
+      </div>`;
+    }
+    return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="notif-name">${escapeHtml(closure.candidate)} <span class="notif-chip">${escapeHtml(closure.company)}</span></div>
+        ${!isOpen ? `<button class="btn ghost" data-open-closure-match="${closure.id}" style="font-size:12px">🔗 Match manually</button>` : ''}
+      </div>
+      <div class="hint" style="margin-top:2px">${escapeHtml(reason)}</div>
+      ${pickerHtml}
+    </div>`;
+  }).join('');
+  return `<div style="margin-top:14px">
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">Unmatched closures</div>
+    ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:6px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
+    ${rowsHtml}
+  </div>`;
+}
 function renderClosuresPanel(){
   const list = state.closures || [];
   const now = new Date();
@@ -6839,6 +6966,7 @@ function renderClosuresPanel(){
       if(perf.teamOnlyCount) notes.push(`${perf.teamOnlyCount} matched only to a team-level assignment, not an individual`);
       if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
       perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
+      perfHtml += renderUnmatchedClosuresHtml(perf.unmatchedDetails || []);
     }
   }
   return `<div class="import-panel">
@@ -7594,6 +7722,77 @@ function sameCandidateFuzzyMatch(nameA, nameB){
   if(Math.abs(keyA.length - keyB.length) > 2) return false;
   return levenshteinDistance(keyA, keyB) <= 2;
 }
+// Same "fuzzy is fine for company names, never for people" allowance the
+// rest of the app already follows (see the team-isolation rule) — a
+// closure and its original call record are independently typed, and a
+// company name is exactly the kind of field that legitimately gets typed
+// two different-but-equivalent ways ("Bimbo Bakeries" vs "Bimbo Bakeries
+// USA"/"Bimbo Bakeries Inc", or a small spelling slip). Added 2026-09-24
+// after Saiteja reported a real closure ("Himaja Adirala" / "Bimbo
+// Bakeries") sitting right there in the call records but still showing as
+// not matching — the root cause was that every closure-matching path
+// required an EXACT normalized company key, with no tolerance at all for
+// this very ordinary kind of variation.
+function fuzzyCompanyKeyMatch(companyA, companyB){
+  const a = normalizeCompanyKey(companyA), b = normalizeCompanyKey(companyB);
+  if(!a || !b) return false;
+  if(a === b) return true;
+  // One key is the other plus a suffix/prefix — "bimbobakeries" vs
+  // "bimbobakeriesusa" or "bimbobakeriesinc" — a very common way the same
+  // client ends up typed two different ways (a legal suffix added or
+  // dropped). Only once both sides are long enough that this isn't just a
+  // coincidental short-name collision.
+  if(a.length >= 5 && b.length >= 5 && (a.startsWith(b) || b.startsWith(a))) return true;
+  // Small spelling drift on an otherwise-long company key — same
+  // Levenshtein-tolerance idea sameCandidateFuzzyMatch() uses for names,
+  // just applied to companies, which is the one place this file already
+  // says fuzzy matching is safe to use more freely.
+  if(a.length >= 8 && b.length >= 8 && Math.abs(a.length-b.length) <= 3 && levenshteinDistance(a,b) <= 2) return true;
+  return false;
+}
+// The one shared "does this closure's candidate+company correspond to a
+// real call record" check, used by crossReferenceClosure() (the at-import
+// preview), computeClosuresPerformance() (By Handler credit), and
+// buildPipelineEntries() (conversion funnel / time-to-close / company
+// scorecard) — previously each of these had its own slightly different
+// copy of this logic, which is exactly how the company-fuzzy-matching gap
+// above went unnoticed in some of them longer than others. Tries, in
+// order: exact candidate + exact company; exact candidate + fuzzy
+// company; then (only when there's no exact-name match anywhere) a fuzzy
+// candidate name combined with an exact-or-fuzzy company, still refusing
+// to guess whenever more than one distinct candidate+company on file
+// could plausibly be the same person.
+function findClosureMatch(candidate, company, allRows){
+  const candKey = (candidate||'').trim().toLowerCase();
+  if(!candKey) return null;
+  const compKey = normalizeCompanyKey(company);
+  const sameNameRows = allRows.filter(r => (r.candidate||'').trim().toLowerCase() === candKey);
+  if(sameNameRows.length){
+    const sorted = sameNameRows.slice().sort((a,b)=> (b._date||'').localeCompare(a._date||''));
+    let row = sorted.find(r => normalizeCompanyKey(r.company) === compKey);
+    if(row) return { row, matchType: 'exact' };
+    row = sorted.find(r => fuzzyCompanyKeyMatch(r.company, company));
+    if(row) return { row, matchType: 'fuzzyCompany' };
+    return null; // this candidate is on file, just never at this company (even fuzzily) — a real mismatch, not a matching gap
+  }
+  // No exact candidate-name match anywhere. Fall back to the same
+  // spelling/abbreviation-variant check the rest of the file uses for
+  // "is this the same candidate", but only among rows whose company also
+  // matches (exactly or fuzzily) — company match stays the strong extra
+  // signal that keeps this safely unambiguous, same reasoning as before.
+  const fuzzyRows = allRows.filter(r =>
+    r.candidate &&
+    (normalizeCompanyKey(r.company) === compKey || fuzzyCompanyKeyMatch(r.company, company)) &&
+    sameCandidateFuzzyMatch(candidate, r.candidate)
+  );
+  const uniqueFuzzy = new Map();
+  fuzzyRows.forEach(r=>{
+    const key = r.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(r.company);
+    if(!uniqueFuzzy.has(key)) uniqueFuzzy.set(key, r);
+  });
+  if(uniqueFuzzy.size === 1) return { row: Array.from(uniqueFuzzy.values())[0], matchType: 'fuzzyBoth' };
+  return null;
+}
 // Checks a parsed closure against every call record on file (any date,
 // not just today) — the whole point being that a closure message and the
 // original interview record are two independently-typed pieces of data,
@@ -7604,51 +7803,25 @@ function sameCandidateFuzzyMatch(nameA, nameB){
 function crossReferenceClosure(candidate, company, allRows){
   const candKey = (candidate||'').trim().toLowerCase();
   if(!candKey) return { status: 'no_match', message: 'No candidate name to check against.' };
+  const found = findClosureMatch(candidate, company, allRows);
+  if(found){
+    const r = found.row;
+    const note = found.matchType === 'exact' ? ''
+      : found.matchType === 'fuzzyCompany' ? ` — entered there as "${r.company}", close enough in spelling to this closure's "${company}" that this looks like the same client, but worth a glance`
+      : ` — entered there as "${r.candidate}" at "${r.company}", close enough in spelling/abbreviation that this looks like the same person and client, but worth a glance`;
+    return { status: 'match', message: `Matches an existing call — ${r._date}, "${r.company}".${note}` };
+  }
   const matches = allRows.filter(r => (r.candidate||'').trim().toLowerCase() === candKey);
   if(matches.length){
-    const compKey = normalizeCompanyKey(company);
-    const matchingCall = matches
-      .slice()
-      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
-      .find(r => normalizeCompanyKey(r.company) === compKey);
-    if(matchingCall){
-      return { status: 'match', message: `Matches an existing call — ${matchingCall._date}, "${matchingCall.company}".` };
-    }
     const companiesOnFile = [...new Set(matches.map(r=>r.company).filter(Boolean))];
     return {
       status: 'mismatch',
       message: companiesOnFile.length
-        ? `Found call(s) for this candidate, but none at "${company}". On file: ${companiesOnFile.join(', ')}.`
+        ? `Found call(s) for this candidate, but none at "${company}" (even allowing for a spelling variant). On file: ${companiesOnFile.join(', ')}.`
         : `Found call(s) for this candidate, but none had a company on file to compare against.`
     };
   }
-
-  // No exact name match anywhere on file. Before giving up, check for a
-  // spelling/abbreviation variant of this SAME candidate at this SAME
-  // company — deliberately scoped to that one company (a real extra
-  // signal beyond the name alone) so this stays a safe, unambiguous check
-  // rather than fuzzy-matching a name against every candidate the
-  // business has ever seen, anywhere.
-  const compKey = normalizeCompanyKey(company);
-  if(compKey){
-    const uniqueFuzzyMatches = new Map(); // normalized candidate name -> row
-    allRows.forEach(r=>{
-      if(!r.candidate || normalizeCompanyKey(r.company) !== compKey) return;
-      if(firstNameLastInitialFuzzyMatch(candidate, r.candidate)){
-        const key = r.candidate.trim().toLowerCase();
-        if(!uniqueFuzzyMatches.has(key)) uniqueFuzzyMatches.set(key, r);
-      }
-    });
-    if(uniqueFuzzyMatches.size === 1){
-      const fuzzyRow = Array.from(uniqueFuzzyMatches.values())[0];
-      return {
-        status: 'match',
-        message: `Matches an existing call at "${fuzzyRow.company}" on ${fuzzyRow._date}, entered there as "${fuzzyRow.candidate}" — close enough in spelling/abbreviation that this looks like the same person, but worth a glance.`
-      };
-    }
-  }
-
-  return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started.' };
+  return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started. You can match it to a call manually from the Closures panel.' };
 }
 
 // A 1st round call running longer than 30 minutes is unusual — worth a second
@@ -8320,6 +8493,38 @@ function attachHandlers(conflictIds){
         }
         render();
       }
+    };
+  });
+
+  // Manual closure↔call matching (the "🔗 Match manually" picker on
+  // unmatched closures in the By Handler view — see
+  // renderUnmatchedClosuresHtml()/findClosureMatchSuggestions()).
+  document.querySelectorAll('[data-open-closure-match]').forEach(btn=>{
+    btn.onclick = ()=>{ state.closureManualMatchPickerId = Number(btn.dataset.openClosureMatch); state.closureMatchError = null; render(); };
+  });
+  document.querySelectorAll('[data-cancel-closure-match]').forEach(btn=>{
+    btn.onclick = ()=>{ state.closureManualMatchPickerId = null; state.closureMatchError = null; render(); };
+  });
+  document.querySelectorAll('[data-confirm-closure-match]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const closureId = Number(btn.dataset.confirmClosureMatch);
+      const select = document.getElementById(`closureMatchSelect-${closureId}`);
+      const detail = (state.closuresPerformance && state.closuresPerformance.unmatchedDetails || []).find(d=>d.closure.id === closureId);
+      if(!select || !detail || !detail.suggestions || !detail.suggestions.length) return;
+      const chosen = detail.suggestions[Number(select.value)];
+      if(!chosen) return;
+      state.closureManualMatchSaving = true;
+      render();
+      try{
+        await saveClosureManualMatch(closureId, chosen.candidate, chosen.company);
+        state.closureManualMatchPickerId = null;
+        // Re-run the By Handler computation so this closure now counts.
+        state.closuresPerformance = await computeClosuresPerformance(false);
+      }catch(e){
+        state.closureMatchError = (e && e.message) ? e.message : 'Could not save this match — try again.';
+      }
+      state.closureManualMatchSaving = false;
+      render();
     };
   });
 
