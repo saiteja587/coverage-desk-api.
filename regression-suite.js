@@ -1200,11 +1200,28 @@ async function main() {
   }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleMoreMenu');
-  for (const id of ['toggleStudentsMaster', 'toggleClientSearch', 'toggleSummary', 'toggleAllDates']) {
+  for (const id of ['toggleStudentsMaster', 'toggleClientSearch', 'toggleSummary', 'toggleAllDates', 'toggleUniversalSearch', 'toggleMissedCheck']) {
     await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
     await click('toggleMoreMenu', 80);
     await click(id, 200);
   }
+  // WOI Aging / Workload Heatmap / Weekly Recap now live as tabs inside the
+  // Notifications panel (clubbed with the other cross-date reports) rather
+  // than as separate top-level panels.
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleNotifications', 150);
+  for (const tab of ['woiAging', 'workloadHeatmap', 'weeklyRecap']) {
+    await sPage.evaluate((t) => { state.notifTab = t; render(); }, tab);
+    await sPage.waitForTimeout(120);
+  }
+  await sPage.evaluate(() => { state.notifTab = 'woiAging'; render(); });
+  await click('runWoiAgingScan', 300);
+  await sPage.evaluate(() => { state.notifTab = 'weeklyRecap'; render(); });
+  await click('runWeeklyRecapScan', 300);
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleMoreMenu', 100);
+  await click('toggleSummary', 150);
+  await click('shareWhatsAppBtn', 150);
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   for (const view of ['all', '1st', '2nd', 'doubts', 'rescheduled']) {
     await sPage.evaluate((v) => { closeAllPanels(); state.view = v; render(); }, view);
