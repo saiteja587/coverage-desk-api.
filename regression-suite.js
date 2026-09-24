@@ -1223,6 +1223,25 @@ async function main() {
   await click('toggleSummary', 150);
   await click('shareWhatsAppBtn', 150);
   await sPage.evaluate(() => { closeAllPanels(); render(); });
+  // Remove Duplicates now opens a review-before-commit screen instead of a
+  // bare confirm() dialog — smoke-test that it opens cleanly when there's
+  // a real duplicate to show.
+  await sPage.evaluate(() => {
+    closeAllPanels();
+    const existing = state.rows[0];
+    if (existing) {
+      state.rows.push(Object.assign({}, existing, { id: 'dup-smoke-test-row' }));
+    }
+    render();
+  });
+  await click('toggleToolsMenu', 100);
+  await click('removeDuplicatesBtn', 200);
+  await sPage.evaluate(() => {
+    state.duplicatesReview = null;
+    state.rows = state.rows.filter(r => r.id !== 'dup-smoke-test-row');
+    closeAllPanels();
+    render();
+  });
   for (const view of ['all', '1st', '2nd', 'doubts', 'rescheduled']) {
     await sPage.evaluate((v) => { closeAllPanels(); state.view = v; render(); }, view);
     await sPage.waitForTimeout(100);
