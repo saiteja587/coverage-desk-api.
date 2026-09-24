@@ -803,6 +803,8 @@ let state = {
   closuresLoaded: false,
   rescheduleReview: null,
   rescheduleApplying: false,
+  duplicatesReview: null,
+  duplicatesRemoving: false,
   showPortalSync: false,
   portalSyncData: null,
   portalSyncError: '',
@@ -4255,6 +4257,7 @@ function closeAllPanels(){
   state.showUniversalSearch = false;
   state.showMissedCheck = false;
   state.missedCheckReviewItems = null;
+  state.duplicatesReview = null;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4279,6 +4282,7 @@ function getActivePanelName(){
   if(state.showUniversalSearch) return 'universalSearch';
   if(state.missedCheckReviewItems) return 'missedCheckReview';
   if(state.showMissedCheck) return 'missedCheck';
+  if(state.duplicatesReview) return 'duplicatesReview';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -4309,6 +4313,7 @@ function renderActivePanel(name){
   if(name === 'universalSearch') return renderUniversalSearchPanel();
   if(name === 'missedCheck') return renderMissedCheckPanel();
   if(name === 'missedCheckReview') return renderMissedCheckReviewPanel();
+  if(name === 'duplicatesReview') return renderDuplicatesReviewPanel();
   return '';
 }
 function panelTitle(name){
@@ -4318,7 +4323,8 @@ function panelTitle(name){
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts', clientSearch:'Client History Search',
-    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls'
+    universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
+    duplicatesReview:'Confirm Remove Duplicates'
   };
   return titles[name] || '';
 }
@@ -5325,6 +5331,49 @@ function renderMissedCheckReviewPanel(){
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelMissedCheckReview">Cancel</button>
         <button class="btn primary" id="confirmMissedCheckApply" ${state.missedCheckApplying || !includedCount ? 'disabled':''}>${state.missedCheckApplying?'<span class="spinner"></span>Saving…':`Confirm & Add (${includedCount})`}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Shows exactly which rows "🧹 Remove Duplicates" is about to remove, and
+// which copy of each duplicate it plans to keep, BEFORE anything is
+// touched — same review-before-commit pattern as the Missed Check
+// Review-and-Add screen above and the reschedule/closure confirm panels.
+// Previously this action only asked a bare confirm()-dialog with a count,
+// never showing the actual candidates/rows — a real gap given the app's
+// own rule that a bulk/automated change must show the decision, not just
+// go ahead on a count. Each group defaults to keeping whichever copy
+// callCompletenessScore() picked as most complete, same logic as before,
+// but now the person can pick a different copy to keep per group via the
+// radio buttons before confirming — nothing is removed until "Confirm &
+// Remove" is tapped, and a backup is still taken first either way.
+function renderDuplicatesReviewPanel(){
+  const groups = state.duplicatesReview || [];
+  const totalRemove = groups.reduce((s,g)=>s+g.rows.length-1, 0);
+  const groupsHtml = groups.map((g, gi)=>{
+    const rowsHtml = g.rows.map(r=>{
+      const keeping = r.id === g.keepId;
+      return `<label class="dup-review-row" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid ${keeping?'var(--teal)':'var(--border)'};border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="dupKeep_${gi}" class="dup-keep-radio" data-group="${gi}" value="${escapeHtml(r.id)}" ${keeping?'checked':''} style="margin-top:3px">
+        <div style="flex:1;font-size:12px">
+          <div style="font-weight:600;margin-bottom:2px;color:${keeping?'var(--teal)':'var(--coral)'}">${keeping?'✓ Keep this one':'✕ Remove this one'}</div>
+          <div class="hint">Company: ${escapeHtml(r.company||'—')} · Interviewer: ${escapeHtml(r.interviewer||'—')} · Role: ${escapeHtml(r.role||'—')} · Assignee: ${escapeHtml(r.assignee||'—')} · Duration: ${escapeHtml(r.duration||'—')}</div>
+        </div>
+      </label>`;
+    }).join('');
+    return `<div class="resched-item" style="margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px;font-size:13px">${escapeHtml(g.candidate)} — ${escapeHtml(g.time||'no time')} · ${escapeHtml(g.round||'')}</div>
+      ${rowsHtml}
+    </div>`;
+  }).join('');
+  return `<div class="import-panel">
+    <div class="resched-warning-banner">⚠ Confirm before removing: ${groups.length} candidate(s) have duplicate entries (${totalRemove} row(s) will be removed). The row marked "Keep" is kept as-is for each — tap a different row to keep that one instead. A backup is saved first, so this can still be undone from 🕐 Backups afterward. Nothing is removed until you tap "Confirm &amp; Remove".</div>
+    ${groupsHtml || '<div class="hint">Nothing to review.</div>'}
+    <div class="row">
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="cancelDuplicatesReview">Cancel</button>
+        <button class="btn primary" id="confirmRemoveDuplicates" ${state.duplicatesRemoving || !totalRemove ? 'disabled':''}>${state.duplicatesRemoving?'<span class="spinner"></span>Removing…':`Confirm & Remove (${totalRemove})`}</button>
       </div>
     </div>
   </div>`;
@@ -8089,23 +8138,68 @@ function attachHandlers(conflictIds){
       render();
     };
   });
+  // Opens the review screen (renderDuplicatesReviewPanel) instead of
+  // removing anything directly — see that function's comment for why: a
+  // bare confirm()-dialog with just a count never showed WHICH rows were
+  // about to disappear, which is exactly the "review-before-commit" gap
+  // this app's own conventions call out for any bulk/automated change.
   const removeDuplicatesBtn = document.getElementById('removeDuplicatesBtn');
-  if(removeDuplicatesBtn) removeDuplicatesBtn.onclick = async ()=>{
+  if(removeDuplicatesBtn) removeDuplicatesBtn.onclick = ()=>{
     const groups = findDuplicateCallGroups(state.rows);
     if(!groups.length){ alert('No duplicate calls found for ' + state.date + ' — same candidate, time, and round all appear only once.'); return; }
-    const totalExtra = groups.reduce((s,g)=>s+g.length-1, 0);
-    if(!confirm(`Found ${groups.length} candidate(s) with duplicate entries (${totalExtra} extra row(s) total). For each, the most complete copy will be kept and the rest removed. A backup is saved first, so this can be undone from 🕐 Backups if needed. Continue?`)) return;
+    const duplicatesReview = groups.map(g=>{
+      const sorted = g.slice().sort((a,b)=>callCompletenessScore(b)-callCompletenessScore(a));
+      return {
+        candidate: g[0].candidate,
+        time: g[0].time || '',
+        round: g[0].round || '',
+        rows: g.map(r=>({ id:r.id, company:r.company||'', interviewer:r.interviewer||'', role:r.role||'', assignee:r.assignee||'', duration:r.duration||'' })),
+        keepId: sorted[0].id,
+      };
+    });
+    closeAllPanels();
+    state.duplicatesReview = duplicatesReview;
+    render();
+  };
+  const cancelDuplicatesReview = document.getElementById('cancelDuplicatesReview');
+  if(cancelDuplicatesReview) cancelDuplicatesReview.onclick = ()=>{ state.duplicatesReview = null; render(); };
+  document.querySelectorAll('.dup-keep-radio').forEach(radio=>{
+    radio.onchange = ()=>{
+      const gi = Number(radio.dataset.group);
+      const group = state.duplicatesReview && state.duplicatesReview[gi];
+      if(!group) return;
+      group.keepId = radio.value;
+      render();
+    };
+  });
+  const confirmRemoveDuplicates = document.getElementById('confirmRemoveDuplicates');
+  if(confirmRemoveDuplicates) confirmRemoveDuplicates.onclick = async ()=>{
+    const groups = state.duplicatesReview || [];
+    if(!groups.length) return;
+    state.duplicatesRemoving = true;
+    render();
     await createBackup('pre-dedupe', state.date, state.rows);
     const idsToRemove = new Set();
     groups.forEach(g=>{
-      const sorted = g.slice().sort((a,b)=>callCompletenessScore(b)-callCompletenessScore(a));
-      sorted.slice(1).forEach(r=>idsToRemove.add(r.id));
+      g.rows.forEach(r=>{ if(r.id !== g.keepId) idsToRemove.add(r.id); });
     });
     state.rows = state.rows.filter(r=>!idsToRemove.has(r.id));
     markDirty();
-    render();
+    // saveAllChanges() catches its own errors internally (it sets
+    // state.saveError rather than throwing) — check that field afterward,
+    // same as reading its actual outcome anywhere else in the app, so a
+    // real save failure here is never reported as a success.
     await saveAllChanges();
-    alert(`Removed ${idsToRemove.size} duplicate call(s).`);
+    state.duplicatesRemoving = false;
+    if(state.saveError){
+      state.duplicatesReview = null;
+      render();
+      alert(`Removed ${idsToRemove.size} duplicate call(s) locally, but saving failed: ${state.saveError}. Try "Save changes" again — until then this isn't saved to the database yet.`);
+    } else {
+      state.duplicatesReview = null;
+      render();
+      alert(`Removed ${idsToRemove.size} duplicate call(s) and saved.\nA backup of the calls exactly as they were before this was taken — use 🕐 Backups to restore it if needed.`);
+    }
   };
 
   const undoLastImportBtn = document.getElementById('undoLastImportBtn');
