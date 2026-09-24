@@ -905,6 +905,14 @@ let state = {
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
+  showCandidateProfile: false,
+  candidateProfileName: '',
+  candidateProfileData: null,
+  candidateProfileLoading: false,
+  showCompanyScorecard: false,
+  companyScorecardQuery: '',
+  companyScorecardData: null,
+  companyScorecardLoading: false,
   needsLogin: false,
   loginError: '',
   dirty: false,
@@ -972,6 +980,12 @@ let state = {
   woiAgingLoading: false,
   weeklyRecapData: null,
   weeklyRecapLoading: false,
+  conversionFunnelData: null,
+  conversionFunnelLoading: false,
+  stuckPipelineData: null,
+  stuckPipelineLoading: false,
+  timeToCloseData: null,
+  timeToCloseLoading: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -1067,6 +1081,23 @@ let CURRENT_USERNAME = '';
 try{ CURRENT_USERNAME = localStorage.getItem('coverage-desk-username') || ''; }catch(e){}
 let CURRENT_ROLE = 'admin'; // optimistic default; refined by refreshRole() once connected
 let AUTH_FAILED = false; // set true when the backend rejects the current credentials
+
+// "My Calls" quick filter (2026-09-24, pipeline-visibility batch). There's
+// no server-side link between a login account and a roster name — login
+// accounts are for access control, roster entries are who calls actually
+// get assigned to, and the two were never the same list — so this is
+// deliberately a personal, per-browser preference (like the theme choice),
+// not something the backend knows about. Read once per page load; cleared
+// only by explicitly changing it via myCallsChangeBtn.
+function getMyAssigneeName(){
+  try{ return localStorage.getItem('coverage-desk-my-name') || ''; }catch(e){ return ''; }
+}
+function setMyAssigneeName(name){
+  try{
+    if(name) localStorage.setItem('coverage-desk-my-name', name);
+    else localStorage.removeItem('coverage-desk-my-name');
+  }catch(e){}
+}
 
 // Global "working…" indicator (the bar at the very top of the page — see
 // #globalBusyBar in the static HTML). Every apiCall() increments this on
@@ -4048,6 +4079,76 @@ async function computeClosuresPerformance(forceRefresh){
   const rows = Object.values(byHandler).sort((a,b)=> b.closures - a.closures);
   return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length };
 }
+// ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
+// visibility batch) — no external chart library (nothing on the CDN
+// allowlist is guaranteed to actually load, see the Incentives-export XLSX
+// note elsewhere), just plain inline SVG so a trend is a real visual shape
+// instead of a table of numbers someone has to scan line-by-line. ----------
+// A single-series line chart. `points` is [{label, value}], oldest first.
+function svgLineChart(points, opts){
+  opts = opts || {};
+  const width = opts.width || 560, height = opts.height || 130;
+  const padL = 34, padR = 14, padT = 14, padB = 22;
+  const color = opts.color || 'var(--teal)';
+  const valueSuffix = opts.valueSuffix || '';
+  if(!points || !points.length){
+    return `<div class="hint" style="padding:20px;text-align:center">Not enough data yet for a chart.</div>`;
+  }
+  const values = points.map(p=>p.value);
+  const maxV = Math.max(...values, 1);
+  const minV = Math.min(0, ...values);
+  const range = (maxV - minV) || 1;
+  const innerW = width - padL - padR, innerH = height - padT - padB;
+  const n = points.length;
+  const xAt = i => n > 1 ? padL + (i/(n-1))*innerW : padL + innerW/2;
+  const yAt = v => padT + innerH - ((v - minV)/range)*innerH;
+  const plotted = points.map((p,i)=>({ x: xAt(i), y: yAt(p.value), ...p }));
+  const pathD = plotted.map((p,i)=> (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+  const areaD = pathD + ` L${plotted[plotted.length-1].x.toFixed(1)},${(padT+innerH).toFixed(1)} L${plotted[0].x.toFixed(1)},${(padT+innerH).toFixed(1)} Z`;
+  const dots = plotted.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="${color}" stroke="var(--surface)" stroke-width="1.5"><title>${escapeHtml(p.label)}: ${escapeHtml(String(p.value))}${valueSuffix}</title></circle>`).join('');
+  const labelStep = n > 8 ? Math.ceil(n/8) : 1;
+  const xLabels = plotted.filter((p,i)=> i%labelStep===0 || i===n-1).map(p=>
+    `<text x="${p.x.toFixed(1)}" y="${height-4}" font-size="9.5" fill="var(--text-faint)" text-anchor="middle">${escapeHtml(p.label)}</text>`
+  ).join('');
+  const maxLabel = `<text x="${padL-4}" y="${(padT+6).toFixed(1)}" font-size="9.5" fill="var(--text-faint)" text-anchor="end">${escapeHtml(String(maxV))}${valueSuffix}</text>`;
+  const zeroY = yAt(0);
+  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;display:block" preserveAspectRatio="none">
+    <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${width-padR}" y2="${zeroY.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+    <path d="${areaD}" fill="${color}" opacity="0.08" stroke="none"/>
+    <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2"/>
+    ${dots}
+    ${maxLabel}
+    ${xLabels}
+  </svg>`;
+}
+// A grouped two-series horizontal bar chart — one pair of bars per label,
+// e.g. "last week" vs "this week" per team.
+function svgGroupedBarChart(rows, opts){
+  opts = opts || {};
+  const colorA = opts.colorA || 'var(--text-faint)', colorB = opts.colorB || 'var(--teal)';
+  const labelA = opts.labelA || 'Previous', labelB = opts.labelB || 'Current';
+  if(!rows || !rows.length){
+    return `<div class="hint" style="padding:20px;text-align:center">No data yet.</div>`;
+  }
+  const max = Math.max(1, ...rows.map(r=> Math.max(r.a||0, r.b||0)));
+  const barsHtml = rows.map(r=>{
+    const pctA = Math.round(((r.a||0)/max)*100), pctB = Math.round(((r.b||0)/max)*100);
+    return `<div style="margin-bottom:12px">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:4px">${escapeHtml(r.label)}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div style="width:70px;font-size:10.5px;color:var(--text-faint);flex-shrink:0">${escapeHtml(labelA)}</div>
+        <div style="flex:1;background:var(--surface-2);border-radius:4px;height:9px;overflow:hidden"><div style="width:${pctA}%;height:100%;background:${colorA}"></div></div>
+        <div style="width:28px;text-align:right;font-size:11px;flex-shrink:0">${r.a||0}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="width:70px;font-size:10.5px;color:var(--text-faint);flex-shrink:0">${escapeHtml(labelB)}</div>
+        <div style="flex:1;background:var(--surface-2);border-radius:4px;height:9px;overflow:hidden"><div style="width:${pctB}%;height:100%;background:${colorB}"></div></div>
+        <div style="width:28px;text-align:right;font-size:11px;flex-shrink:0">${r.b||0}</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div>${barsHtml}</div>`;
+}
 // Monday-anchored week key for bucketing calls into weeks. Dates are stored
 // as plain YYYY-MM-DD calendar-date strings (no time component), so this
 // works entirely in UTC-space (Date.UTC in, getUTCDay/setUTCDate/toISOString
@@ -4211,6 +4312,247 @@ async function scanWeeklyRecap(forceRefresh){
     };
   }).filter(t=>t.callsThisWeek>0 || t.closures>0);
   return { teams, generatedAt: new Date().toISOString() };
+}
+// ---------- Candidate profile timeline (2026-09-24, pipeline-visibility
+// batch) ---------- A single candidate's full story — every call/round
+// they've ever had, across every saved date, plus any closure recorded for
+// them — currently lives split across the daily board, Search Everywhere,
+// and Closures, connected only by name-matching under the hood. This pulls
+// it all into one chronological read. Deliberately an EXACT (case/
+// whitespace-insensitive) name match, not a fuzzy one: this is opened from
+// an already-exact search result, so there's no ambiguity to resolve —
+// fuzzy matching is for connecting two independently-typed records (see
+// sameCandidateFuzzyMatch), not for widening a lookup that's already
+// anchored to one specific name.
+async function computeCandidateProfile(name, forceRefresh){
+  const key = (name||'').trim().toLowerCase();
+  if(!key) return { name: name||'', calls: [], closures: [] };
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const calls = allRows
+    .filter(r => (r.candidate||'').trim().toLowerCase() === key)
+    .slice()
+    .sort((a,b)=> (a._date||'').localeCompare(b._date||'') || businessDayMinutes(a.time)-businessDayMinutes(b.time));
+  const closureMatches = (state.closures||[])
+    .filter(c => (c.candidate||'').trim().toLowerCase() === key)
+    .slice()
+    .sort((a,b)=> (a.createdAt||'').localeCompare(b.createdAt||''));
+  return { name: calls[0] ? calls[0].candidate : (name||''), calls, closures: closureMatches };
+}
+// ---------- Conversion / funnel rate (2026-09-24, pipeline-visibility
+// batch) ---------- Closures already shows a COUNT (how many closures, per
+// handler/team). That answers "how much did we close" but not "of what we
+// actually put into the pipeline, what fraction converts" — a very
+// different, more useful number for judging whether a client or a team is
+// actually converting well, not just producing raw volume. A "pipeline
+// entry" here is one candidate at one company (their rounds at that
+// company collapse into a single entry — three rounds for the same person
+// at the same client is one shot at a closure, not three), matched to a
+// closure the same way crossReferenceClosure() does (exact candidate name +
+// normalized company). Deliberately exact-match only, same reasoning as
+// computeCandidateProfile() above: this already has a real company anchor,
+// so there's no ambiguity a fuzzy fallback would need to resolve.
+const CONVERSION_MIN_COMPANY_ENTRIES = 3; // below this a company's rate is too small a sample to mean anything — same "don't fabricate a stat from noise" guard TRENDS_MIN_HANDLER_CALLS and the reliability tab already use
+// Shared by computeConversionFunnel() and computeTimeToClose() below — both
+// need the exact same "one candidate at one company is one pipeline entry,
+// matched to a closure the same way crossReferenceClosure() does" logic,
+// and duplicating it in two places would risk the two silently disagreeing
+// on what counts as closed if one is ever edited without the other.
+function buildPipelineEntries(allRows, teamOf){
+  const pipelineMap = {};
+  allRows.forEach(row=>{
+    const candKey = (row.candidate||'').trim().toLowerCase();
+    if(!candKey) return;
+    const compKey = normalizeCompanyKey(row.company);
+    const key = candKey + '|' + compKey;
+    const existing = pipelineMap[key];
+    if(!existing){
+      pipelineMap[key] = {
+        candidate: row.candidate, company: row.company || '',
+        firstDate: row._date || '', latestDate: row._date || '',
+        assignee: row.assignee || '', team: teamOf(row.assignee) || '',
+        closed: false, closedAt: null,
+      };
+    } else {
+      if(row._date && (!existing.firstDate || row._date < existing.firstDate)) existing.firstDate = row._date;
+      if(row._date && (!existing.latestDate || row._date >= existing.latestDate)){
+        existing.latestDate = row._date;
+        existing.assignee = row.assignee || existing.assignee;
+        existing.team = teamOf(row.assignee) || existing.team;
+      }
+    }
+  });
+  (state.closures||[]).forEach(c=>{
+    const candKey = (c.candidate||'').trim().toLowerCase();
+    const compKey = normalizeCompanyKey(c.company);
+    const key = candKey + '|' + compKey;
+    if(pipelineMap[key]){ pipelineMap[key].closed = true; pipelineMap[key].closedAt = c.createdAt || null; }
+  });
+  return Object.values(pipelineMap);
+}
+function makeTeamOf(){
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  return function teamOf(assignee){
+    if(!assignee) return null;
+    if(teamNames.has(assignee)) return assignee;
+    const p = state.roster.find(p=>p.name===assignee);
+    return p ? p.team : null;
+  };
+}
+async function computeConversionFunnel(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const entries = buildPipelineEntries(allRows, makeTeamOf());
+  const total = entries.length;
+  const closed = entries.filter(e=>e.closed).length;
+  const overallRate = total ? Math.round((closed/total)*100) : 0;
+
+  const byCompany = {};
+  entries.forEach(e=>{
+    if(!e.company) return;
+    byCompany[e.company] = byCompany[e.company] || { company: e.company, total: 0, closed: 0 };
+    byCompany[e.company].total++;
+    if(e.closed) byCompany[e.company].closed++;
+  });
+  const companyRows = Object.values(byCompany)
+    .filter(c=>c.total >= CONVERSION_MIN_COMPANY_ENTRIES)
+    .map(c=>({ ...c, rate: c.total ? Math.round((c.closed/c.total)*100) : 0 }))
+    .sort((a,b)=> b.rate - a.rate);
+
+  const byTeam = {};
+  entries.forEach(e=>{
+    if(!e.team) return;
+    byTeam[e.team] = byTeam[e.team] || { team: e.team, total: 0, closed: 0 };
+    byTeam[e.team].total++;
+    if(e.closed) byTeam[e.team].closed++;
+  });
+  const teamRows = Object.values(byTeam)
+    .map(t=>({ ...t, rate: t.total ? Math.round((t.closed/t.total)*100) : 0 }))
+    .sort((a,b)=> b.rate - a.rate);
+
+  return { total, closed, overallRate, companyRows, teamRows };
+}
+// ---------- Time-to-close metric (2026-09-24, pipeline-visibility batch)
+// ---------- How long does it actually take, from a candidate's first call
+// to the closure being recorded? A single average without a spread would
+// hide a lot (one very fast and one very slow closure can average out to
+// something misleading), so this reports median alongside average, plus
+// the min/max range, and a per-company breakdown for spotting a client
+// that consistently drags out. Reuses the same pipeline entries
+// computeConversionFunnel() builds — a closure's date minus its pipeline
+// entry's FIRST call date, only for entries that are actually closed.
+const TIME_TO_CLOSE_MIN_COMPANY_CLOSURES = 2; // below this a company's average is one data point away from being meaningless
+async function computeTimeToClose(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const entries = buildPipelineEntries(allRows, makeTeamOf());
+  const daysBetween = (a,b)=>{
+    if(!a || !b) return null;
+    const da = new Date(a+'T00:00:00Z').getTime();
+    const db = new Date(String(b).slice(0,10)+'T00:00:00Z').getTime();
+    if(isNaN(da) || isNaN(db)) return null;
+    return Math.round((db-da)/86400000);
+  };
+  const closedEntries = entries
+    .filter(e=>e.closed && e.firstDate && e.closedAt)
+    .map(e=>({ ...e, days: daysBetween(e.firstDate, e.closedAt) }))
+    .filter(e=> e.days !== null && e.days >= 0);
+  if(!closedEntries.length){
+    return { count: 0, avgDays: null, medianDays: null, minDays: null, maxDays: null, byCompany: [] };
+  }
+  const daysList = closedEntries.map(e=>e.days).sort((a,b)=>a-b);
+  const avgDays = Math.round(daysList.reduce((s,d)=>s+d,0)/daysList.length);
+  const mid = Math.floor(daysList.length/2);
+  const medianDays = daysList.length % 2 === 1 ? daysList[mid] : Math.round((daysList[mid-1]+daysList[mid])/2);
+  const minDays = daysList[0], maxDays = daysList[daysList.length-1];
+  const byCompanyMap = {};
+  closedEntries.forEach(e=>{
+    if(!e.company) return;
+    (byCompanyMap[e.company] = byCompanyMap[e.company] || []).push(e.days);
+  });
+  const byCompany = Object.entries(byCompanyMap)
+    .filter(([,days])=>days.length >= TIME_TO_CLOSE_MIN_COMPANY_CLOSURES)
+    .map(([company,days])=>({ company, count: days.length, avgDays: Math.round(days.reduce((s,d)=>s+d,0)/days.length) }))
+    .sort((a,b)=> a.avgDays - b.avgDays);
+  return { count: closedEntries.length, avgDays, medianDays, minDays, maxDays, byCompany };
+}
+// ---------- Company scorecard (2026-09-24, pipeline-visibility batch)
+// ---------- Volume, reliability, conversion rate and time-to-close for one
+// company currently live in three separate tabs (Client Reliability, the
+// new Conversion Funnel, and Time to Close), each with its own minimum-
+// sample-size guard, so "how is this client, really" means checking three
+// places and remembering three different thresholds. This pulls all three
+// together for ONE named company. Below-threshold figures are shown as
+// "not enough history yet" rather than omitted outright, so a newer client
+// isn't a blank scorecard — you can at least see the raw volume.
+async function computeCompanyScorecard(companyName, forceRefresh){
+  const key = normalizeCompanyKey(companyName);
+  if(!key) return null;
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const [reliabilityRows, funnel, timeToClose] = await Promise.all([
+    scanClientReliability(false), // shares fetchAllRowsAcrossDates' cache, see the CACHE_MS comment there
+    computeConversionFunnel(false),
+    computeTimeToClose(false),
+  ]);
+  const matchingRows = allRows.filter(r => normalizeCompanyKey(r.company) === key);
+  if(!matchingRows.length) return { company: companyName, found: false };
+  // Longest spelling on file as the display label — same heuristic
+  // scanClientReliability already uses for the same reason.
+  const displayName = matchingRows.reduce((best,r)=> (r.company||'').length > best.length ? r.company : best, matchingRows[0].company||companyName);
+  const totalCalls = matchingRows.filter(r=>!r.woi).length;
+  const reliability = reliabilityRows.find(r=>normalizeCompanyKey(r.company)===key) || null;
+  const funnelRow = funnel.companyRows.find(c=>normalizeCompanyKey(c.company)===key) || null;
+  const timeRow = timeToClose.byCompany.find(c=>normalizeCompanyKey(c.company)===key) || null;
+  return {
+    company: displayName, found: true, totalCalls,
+    reliability: reliability ? { rate: Math.round(reliability.rate*100), bad: reliability.bad, total: reliability.total } : null,
+    reliabilityBelowThreshold: !reliability && totalCalls > 0,
+    conversion: funnelRow ? { rate: funnelRow.rate, closed: funnelRow.closed, total: funnelRow.total } : null,
+    conversionBelowThreshold: !funnelRow,
+    timeToClose: timeRow ? { avgDays: timeRow.avgDays, count: timeRow.count } : null,
+    timeToCloseBelowThreshold: !timeRow,
+  };
+}
+// ---------- Stuck-in-pipeline flag (2026-09-24, pipeline-visibility batch)
+// ---------- WOI Aging already catches a candidate still literally marked
+// "Waiting for Invite". This catches the broader, easier-to-miss case: a
+// candidate who HAD a real call — not WOI — and then just... nothing.
+// No further round logged, no closure recorded, no explicit cancel/no-show
+// tag either. That's the case most likely to be genuinely forgotten rather
+// than deliberately dropped, since nothing else in the app currently
+// surfaces it at all.
+const STUCK_PIPELINE_MIN_DAYS = 14; // same 14-day cadence already established for the backup reminder elsewhere — long enough that it's clearly not just normal turnaround, not a newly-invented number
+const STUCK_PIPELINE_EXCLUDE_STATUSES = ['cancelled','not_responded']; // terminal outcomes — already resolved, not "stuck"; 'rescheduled' is deliberately NOT excluded, since a reschedule that never got rebooked is exactly the stuck case this is meant to catch
+async function computeStuckPipeline(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const todayKey = todayStr();
+  // Latest row per candidate (across every company) — a candidate is
+  // "stuck" based on their most recent touchpoint, not their oldest one.
+  const byCandidate = {};
+  allRows.forEach(row=>{
+    const key = (row.candidate||'').trim().toLowerCase();
+    if(!key || row.woi) return; // WOI is WOI Aging's job, not this one's
+    const existing = byCandidate[key];
+    if(!existing || (row._date && row._date >= (existing._date||''))){
+      byCandidate[key] = row;
+    }
+  });
+  const closedCandidates = new Set((state.closures||[]).map(c=>(c.candidate||'').trim().toLowerCase()));
+  const daysBetween = (a,b)=>{
+    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(b+'T00:00:00Z').getTime();
+    return Math.max(0, Math.round((db-da)/86400000));
+  };
+  return Object.values(byCandidate)
+    .filter(row=>{
+      const key = (row.candidate||'').trim().toLowerCase();
+      if(closedCandidates.has(key)) return false;
+      if(row.status && STUCK_PIPELINE_EXCLUDE_STATUSES.includes(row.status)) return false;
+      if(!row._date) return false;
+      return daysBetween(row._date, todayKey) >= STUCK_PIPELINE_MIN_DAYS;
+    })
+    .map(row=>({
+      candidate: row.candidate, company: row.company||'', round: row.round||'',
+      lastDate: row._date, daysSince: daysBetween(row._date, todayKey),
+      status: row.status||'', assignee: row.assignee||'',
+    }))
+    .sort((a,b)=> b.daysSince - a.daysSince);
 }
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
@@ -4423,6 +4765,8 @@ function closeAllPanels(){
   state.missedCheckReviewItems = null;
   state.duplicatesReview = null;
   state.clearAllReview = null;
+  state.showCandidateProfile = false;
+  state.showCompanyScorecard = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -4450,6 +4794,8 @@ function getActivePanelName(){
   if(state.showMissedCheck) return 'missedCheck';
   if(state.duplicatesReview) return 'duplicatesReview';
   if(state.clearAllReview) return 'clearAllReview';
+  if(state.showCandidateProfile) return 'candidateProfile';
+  if(state.showCompanyScorecard) return 'companyScorecard';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -4483,6 +4829,8 @@ function renderActivePanel(name){
   if(name === 'missedCheckReview') return renderMissedCheckReviewPanel();
   if(name === 'duplicatesReview') return renderDuplicatesReviewPanel();
   if(name === 'clearAllReview') return renderClearAllReviewPanel();
+  if(name === 'candidateProfile') return renderCandidateProfilePanel();
+  if(name === 'companyScorecard') return renderCompanyScorecardPanel();
   return '';
 }
 function panelTitle(name){
@@ -4493,7 +4841,9 @@ function panelTitle(name){
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
     closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
-    duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts'
+    duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts',
+    candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
+    companyScorecard: 'Company Scorecard'
   };
   return titles[name] || '';
 }
@@ -4594,6 +4944,7 @@ function render(){
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
+            <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
             <button class="more-menu-item" id="toggleHelp" title="Keyboard shortcuts and a quick reference for where things live">❔ Help &amp; Shortcuts</button>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
@@ -4863,6 +5214,17 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
         ${Array.from(new Set(state.rows.map(r=>r.company).filter(Boolean))).sort((a,b)=>a.localeCompare(b)).map(c=>`<option value="${escapeHtml(c)}" ${state.clientFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
       </select>
       <button class="btn ${state.groupByCompany?'active':''}" id="groupByCompanyBtn" style="${state.groupByCompany?'background:var(--teal-dim);border-color:#1F4A43;color:var(--teal)':''}" title="Sort the table by client instead of time, so same-client calls sit next to each other">${state.groupByCompany?'✓ ':''}Group by client</button>
+      ${(()=>{
+        // "My Calls" quick filter (2026-09-24, pipeline-visibility batch) —
+        // one click to see just your own assigned calls for the day instead
+        // of hunting your name in the "Filter by person…" dropdown every
+        // time. Reuses the existing assigneeFilter mechanism entirely (same
+        // namesEquivalent-tolerant match Team Sync badges use) — this is
+        // just a fast, rememberable shortcut into it, not a new filter.
+        const myName = getMyAssigneeName();
+        const isActive = myName && namesEquivalent(state.assigneeFilter, myName);
+        return `<button class="btn ${isActive?'active':''}" id="myCallsBtn" style="${isActive?'background:var(--teal-dim);border-color:#1F4A43;color:var(--teal)':''}" title="${myName ? `Show only ${escapeHtml(myName)}'s calls for today (click again to clear)` : 'Pick which roster name is you, then filter to just your own calls'}">${isActive?'✓ ':''}👤 My Calls</button>${myName ? `<button class="btn ghost" id="myCallsChangeBtn" title="Change which name 'My Calls' filters to" style="padding:8px 10px;font-size:11px">⚙</button>` : ''}`;
+      })()}
       <div class="spacer"></div>
       <button class="filter-chip ${state.filter==='all'?'active':''}" data-f="all">All<span class="n">${sum.total}</span></button>
       <button class="filter-chip ${state.filter==='unassigned'?'active':''}" data-f="unassigned">Unassigned<span class="n">${sum.unassigned}</span></button>
@@ -5306,7 +5668,10 @@ function renderUniversalSearchPanel(){
   } else {
     const rowsHtml = state.universalSearchResults.map(r=>`
       <div class="notif-row">
-        <div class="notif-name">${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</div>
+        <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</span>
+          ${r.candidate ? `<button class="btn ghost" data-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px;flex-shrink:0">📋 Timeline</button>` : ''}
+        </div>
         <div class="notif-detail">
           <span class="notif-chip">${escapeHtml(r._date)}</span>
           <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
@@ -5332,6 +5697,142 @@ function renderUniversalSearchPanel(){
     </label>
     ${body}
   </div>`;
+}
+// Candidate profile timeline (2026-09-24, pipeline-visibility batch) — see
+// computeCandidateProfile() above for why this is an exact-name lookup,
+// not a fuzzy one. Opened via "📋 Timeline" on a Search Everywhere result.
+function renderCandidateProfilePanel(){
+  if(state.candidateProfileLoading){
+    return `<div class="import-panel"><div class="hint"><span class="spinner"></span> Building ${escapeHtml(state.candidateProfileName)}'s timeline…</div></div>`;
+  }
+  const data = state.candidateProfileData;
+  if(!data || (!data.calls.length && !data.closures.length)){
+    return `<div class="import-panel"><div class="hint">No calls or closures found for "${escapeHtml(state.candidateProfileName)}".</div></div>`;
+  }
+  // A single merged, chronological timeline — calls by date/time, closures
+  // by their own recorded date — rather than two separate lists, since the
+  // whole point is seeing the journey in one continuous read.
+  const events = [
+    ...data.calls.map(c => ({ kind:'call', sortKey: (c._date||'')+' '+String(businessDayMinutes(c.time)).padStart(5,'0'), data:c })),
+    ...data.closures.map(c => ({ kind:'closure', sortKey: (c.createdAt||'9999').slice(0,10)+' 99999', data:c })),
+  ].sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
+  const firstCallDate = data.calls.length ? data.calls[0]._date : null;
+  const hasClosure = data.closures.length > 0;
+  const daysBetween = (a,b)=>{
+    if(!a||!b) return null;
+    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(String(b).slice(0,10)+'T00:00:00Z').getTime();
+    if(isNaN(da)||isNaN(db)) return null;
+    return Math.round((db-da)/86400000);
+  };
+  const timeToClose = (hasClosure && firstCallDate) ? daysBetween(firstCallDate, data.closures[0].createdAt) : null;
+  const summaryChips = [
+    `<span class="notif-chip">${data.calls.length} call${data.calls.length===1?'':'s'}</span>`,
+    firstCallDate ? `<span class="notif-chip">first call ${escapeHtml(firstCallDate)}</span>` : '',
+    hasClosure ? `<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">🏆 ${data.closures.length} closure${data.closures.length===1?'':'s'}</span>` : '',
+    (timeToClose !== null && timeToClose >= 0) ? `<span class="notif-chip">${timeToClose} day${timeToClose===1?'':'s'} to close</span>` : '',
+  ].filter(Boolean).join(' ');
+  const eventsHtml = events.map(ev=>{
+    if(ev.kind === 'closure'){
+      const c = ev.data;
+      return `<div class="notif-row" style="border-left:3px solid var(--teal);padding-left:10px">
+        <div class="notif-name">🏆 Closure recorded${c.company?` — ${escapeHtml(c.company)}`:''}</div>
+        <div class="notif-detail">
+          ${c.createdAt?`<span class="notif-chip">${escapeHtml(String(c.createdAt).slice(0,10))}</span>`:''}
+          ${c.salary?`<span class="notif-chip">${escapeHtml(c.salary)}</span>`:''}
+        </div>
+      </div>`;
+    }
+    const r = ev.data;
+    return `<div class="notif-row">
+      <div class="notif-name">${escapeHtml(r.round || 'Call')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</div>
+      <div class="notif-detail">
+        <span class="notif-chip">${escapeHtml(r._date)}</span>
+        <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
+        <span class="notif-chip">${escapeHtml(r.company||'no company')}</span>
+        ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>, oldest first.</div>
+    <div style="margin-bottom:12px">${summaryChips}</div>
+    ${eventsHtml}
+  </div>`;
+}
+async function openCandidateProfile(name){
+  closeAllPanels();
+  state.showCandidateProfile = true;
+  state.candidateProfileName = name;
+  state.candidateProfileLoading = true;
+  state.candidateProfileData = null;
+  render();
+  try{
+    state.candidateProfileData = await computeCandidateProfile(name, false);
+  }catch(e){
+    state.candidateProfileData = { name, calls: [], closures: [] };
+  }
+  state.candidateProfileLoading = false;
+  render();
+}
+// Company scorecard (2026-09-24, pipeline-visibility batch) — see
+// computeCompanyScorecard() above. A simple type-a-name-and-search panel,
+// same shape as Search Everywhere, rather than a dropdown of every company
+// ever seen (that list can get long, and typing is faster once you know
+// roughly what you're looking for).
+function renderCompanyScorecardPanel(){
+  let body;
+  if(state.companyScorecardLoading){
+    body = `<div class="hint"><span class="spinner"></span> Building the scorecard…</div>`;
+  } else if(state.companyScorecardData === null){
+    body = `<div class="hint">Type a client/company name — pulls together volume, reliability, conversion rate, and time-to-close for that one client, instead of checking three separate tabs.</div>`;
+  } else if(!state.companyScorecardData.found){
+    body = `<div class="hint">No calls found for "${escapeHtml(state.companyScorecardQuery)}".</div>`;
+  } else {
+    const d = state.companyScorecardData;
+    const statCard = (label, value, sub, color)=> `<div style="flex:1;min-width:120px;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+      <div style="font-size:24px;font-weight:800;${color?`color:${color}`:''}">${value}</div>
+      <div class="hint" style="margin-top:2px">${label}</div>
+      ${sub?`<div class="hint" style="font-size:10.5px;margin-top:1px">${sub}</div>`:''}
+    </div>`;
+    const reliabilityCard = d.reliability
+      ? statCard('reschedule/cancel rate', d.reliability.rate+'%', `${d.reliability.bad} of ${d.reliability.total} calls`, d.reliability.rate>=30?'var(--coral)':d.reliability.rate>=15?'var(--amber)':'var(--teal)')
+      : statCard('reschedule/cancel rate', '—', d.reliabilityBelowThreshold ? `fewer than ${CLIENT_RELIABILITY_MIN_CALLS} calls on file` : 'no data', 'var(--text-faint)');
+    const conversionCard = d.conversion
+      ? statCard('conversion rate', d.conversion.rate+'%', `${d.conversion.closed} of ${d.conversion.total} closed`, d.conversion.rate>=20?'var(--teal)':d.conversion.rate>=8?'var(--amber)':'var(--coral)')
+      : statCard('conversion rate', '—', d.conversionBelowThreshold ? `fewer than ${CONVERSION_MIN_COMPANY_ENTRIES} pipeline entries` : 'no data', 'var(--text-faint)');
+    const timeCard = d.timeToClose
+      ? statCard('avg time to close', d.timeToClose.avgDays+'d', `${d.timeToClose.count} closure${d.timeToClose.count===1?'':'s'}`, 'var(--sky)')
+      : statCard('avg time to close', '—', d.timeToCloseBelowThreshold ? `fewer than ${TIME_TO_CLOSE_MIN_COMPANY_CLOSURES} closures` : 'no data', 'var(--text-faint)');
+    body = `
+      <div style="font-weight:800;font-size:18px;margin-bottom:2px">${escapeHtml(d.company)}</div>
+      <div class="hint" style="margin-bottom:14px">${d.totalCalls} call${d.totalCalls===1?'':'s'} on file, all-time</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${reliabilityCard}
+        ${conversionCard}
+        ${timeCard}
+      </div>`;
+  }
+  return `<div class="import-panel">
+    <div class="add-row" style="margin-top:0;margin-bottom:12px">
+      <input type="text" id="companyScorecardInput" placeholder="Client / company name…" value="${escapeHtml(state.companyScorecardQuery||'')}" style="flex:1">
+      <button class="btn primary" id="runCompanyScorecardBtn">🏢 View Scorecard</button>
+    </div>
+    ${body}
+  </div>`;
+}
+async function openCompanyScorecard(name){
+  const q = (name||'').trim();
+  state.companyScorecardQuery = q;
+  if(!q){ state.companyScorecardData = null; render(); return; }
+  state.companyScorecardLoading = true;
+  render();
+  try{
+    state.companyScorecardData = await computeCompanyScorecard(q, false);
+  }catch(e){
+    state.companyScorecardData = { company: q, found: false };
+  }
+  state.companyScorecardLoading = false;
+  render();
 }
 
 // A safety net against a missed WhatsApp message, without any live
@@ -5568,7 +6069,10 @@ function renderNotificationsPanel(){
     { key:'trends', label:'📈 Trends Over Time' },
     { key:'woiAging', label:'⏳ WOI Aging' },
     { key:'workloadHeatmap', label:'📶 Workload Heatmap' },
-    { key:'weeklyRecap', label:'📈 Weekly Team Recap' }
+    { key:'weeklyRecap', label:'📈 Weekly Team Recap' },
+    { key:'conversionFunnel', label:'🎯 Conversion Funnel' },
+    { key:'stuckPipeline', label:'🧊 Stuck in Pipeline' },
+    { key:'timeToClose', label:'⏱ Time to Close' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>`
@@ -5758,12 +6262,28 @@ function renderNotificationsPanel(){
           <div class="notif-name">${escapeHtml(p.team)} <span class="notif-warn" style="color:var(--amber)">${p.weeks.join(' → ')} calls/week${p.growthPct!=null?` (+${p.growthPct}%)`:''}</span></div>
           <div class="notif-detail"><span class="notif-chip">Current headcount: ${p.headcount}</span></div>
         </div>`).join('')}` : '';
+      // Actual line charts (2026-09-24, pipeline-visibility batch) — the
+      // per-week list below still has the exact numbers, but a shape you
+      // can see at a glance surfaces a rising/falling pattern far faster
+      // than reading a column of numbers top to bottom.
+      const volumeChartHtml = svgLineChart(
+        state.trendsData.weeks.map(w=>({ label: w.week.slice(5), value: w.total })),
+        { color: 'var(--sky)', height: 120 }
+      );
+      const rateChartHtml = svgLineChart(
+        state.trendsData.weeks.map(w=>({ label: w.week.slice(5), value: w.total ? Math.round(w.bad/w.total*100) : 0 })),
+        { color: 'var(--coral)', height: 120, valueSuffix: '%' }
+      );
       content = `
         <div class="row" style="margin-bottom:8px">
           <div class="hint">${state.trendsData.weeks.length} week(s) on file, oldest first.</div>
           <button class="btn ghost" id="runTrendsScan">Re-scan</button>
         </div>
-        <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume &amp; reschedule rate by week</div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume by week</div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:8px 4px;margin-bottom:14px">${volumeChartHtml}</div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Reschedule/cancel rate by week</div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:8px 4px;margin-bottom:14px">${rateChartHtml}</div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume &amp; reschedule rate by week (detail)</div>
         ${weeksHtml}
         <div style="font-weight:700;font-size:13px;margin:14px 0 6px">Reschedule rate by handler</div>
         ${handlerHtml}
@@ -5840,12 +6360,127 @@ function renderNotificationsPanel(){
           </div>
         </div>`;
       }).join('');
+      // Visual last-week-vs-this-week comparison (2026-09-24, pipeline-
+      // visibility batch) — the numbers above already say the delta, this
+      // makes the actual size of it visible at a glance across every team.
+      const barChartHtml = svgGroupedBarChart(
+        state.weeklyRecapData.teams.map(t=>({ label: t.team, a: t.callsLastWeek || 0, b: t.callsThisWeek })),
+        { labelA: 'Last week', labelB: 'This week', colorA: 'var(--text-faint)', colorB: 'var(--sky)' }
+      );
       content = `
         <div class="row" style="margin-bottom:8px">
           <div class="hint">Week of ${escapeHtml(weekStartDateKey(state.date))} onward.</div>
           <button class="btn ghost" id="runWeeklyRecapScan">Rebuild</button>
         </div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Call volume, last week vs. this week</div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">${barChartHtml}</div>
         ${rowsHtml}`;
+    }
+  } else if(active === 'conversionFunnel'){
+    if(state.conversionFunnelLoading){
+      content = `<div class="hint"><span class="spinner"></span> Building the conversion funnel…</div>`;
+    } else if(state.conversionFunnelData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Of everyone actually interviewed, what fraction eventually closes? A closure COUNT (see 🏆 Closures) says how much got closed; this says how well the pipeline actually converts — very different, and more useful for judging a client or a team. Each candidate's rounds at one company collapse into one shot at a closure, so re-interviewing the same person for the same client isn't counted twice.</div>
+        <button class="btn primary" id="runConversionFunnelScan">🔍 Build conversion funnel</button>`;
+    } else if(!state.conversionFunnelData.total){
+      content = `<div class="hint">No candidate/company pipeline entries on file yet. <button class="btn ghost" id="runConversionFunnelScan" style="margin-left:8px">Re-build</button></div>`;
+    } else {
+      const d = state.conversionFunnelData;
+      const overallColor = d.overallRate>=20 ? 'var(--teal)' : d.overallRate>=8 ? 'var(--amber)' : 'var(--coral)';
+      const companyHtml = d.companyRows.length ? d.companyRows.map(c=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(c.company)} <span class="notif-warn" style="color:${c.rate>=20?'var(--teal)':c.rate>=8?'var(--amber)':'var(--coral)'}">${c.rate}% (${c.closed} of ${c.total})</span></div>
+        </div>`).join('') : `<div class="hint">No company has ${CONVERSION_MIN_COMPANY_ENTRIES}+ pipeline entries on file yet — too little data for a rate to mean anything per client.</div>`;
+      const teamHtml = d.teamRows.length ? d.teamRows.map(t=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(t.team)} <span class="notif-warn" style="color:${t.rate>=20?'var(--teal)':t.rate>=8?'var(--amber)':'var(--coral)'}">${t.rate}% (${t.closed} of ${t.total})</span></div>
+        </div>`).join('') : `<div class="hint">No team-attributable pipeline entries yet.</div>`;
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${d.total} candidate/company pipeline entr${d.total===1?'y':'ies'} on file, all-time.</div>
+          <button class="btn ghost" id="runConversionFunnelScan">Re-build</button>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px;text-align:center">
+          <div style="font-size:34px;font-weight:800;color:${overallColor}">${d.overallRate}%</div>
+          <div class="hint" style="margin-top:2px">overall conversion — ${d.closed} closure${d.closed===1?'':'s'} out of ${d.total} pipeline entr${d.total===1?'y':'ies'}</div>
+        </div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">By company (${CONVERSION_MIN_COMPANY_ENTRIES}+ entries only)</div>
+        ${companyHtml}
+        <div style="font-weight:700;font-size:13px;margin:14px 0 6px">By team</div>
+        ${teamHtml}`;
+    }
+  } else if(active === 'stuckPipeline'){
+    if(state.stuckPipelineLoading){
+      content = `<div class="hint"><span class="spinner"></span> Scanning every saved date for stalled candidates…</div>`;
+    } else if(state.stuckPipelineData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Finds candidates who had a real (non-WOI) call, then nothing since — no further round, no closure, no explicit cancel/no-response tag — for ${STUCK_PIPELINE_MIN_DAYS}+ days. WOI candidates are covered by the ⏳ WOI Aging tab instead; this catches the case that currently surfaces nowhere else.</div>
+        <button class="btn primary" id="runStuckPipelineScan">🔍 Scan for stalled candidates</button>`;
+    } else if(!state.stuckPipelineData.length){
+      content = `<div class="hint" style="color:var(--teal)">✅ Nothing appears stalled — every non-closed candidate has either moved recently or been explicitly resolved. <button class="btn ghost" id="runStuckPipelineScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else {
+      const rowsHtml = state.stuckPipelineData.map(s=>{
+        const urgent = s.daysSince >= 30;
+        return `<div class="notif-row">
+          <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}</div>
+          <div class="notif-detail">
+            <span class="notif-chip" style="${urgent?'color:var(--coral);border-color:var(--coral)':'color:var(--amber);border-color:var(--amber)'}">${s.daysSince} days since last contact</span>
+            <span class="notif-chip">since ${escapeHtml(s.lastDate)}</span>
+            ${s.round?`<span class="notif-chip">${escapeHtml(s.round)}</span>`:''}
+            ${s.status?`<span class="notif-chip">last status: ${escapeHtml(statusBadgeInfo(s.status).label)}</span>`:''}
+            ${s.assignee?`<span class="notif-chip">${escapeHtml(s.assignee)}</span>`:''}
+            ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+          </div>
+        </div>`;
+      }).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.stuckPipelineData.length} candidate(s) stalled ${STUCK_PIPELINE_MIN_DAYS}+ days, worst first.</div>
+          <button class="btn ghost" id="runStuckPipelineScan">Re-scan</button>
+        </div>
+        ${rowsHtml}`;
+    }
+  } else if(active === 'timeToClose'){
+    if(state.timeToCloseLoading){
+      content = `<div class="hint"><span class="spinner"></span> Computing time-to-close…</div>`;
+    } else if(state.timeToCloseData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">How long does it actually take from a candidate's first call to a recorded closure? Median is shown alongside the average since one very fast or very slow closure can skew an average on its own.</div>
+        <button class="btn primary" id="runTimeToCloseScan">🔍 Compute time-to-close</button>`;
+    } else if(!state.timeToCloseData.count){
+      content = `<div class="hint">No closures with a matching call on file yet. <button class="btn ghost" id="runTimeToCloseScan" style="margin-left:8px">Re-compute</button></div>`;
+    } else {
+      const d = state.timeToCloseData;
+      const companyHtml = d.byCompany.length ? d.byCompany.map(c=>`
+        <div class="notif-row">
+          <div class="notif-name">${escapeHtml(c.company)} <span class="notif-warn">${c.avgDays} day${c.avgDays===1?'':'s'} avg (${c.count} closure${c.count===1?'':'s'})</span></div>
+        </div>`).join('') : `<div class="hint">No company has ${TIME_TO_CLOSE_MIN_COMPANY_CLOSURES}+ closures on file yet — too little data for an average to mean anything per client.</div>`;
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">Based on ${d.count} closure${d.count===1?'':'s'} with a matching call on file.</div>
+          <button class="btn ghost" id="runTimeToCloseScan">Re-compute</button>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <div style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+            <div style="font-size:26px;font-weight:800;color:var(--sky)">${d.avgDays}</div>
+            <div class="hint" style="margin-top:2px">avg days</div>
+          </div>
+          <div style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+            <div style="font-size:26px;font-weight:800">${d.medianDays}</div>
+            <div class="hint" style="margin-top:2px">median days</div>
+          </div>
+          <div style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+            <div style="font-size:26px;font-weight:800;color:var(--teal)">${d.minDays}</div>
+            <div class="hint" style="margin-top:2px">fastest</div>
+          </div>
+          <div style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+            <div style="font-size:26px;font-weight:800;color:var(--amber)">${d.maxDays}</div>
+            <div class="hint" style="margin-top:2px">slowest</div>
+          </div>
+        </div>
+        <div style="font-weight:700;font-size:13px;margin:6px 0">By company (${TIME_TO_CLOSE_MIN_COMPANY_CLOSURES}+ closures only)</div>
+        ${companyHtml}`;
     }
   }
 
@@ -7703,6 +8338,38 @@ function attachHandlers(conflictIds){
     state.groupByCompany = !state.groupByCompany;
     render();
   };
+  const myCallsBtn = document.getElementById('myCallsBtn');
+  if(myCallsBtn) myCallsBtn.onclick = ()=>{
+    let myName = getMyAssigneeName();
+    if(!myName){
+      const picked = prompt('Which name on the roster is you? Type it exactly as it appears (e.g. "Karthikeya").');
+      if(!picked) return;
+      myName = picked.trim();
+      if(!myName) return;
+      setMyAssigneeName(myName);
+    }
+    // Toggle: clicking again while already filtered to yourself clears it,
+    // same as clicking an active filter-chip elsewhere in the app.
+    if(namesEquivalent(state.assigneeFilter, myName)){
+      state.assigneeFilter = '';
+    } else {
+      state.assigneeFilter = myName;
+    }
+    render();
+  };
+  const myCallsChangeBtn = document.getElementById('myCallsChangeBtn');
+  if(myCallsChangeBtn) myCallsChangeBtn.onclick = (e)=>{
+    e.stopPropagation();
+    const current = getMyAssigneeName();
+    const picked = prompt('Which name on the roster is you? Type it exactly as it appears.', current);
+    if(picked === null) return; // cancelled
+    const trimmed = picked.trim();
+    setMyAssigneeName(trimmed);
+    if(trimmed && namesEquivalent(state.assigneeFilter, current)){
+      state.assigneeFilter = trimmed; // keep the filter pointed at the (possibly corrected) name
+    }
+    render();
+  };
   const shiftNoteInput = document.getElementById('shiftNoteInput');
   if(shiftNoteInput) shiftNoteInput.addEventListener('input', ()=>{
     state.shiftNote = shiftNoteInput.value;
@@ -7911,6 +8578,20 @@ function attachHandlers(conflictIds){
   if(universalSearchInput) universalSearchInput.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runUniversalSearchBtn').click(); }
   });
+  document.querySelectorAll('[data-view-timeline]').forEach(btn=>{
+    btn.onclick = ()=>{ openCandidateProfile(btn.dataset.viewTimeline); };
+  });
+  const toggleCompanyScorecardBtn = document.getElementById('toggleCompanyScorecard');
+  if(toggleCompanyScorecardBtn) toggleCompanyScorecardBtn.onclick = ()=>{ openOnlyPanel('showCompanyScorecard'); render(); };
+  const runCompanyScorecardBtn = document.getElementById('runCompanyScorecardBtn');
+  if(runCompanyScorecardBtn) runCompanyScorecardBtn.onclick = ()=>{
+    const input = document.getElementById('companyScorecardInput');
+    openCompanyScorecard(input ? input.value : state.companyScorecardQuery);
+  };
+  const companyScorecardInput = document.getElementById('companyScorecardInput');
+  if(companyScorecardInput) companyScorecardInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runCompanyScorecardBtn').click(); }
+  });
   const toggleHelpBtn = document.getElementById('toggleHelp');
   if(toggleHelpBtn) toggleHelpBtn.onclick = ()=>{ openOnlyPanel('showHelp'); render(); };
   const toggleCalendarViewBtn = document.getElementById('toggleCalendarView');
@@ -7957,6 +8638,30 @@ function attachHandlers(conflictIds){
     render();
     state.weeklyRecapData = await scanWeeklyRecap(true);
     state.weeklyRecapLoading = false;
+    render();
+  };
+  const runConversionFunnelBtn = document.getElementById('runConversionFunnelScan');
+  if(runConversionFunnelBtn) runConversionFunnelBtn.onclick = async ()=>{
+    state.conversionFunnelLoading = true;
+    render();
+    state.conversionFunnelData = await computeConversionFunnel(true);
+    state.conversionFunnelLoading = false;
+    render();
+  };
+  const runStuckPipelineBtn = document.getElementById('runStuckPipelineScan');
+  if(runStuckPipelineBtn) runStuckPipelineBtn.onclick = async ()=>{
+    state.stuckPipelineLoading = true;
+    render();
+    state.stuckPipelineData = await computeStuckPipeline(true);
+    state.stuckPipelineLoading = false;
+    render();
+  };
+  const runTimeToCloseBtn = document.getElementById('runTimeToCloseScan');
+  if(runTimeToCloseBtn) runTimeToCloseBtn.onclick = async ()=>{
+    state.timeToCloseLoading = true;
+    render();
+    state.timeToCloseData = await computeTimeToClose(true);
+    state.timeToCloseLoading = false;
     render();
   };
   const missedCheckFileInput = document.getElementById('missedCheckFileInput');
