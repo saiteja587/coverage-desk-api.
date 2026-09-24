@@ -9849,11 +9849,35 @@ function findPriorClientOccurrence(row){
 async function loadCachedPortalAssignmentsForDate(dateStr){
   if(!API_BASE_URL) return;
   try{
-    const result = await apiCall('portal_sync', {qs:'type=assignments&cached=1&date=' + encodeURIComponent(dateStr)});
+    let result = await apiCall('portal_sync', {qs:'type=assignments&cached=1&date=' + encodeURIComponent(dateStr)});
+    // FIX (2026-09-24): same bug as loadPortalSyncCache() had — this only
+    // ever checked the date-scoped cache key ("assignments:<dateStr>"),
+    // which is what "Sync Today" writes. A "Full Sync" writes under the
+    // date-less "assignments:ALL" key instead. So switching to (or landing
+    // on) a past date whose only real sync was ever a Full Sync found
+    // nothing here and the Portal data looked wiped out on every date
+    // switch, even though it really was sitting in the database under the
+    // other key. Fall back to the ALL-scoped cache before giving up.
+    if(!result.data || !result.data.length){
+      try{
+        const fullResult = await apiCall('portal_sync', {qs:'type=assignments&cached=1'});
+        if(fullResult.data && fullResult.data.length) result = fullResult;
+      }catch(e){ /* fallback is best-effort too */ }
+    }
     if(result.data && result.data.length){
       const rows = result.data;
       state.portalAssignments = rows.map(r => ({ ...r, handler: r.handler || r.assignee || '' }));
       state.portalSyncedAt = result.generatedAt ? new Date(result.generatedAt).toLocaleString() : state.portalSyncedAt;
+      // Also restore state.portalSyncData so the 📡 Team Sync panel's own
+      // table isn't left blank after a date switch — previously only the
+      // per-row badges (portalAssignments) got repopulated here, not the
+      // panel itself, even when this same cached data was available.
+      state.portalSyncData = {
+        assignments: rows,
+        incentives: (state.portalSyncData && state.portalSyncData.incentives) || null
+      };
+      state.portalSyncUpdatedAt = result.generatedAt ? new Date(result.generatedAt).getTime() : state.portalSyncUpdatedAt;
+      state.portalSyncFromCache = true;
       render();
     }
   }catch(e){ /* best-effort — a manual sync still works even if this fails */ }
