@@ -357,6 +357,13 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 
 /* NOTIFICATIONS */
 .notif-alert{border-color:var(--coral) !important;color:var(--coral) !important;}
+/* A calm, neutral pill for the routine "N candidates seen on an earlier
+   date, across your whole history" count — this number is informational
+   and basically always nonzero (repeat interviews are normal), so it
+   should never look like an urgent red alarm the way notif-alert does.
+   Red stays reserved for something actually time-sensitive today, like
+   an absence (see toggleNotifications' markup). */
+.notif-info-badge{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:999px;margin-left:4px;background:rgba(155,135,245,0.14);color:var(--violet);border:1px solid rgba(155,135,245,0.35);vertical-align:1px;}
 .notif-row{padding:10px 0;border-bottom:1px solid var(--border-soft);}
 .notif-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
 .notif-tab-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:11.5px;font-weight:600;padding:7px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;}
@@ -4416,7 +4423,7 @@ function render(){
         <button class="arrow-btn" id="prevDay">‹</button>
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
-        <button class="btn ${(state.notifications && state.notifications.length) || state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="n">${state.notifications.length}</span>` : '')}</button>
+        <button class="btn ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
@@ -4450,8 +4457,11 @@ function render(){
         <button class="btn ghost" id="dismissLastImportBtn">Dismiss</button>
       </span>
     </div>` : ''}
-    ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);margin:-10px 0 16px">Portal sync error: ${escapeHtml(state.portalSyncError)}</div>` : ''}
-    ${state.portalSyncedAt ? `<div class="hint" style="margin:-10px 0 16px">Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
+    ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>📡 Portal sync error: ${escapeHtml(state.portalSyncError)}</span>
+      <button class="btn ghost" id="portalSyncErrorRetryBtn" style="flex-shrink:0">↻ Retry</button>
+    </div>` : ''}
+    ${(state.portalSyncedAt && !state.portalSyncError) ? `<div class="hint" style="background:var(--panel-2,rgba(255,255,255,0.04));border:1px solid var(--border);padding:8px 14px;border-radius:8px;margin:-10px 0 16px">📡 Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
     ${activePanel ? `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
       <button class="btn ghost" id="backToCalls">← Back to calls</button>
@@ -7511,6 +7521,10 @@ function attachHandlers(conflictIds){
       state.loadError = e && e.message ? e.message : 'Still unable to load — please refresh the page.';
     }
     render();
+  };
+  const portalSyncErrorRetryBtn = document.getElementById('portalSyncErrorRetryBtn');
+  if(portalSyncErrorRetryBtn) portalSyncErrorRetryBtn.onclick = ()=>{
+    fetchPortalSync(state.portalSyncMode || 'today');
   };
   const goHomeBtn = document.getElementById('goHomeBtn');
   if(goHomeBtn) goHomeBtn.onclick = async ()=>{
