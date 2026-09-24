@@ -4431,14 +4431,23 @@ function render(){
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once">🔎 Search Everywhere</button>
-            <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages</button>
+            <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             <button class="more-menu-item" id="toggleClientSearch">🔍 Client History Search</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
-            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="quickBackupBtn" ${state.backingUp?'disabled':''} title="Downloads every date you've ever saved — calls, roster, notes — as one JSON file, for safekeeping outside this app">${state.backingUp?'⬇ Preparing backup…':'🗄️ Backup All Data'}</button>` : ''}
+            ${CURRENT_ROLE==='admin' ? (()=>{
+              const lastBackupAt = getLastBackupAt();
+              const daysSince = lastBackupAt ? Math.floor((Date.now()-lastBackupAt)/86400000) : null;
+              const overdue = daysSince === null || daysSince >= BACKUP_REMINDER_DAYS;
+              const overdueLabel = overdue ? (daysSince===null ? 'never backed up' : `${daysSince}d since backup`) : '';
+              const title = overdue
+                ? (daysSince===null ? "You haven't taken a full backup yet — downloads every date you've ever saved (calls, roster, notes) as one JSON file, for safekeeping outside this app" : `It's been ${daysSince} days since your last full backup — downloads every date you've ever saved (calls, roster, notes) as one JSON file, for safekeeping outside this app`)
+                : "Downloads every date you've ever saved — calls, roster, notes — as one JSON file, for safekeeping outside this app";
+              return `<button class="more-menu-item" id="quickBackupBtn" ${state.backingUp?'disabled':''} title="${escapeHtml(title)}">${state.backingUp?'⬇ Preparing backup…':'🗄️ Backup All Data'}${overdue ? ` <span class="notif-info-badge" title="${escapeHtml(title)}">${escapeHtml(overdueLabel)}</span>` : ''}</button>`;
+            })() : ''}
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
@@ -4472,26 +4481,6 @@ function render(){
     ${(()=>{ const warnings = computeWorkloadWarnings(state.rows); return warnings.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A1E;padding:10px 14px;border-radius:8px;margin-bottom:16px">⚠ ${warnings.map(w=>`${escapeHtml(w.name)} has ${w.count} calls today — well above the team average of ${w.avg}`).join('. ')}. Consider redistributing before it leads to a missed call.</div>` : ''; })()}
     ${(()=>{ const risk = computeCapacityRiskWarnings(); return risk.length ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim,rgba(255,107,107,0.12));border:1px solid var(--coral);padding:10px 14px;border-radius:8px;margin-bottom:16px">🚨 ${risk.map(t=>`${escapeHtml(t.name)} is down to ${t.capacity} of ${t.total} today (${t.absent} absent)`).join('. ')} — even a normal day's volume could overload them. Worth planning overflow ahead of time rather than after calls start piling up.</div>` : ''; })()}
     ${(()=>{ const pred = state.predictiveCapacityWarnings||[]; return pred.length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim,rgba(245,182,66,0.12));border:1px solid var(--amber);padding:10px 14px;border-radius:8px;margin-bottom:16px">📈 ${pred.map(p=>`${escapeHtml(p.team)}'s weekly volume has risen for 3 weeks running (${p.weeks.join(' → ')}), headcount is ${p.headcount}`).join('. ')} — from the last Trends scan. Worth a look before it becomes a capacity problem. See Reports → Trends Over Time.</div>` : ''; })()}
-    ${(()=>{
-      if(CURRENT_ROLE!=='admin') return '';
-      const lastBackupAt = getLastBackupAt();
-      const daysSince = lastBackupAt ? Math.floor((Date.now()-lastBackupAt)/86400000) : null;
-      if(daysSince !== null && daysSince < BACKUP_REMINDER_DAYS) return '';
-      const msg = daysSince===null ? "You haven't taken a full backup yet" : `It's been ${daysSince} days since your last full backup`;
-      return `<div class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-        <span>🗄️ ${msg} — worth downloading a copy of everything for safekeeping outside this app.</span>
-        <button class="btn ghost" id="backupReminderBtn" ${state.backingUp?'disabled':''} style="flex-shrink:0">${state.backingUp?'⬇ Preparing…':'⬇ Backup Now'}</button>
-      </div>`;
-    })()}
-    ${(()=>{
-      const hour = new Date().getHours();
-      if(hour < MISSED_CHECK_NUDGE_HOUR) return '';
-      if(getLastMissedCheckRunAt(state.date)) return ''; // already run today
-      return `<div class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-        <span>🔍 Haven't run "Check for Missed Messages" for ${escapeHtml(state.date)} yet today — worth a quick pass against today's WhatsApp export before calling it done.</span>
-        <button class="btn ghost" id="missedCheckNudgeBtn" style="flex-shrink:0">Check Now</button>
-      </div>`;
-    })()}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
       <label for="shiftNoteInput" class="shift-note-label-row">
         <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
@@ -8136,10 +8125,6 @@ function attachHandlers(conflictIds){
   if(backupAllBtn) backupAllBtn.onclick = downloadFullBackup;
   const quickBackupBtn = document.getElementById('quickBackupBtn');
   if(quickBackupBtn) quickBackupBtn.onclick = ()=>{ state.showMoreMenu = false; downloadFullBackup(); };
-  const backupReminderBtn = document.getElementById('backupReminderBtn');
-  if(backupReminderBtn) backupReminderBtn.onclick = downloadFullBackup;
-  const missedCheckNudgeBtn = document.getElementById('missedCheckNudgeBtn');
-  if(missedCheckNudgeBtn) missedCheckNudgeBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
   const toggleConflictsBtn = document.getElementById('toggleConflicts');
   if(toggleConflictsBtn) toggleConflictsBtn.onclick = ()=>{ openOnlyPanel('showConflicts'); render(); };
   document.querySelectorAll('.conflict-reassign').forEach(sel=>{
