@@ -665,7 +665,15 @@ async function handlePortalSyncFetch(req, res) {
     // Cache the result so the next page load (or a failed future sync)
     // still has something real to show, and so this data survives a
     // browser refresh instead of living only in memory.
+    // FIX (2026-09-24): a cache write failure here used to only be
+    // console.error'd server-side - invisible to Saiteja and to the
+    // frontend, which would happily report the sync as fully successful
+    // even though nothing durable was actually saved. Now every failure
+    // (main key, or any per-date fan-out key) is collected into
+    // `cacheWarnings` and returned to the caller as `cacheWarning` on the
+    // response, so the UI can show it instead of silently losing data.
     const cacheKey = resourceRequested + ':' + (date || 'ALL');
+    const cacheWarnings = [];
     try {
       const db = await getConnection();
       try {
@@ -703,8 +711,9 @@ async function handlePortalSyncFetch(req, res) {
               );
             } catch (perDateErr) {
               // One date's write failing should never block the others or
-              // the overall sync - log and keep going.
+              // the overall sync - log and keep going, but still surface it.
               console.error('portal_sync_cache per-date write failed for', perDateKey, perDateErr);
+              cacheWarnings.push('Could not save a per-date snapshot for ' + d + '.');
             }
           }
         }
@@ -712,11 +721,15 @@ async function handlePortalSyncFetch(req, res) {
         await db.end();
       }
     } catch (cacheErr) {
-      // Caching failure should never block returning fresh data to the user.
+      // Caching failure should never block returning fresh data to the user,
+      // but it does mean this sync won't survive a refresh or a future
+      // read-from-cache, so the caller needs to know.
       console.error('portal_sync_cache write failed:', cacheErr);
+      cacheWarnings.push('Fresh data loaded, but it could not be saved for later (cache write failed). It may disappear after a refresh until the next successful sync.');
     }
 
-    return res.status(200).json({ ok: true, data: parsed.data, generatedAt: parsed.generatedAt || null, cached: false });
+    const cacheWarning = cacheWarnings.length ? cacheWarnings.join(' ') : null;
+    return res.status(200).json({ ok: true, data: parsed.data, generatedAt: parsed.generatedAt || null, cached: false, cacheWarning });
   } catch (err) {
     return res.status(502).json({ error: 'Could not reach the Portal bridge: ' + err.message });
   }
