@@ -1136,7 +1136,12 @@ async function main() {
       const r = item.getBoundingClientRect();
       const onScreen = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
       const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return onScreen && topEl === item;
+      // topEl can legitimately be a child of the button (e.g. a small status
+      // badge like "not run today"/"Nd since backup" rendered inside it) —
+      // a click there still bubbles up to the button itself, so this is
+      // still tappable. Only actually fail if something OUTSIDE the button
+      // (an overlay, another element) is covering it.
+      return onScreen && (topEl === item || item.contains(topEl));
     });
   });
   check('Mobile', 'More menu (opened via bottom nav, scrolled to bottom of a long list) is fully on-screen and every item is tappable', menuCheck);
