@@ -253,9 +253,10 @@ module.exports = async (req, res) => {
     if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
     if (resource === 'closures') return await handleClosures(req, res, db);
     if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
+    if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|app_settings|users|whoami' });
   } catch (err) {
     console.error(err);
     // The full error (including internal details like table/column names,
@@ -905,6 +906,39 @@ async function handleClosureManualMatch(req, res, db) {
     await db.query(
       'INSERT INTO closure_manual_matches (closure_id, candidate, company) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE candidate = VALUES(candidate), company = VALUES(company)',
       [cid, cand, comp]
+    );
+    return res.status(200).json({ ok: true });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- app_settings: a small generic key/value store ----------
+// For simple, single-value admin-set settings that don't warrant their
+// own table — the first use is the monthly incentive/closure goal
+// (2026-09-25), but this is deliberately generic (key/value, not
+// "incentive_target" hard-coded into the schema) so a future setting like
+// this doesn't need its own migration. GET (no key) returns everything as
+// {key: value}; GET with ?key= returns just that one; POST upserts one
+// key. Values are always stored as text — the frontend is responsible
+// for parsing (e.g. Number()) whatever it expects back.
+async function handleAppSettings(req, res, db) {
+  if (req.method === 'GET') {
+    if (req.query.key) {
+      const [rows] = await db.query('SELECT setting_value FROM app_settings WHERE setting_key = ?', [req.query.key]);
+      return res.status(200).json({ value: rows.length ? rows[0].setting_value : null });
+    }
+    const [rows] = await db.query('SELECT setting_key, setting_value FROM app_settings');
+    const settings = {};
+    rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
+    return res.status(200).json({ settings });
+  }
+  if (req.method === 'POST') {
+    const { key, value } = req.body || {};
+    const k = (key || '').trim();
+    if (!k) return res.status(400).json({ error: 'key is required' });
+    await db.query(
+      'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+      [k, String(value == null ? '' : value)]
     );
     return res.status(200).json({ ok: true });
   }
