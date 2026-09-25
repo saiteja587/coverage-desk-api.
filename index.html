@@ -876,6 +876,11 @@ let state = {
   closureManualMatchPickerId: null, // which closure's "Match manually" picker is currently open, if any
   closureManualMatchSaving: false,
   closureMatchError: null,
+  appSettings: {}, // generic key/value settings map — see loadAppSettings()/saveAppSetting()
+  editingIncentiveTarget: false,
+  editingClosuresTarget: false,
+  incentiveTargetError: null,
+  closuresTargetError: null,
   rescheduleReview: null,
   rescheduleApplying: false,
   duplicatesReview: null,
@@ -1604,6 +1609,32 @@ async function saveClosureManualMatch(closureId, candidate, company){
   if(!API_BASE_URL) throw new Error('Manual matching requires the backend to be configured.');
   await apiCall('closure_manual_match', {method:'POST', body:{ closureId, candidate, company }});
   state.closureManualMatches[closureId] = { candidate, company };
+}
+// Monthly goal tracking (2026-09-25) — a simple ₹ target on the Incentives
+// panel and a simple closure-count target on the Closures panel, so the
+// numbers already being tracked (Incentives' grandTotal, Closures'
+// thisMonthCount) turn into a visible goal instead of just a historical
+// log. Deliberately ONE flat, ongoing target rather than a per-month
+// value — simplest useful version; if Saiteja ever wants a different
+// target for a specific month, that's a real feature to build later, not
+// assumed here. Backed by the generic app_settings key/value store so a
+// future setting like this doesn't need its own migration.
+async function loadAppSettings(){
+  if(!API_BASE_URL) return;
+  try{
+    const data = await apiCall('app_settings', {});
+    state.appSettings = data.settings || {};
+    render();
+  }catch(e){
+    // Non-essential — goal tracking just shows "not set" until this
+    // resolves or the resource exists, same fallback posture as the
+    // other optional-enhancement loaders above.
+  }
+}
+async function saveAppSetting(key, value){
+  if(!API_BASE_URL) throw new Error('Saving a setting requires the backend to be configured.');
+  await apiCall('app_settings', {method:'POST', body:{ key, value }});
+  state.appSettings[key] = String(value);
 }
 // Appends newly-confirmed closures to the backend, then merges them into
 // local state so the list and the More-menu count update immediately
@@ -6975,6 +7006,7 @@ function renderClosuresPanel(){
       <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
       <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
     </div>
+    ${renderClosuresGoalHtml(thisMonthCount)}
     <div class="notif-tabs" style="margin-bottom:10px">
       <button class="notif-tab-btn ${view==='list'?'active':''}" data-closuresview="list">📋 All Closures</button>
       <button class="notif-tab-btn ${view==='byHandler'?'active':''}" data-closuresview="byHandler">🏆 By Handler</button>
@@ -7055,6 +7087,79 @@ function renderHelpPanel(){
   </div>`;
 }
 
+// Shared by the Incentives ₹ goal and the Closures count goal below — a
+// plain, self-contained progress bar, capped visually at 100% even if the
+// actual number has gone past target (still shown in the label, just not
+// drawn past the bar's edge).
+function renderGoalProgressBar(current, target, label){
+  const pct = target > 0 ? Math.min(100, Math.round((current/target)*100)) : 0;
+  return `<div style="margin-top:8px;max-width:360px">
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-faint);margin-bottom:4px">
+      <span>${escapeHtml(label)}</span><span>${pct}%</span>
+    </div>
+    <div style="background:var(--surface-2);border-radius:5px;height:8px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${pct>=100?'var(--teal)':'var(--amber)'}"></div>
+    </div>
+  </div>`;
+}
+// The monthly ₹ target block on the Incentives panel — shows a "set a
+// target" prompt the first time, then an editable target with a progress
+// bar against the month currently being viewed's grandTotal. Deliberately
+// a single ongoing target (not per-month) — see the note on
+// loadAppSettings() above for why.
+function renderIncentiveGoalHtml(grandTotal){
+  const targetRaw = state.appSettings.incentive_monthly_target;
+  const target = Number(targetRaw || 0);
+  if(state.editingIncentiveTarget){
+    return `<div style="margin-bottom:16px;padding:12px 14px;border:1px dashed var(--border);border-radius:10px">
+      <div class="hint" style="margin-bottom:6px">Monthly target (₹) — applies to every month, not just this one:</div>
+      ${state.incentiveTargetError ? `<div class="hint" style="color:var(--coral);margin-bottom:6px">⚠ ${escapeHtml(state.incentiveTargetError)}</div>` : ''}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="number" min="0" id="incentiveTargetInput" value="${target||''}" placeholder="e.g. 50000" style="width:160px">
+        <button class="btn primary" id="saveIncentiveTargetBtn">Save</button>
+        <button class="btn ghost" id="cancelIncentiveTargetBtn">Cancel</button>
+      </div>
+    </div>`;
+  }
+  if(!target){
+    return `<div style="margin-bottom:16px"><button class="btn ghost" id="editIncentiveTargetBtn">🎯 Set a monthly target</button></div>`;
+  }
+  return `<div style="margin-bottom:16px;padding:12px 14px;border:1px solid var(--border);border-radius:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:700;font-size:13px">🎯 Monthly target: ₹${target.toLocaleString('en-IN')}</div>
+      <button class="btn ghost" id="editIncentiveTargetBtn" style="font-size:11.5px;padding:4px 10px">Edit</button>
+    </div>
+    ${renderGoalProgressBar(grandTotal, target, `₹${grandTotal.toLocaleString('en-IN')} of ₹${target.toLocaleString('en-IN')}${grandTotal>=target?' — target reached! 🎉':''}`)}
+  </div>`;
+}
+// Same idea, for a monthly CLOSURE COUNT target on the Closures panel —
+// reuses thisMonthCount, which renderClosuresPanel already computes.
+function renderClosuresGoalHtml(thisMonthCount){
+  const targetRaw = state.appSettings.closures_monthly_target;
+  const target = Number(targetRaw || 0);
+  const canEdit = CURRENT_ROLE === 'admin'; // app_settings writes are admin-only server-side too — don't show an edit control a non-admin viewer would just get a 403 from
+  if(canEdit && state.editingClosuresTarget){
+    return `<div style="margin-bottom:16px;padding:12px 14px;border:1px dashed var(--border);border-radius:10px">
+      <div class="hint" style="margin-bottom:6px">Monthly closures target (a count) — applies to every month:</div>
+      ${state.closuresTargetError ? `<div class="hint" style="color:var(--coral);margin-bottom:6px">⚠ ${escapeHtml(state.closuresTargetError)}</div>` : ''}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="number" min="0" id="closuresTargetInput" value="${target||''}" placeholder="e.g. 10" style="width:120px">
+        <button class="btn primary" id="saveClosuresTargetBtn">Save</button>
+        <button class="btn ghost" id="cancelClosuresTargetBtn">Cancel</button>
+      </div>
+    </div>`;
+  }
+  if(!target){
+    return canEdit ? `<div style="margin-bottom:16px"><button class="btn ghost" id="editClosuresTargetBtn">🎯 Set a monthly closures target</button></div>` : '';
+  }
+  return `<div style="margin-bottom:16px;padding:12px 14px;border:1px solid var(--border);border-radius:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:700;font-size:13px">🎯 Monthly closures target: ${target}</div>
+      ${canEdit ? `<button class="btn ghost" id="editClosuresTargetBtn" style="font-size:11.5px;padding:4px 10px">Edit</button>` : ''}
+    </div>
+    ${renderGoalProgressBar(thisMonthCount, target, `${thisMonthCount} of ${target}${thisMonthCount>=target?' — target reached! 🎉':''}`)}
+  </div>`;
+}
 function renderIncentivesPanel(){
   const monthKey = state.incentivesMonth || currentMonthKey();
   const d = state.incentivesData;
@@ -7119,6 +7224,7 @@ function renderIncentivesPanel(){
           <div style="font-size:10.5px;color:var(--text-faint)">${byTeam[code].records||0} record(s)</div>
         </div>`).join('')}
       </div>
+      ${renderIncentiveGoalHtml(grandTotal)}
       ${teamCardsHtml}`;
   }
 
@@ -8276,6 +8382,45 @@ function attachHandlers(conflictIds){
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
   const exportIncentivesExcelBtn = document.getElementById('exportIncentivesExcelBtn');
   if(exportIncentivesExcelBtn) exportIncentivesExcelBtn.onclick = exportIncentivesToExcel;
+
+  // Monthly goal tracking (2026-09-25) — the ₹ target on Incentives and
+  // the count target on Closures share the same edit/save/cancel pattern.
+  const editIncentiveTargetBtn = document.getElementById('editIncentiveTargetBtn');
+  if(editIncentiveTargetBtn) editIncentiveTargetBtn.onclick = ()=>{ state.editingIncentiveTarget = true; state.incentiveTargetError = null; render(); };
+  const cancelIncentiveTargetBtn = document.getElementById('cancelIncentiveTargetBtn');
+  if(cancelIncentiveTargetBtn) cancelIncentiveTargetBtn.onclick = ()=>{ state.editingIncentiveTarget = false; state.incentiveTargetError = null; render(); };
+  const saveIncentiveTargetBtn = document.getElementById('saveIncentiveTargetBtn');
+  if(saveIncentiveTargetBtn) saveIncentiveTargetBtn.onclick = async ()=>{
+    const input = document.getElementById('incentiveTargetInput');
+    const val = input ? Number(input.value) : NaN;
+    if(!input || isNaN(val) || val < 0){ state.incentiveTargetError = 'Enter a valid non-negative number.'; render(); return; }
+    try{
+      await saveAppSetting('incentive_monthly_target', val);
+      state.editingIncentiveTarget = false;
+      state.incentiveTargetError = null;
+    }catch(e){
+      state.incentiveTargetError = (e && e.message) ? e.message : 'Could not save the target — try again.';
+    }
+    render();
+  };
+  const editClosuresTargetBtn = document.getElementById('editClosuresTargetBtn');
+  if(editClosuresTargetBtn) editClosuresTargetBtn.onclick = ()=>{ state.editingClosuresTarget = true; state.closuresTargetError = null; render(); };
+  const cancelClosuresTargetBtn = document.getElementById('cancelClosuresTargetBtn');
+  if(cancelClosuresTargetBtn) cancelClosuresTargetBtn.onclick = ()=>{ state.editingClosuresTarget = false; state.closuresTargetError = null; render(); };
+  const saveClosuresTargetBtn = document.getElementById('saveClosuresTargetBtn');
+  if(saveClosuresTargetBtn) saveClosuresTargetBtn.onclick = async ()=>{
+    const input = document.getElementById('closuresTargetInput');
+    const val = input ? Number(input.value) : NaN;
+    if(!input || isNaN(val) || val < 0){ state.closuresTargetError = 'Enter a valid non-negative number.'; render(); return; }
+    try{
+      await saveAppSetting('closures_monthly_target', val);
+      state.editingClosuresTarget = false;
+      state.closuresTargetError = null;
+    }catch(e){
+      state.closuresTargetError = (e && e.message) ? e.message : 'Could not save the target — try again.';
+    }
+    render();
+  };
   const toggleBackupsBtn = document.getElementById('toggleBackups');
   if(toggleBackupsBtn) toggleBackupsBtn.onclick = async ()=>{
     openOnlyPanel('showBackups');
@@ -10906,6 +11051,7 @@ async function startApp(){
   }).catch(()=>{});
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
   loadClosures().catch(()=>{});
+  loadAppSettings().catch(()=>{});
 }
 // The repeat-candidate scan (scanForRepeatCandidates) groups occurrences by
 // an exact lowercase candidate-name key, so a candidate typed slightly
