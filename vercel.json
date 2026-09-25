@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron-portal-sync", "schedule": "30 16 * * *" }
+  ]
+}
