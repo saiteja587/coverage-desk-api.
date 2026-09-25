@@ -910,3 +910,12 @@ async function handleClosureManualMatch(req, res, db) {
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
+
+// Exposes handlePortalSyncFetch (2026-09-25) so api/cron-portal-sync.js —
+// a separate, isolated function triggered by Vercel's own Cron Jobs, not
+// by the browser — can reuse the exact same "pull fresh Portal data and
+// save it to portal_sync_cache" logic the in-app "Full Sync" button
+// already calls, rather than a second, drift-prone copy of it. The
+// default export (the actual ?resource= router) is untouched — this is
+// purely an additional named export alongside it.
+module.exports.handlePortalSyncFetch = handlePortalSyncFetch;
