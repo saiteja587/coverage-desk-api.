@@ -139,7 +139,7 @@ button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-in
    at the end is what makes that guaranteed rather than order-dependent. */
 
 /* HEADER */
-.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;gap:16px;flex-wrap:wrap;position:relative;padding-top:30px;}
+.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;padding-bottom:18px;gap:16px;flex-wrap:wrap;position:relative;padding-top:30px;border-bottom:1px solid var(--border-soft);}
 .account-chip{position:absolute;top:0;right:0;z-index:5;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 8px 6px 14px;box-shadow:var(--shadow-sm);font-size:12.5px;}
 .account-chip .account-name{color:var(--text);font-weight:600;white-space:nowrap;}
 .account-chip .account-role{color:var(--text-faint);font-size:11px;white-space:nowrap;}
@@ -164,7 +164,10 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
    mobile-specific rule in this file: placed last so it reliably wins the
    cascade over base rules defined later, rather than being order-dependent). */
 .bottom-nav{display:none;}
-.header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;}
+.header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;color:var(--text);background:linear-gradient(90deg,var(--text) 55%,var(--teal) 130%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+@supports not ((-webkit-background-clip:text) or (background-clip:text)){
+  .header h1{-webkit-text-fill-color:initial;background:none;}
+}
 .header .sub{color:var(--text-muted);font-size:13px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .more-menu-wrap{position:relative;}
@@ -241,6 +244,27 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 
 /* SUMMARY STRIP */
 .summary{display:flex;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:var(--shadow-sm);}
+/* Visual refresh (2026-09-26): each stat used to be identical plain text
+   in a plain cell, so the row read as one dense block of numbers rather
+   than five distinct, scannable facts — a "polished/modern professional"
+   pass gives each its own tinted surface and a colored top accent, the
+   same color already used for its number, so the color-coding a person
+   had to read the number to notice becomes visible at a glance. */
+.summary .cell{position:relative;overflow:hidden;transition:background-color .15s ease;}
+.summary .cell::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--text-faint);opacity:.5;}
+.summary .cell.total::before{background:var(--text-muted);}
+.summary .cell.assigned::before{background:var(--teal);}
+.summary .cell.unassigned::before{background:var(--coral);}
+.summary .cell.woi::before{background:var(--amber);}
+.summary .cell.conflict::before{background:var(--violet);}
+.summary .cell.assigned{background:linear-gradient(180deg,var(--teal-dim) 0%,var(--surface) 60%);}
+.summary .cell.unassigned{background:linear-gradient(180deg,var(--coral-dim) 0%,var(--surface) 60%);}
+.summary .cell.woi{background:linear-gradient(180deg,var(--amber-dim) 0%,var(--surface) 60%);}
+.summary .cell.conflict{background:linear-gradient(180deg,var(--violet-dim) 0%,var(--surface) 60%);}
+@media (max-width:700px){
+  .summary{scroll-snap-type:x proximity;flex-wrap:nowrap;}
+  .summary .cell{scroll-snap-align:start;}
+}
 .team-load-strip{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
 .team-load-cell{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:border-color .12s,background-color .12s;}
 .team-load-cell:hover{border-color:var(--text-faint);}
@@ -282,10 +306,12 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .strip-empty{color:var(--text-faint);font-size:12px;font-family:var(--mono);padding:10px 0;}
 
 /* TOOLBAR */
-.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;}
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:8px 10px;}
 .filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:8px 10px;}
-.btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--body);font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm);transition:border-color .12s,box-shadow .12s;}
-.btn:hover{border-color:var(--text-faint);box-shadow:var(--shadow-md);}
+.btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--body);font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm);transition:border-color .12s,box-shadow .12s,transform .12s;}
+@media (hover:hover){
+  .btn:hover{border-color:var(--text-faint);box-shadow:var(--shadow-md);transform:translateY(-1px);}
+}
 .btn.primary{background:var(--teal-dim);border-color:#1F4A43;color:var(--teal);font-weight:600;}
 .btn.primary:hover{border-color:var(--teal);}
 .btn.ghost{background:transparent;box-shadow:none;}
@@ -501,8 +527,16 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
   thead{display:none;}
   tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
-  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px 9px;box-shadow:0 2px 8px rgba(0,0,0,.22);}
+  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px 9px 14px;box-shadow:0 2px 8px rgba(0,0,0,.22);position:relative;transition:transform .1s ease;}
   tbody tr.row-unassigned{background:var(--coral-dim);}
+  /* A rescheduled/cancelled/not-responded call is exactly the kind of
+     thing that's easy to miss while scanning a stack of cards — this
+     gives each its own colored left edge (matching the badge already
+     shown on the card itself) so it's visible without reading every
+     card's text. */
+  tbody tr.row-status-rescheduled{box-shadow:inset 4px 0 0 var(--violet), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-cancelled{box-shadow:inset 4px 0 0 var(--coral), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-not_responded{box-shadow:inset 4px 0 0 var(--amber), 0 2px 8px rgba(0,0,0,.22);}
   /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
      full-width blocks, not the flex meta-grid the main data row uses. */
   tbody tr.doubt-note-row,
@@ -1015,6 +1049,17 @@ let state = {
   lastImportedCount: 0,
   lastImportMergedCount: 0,
   recentImportIds: null,
+  // Same pattern as the "Undo import" banner above, for the Reschedule/
+  // Cancel confirm flow — added 2026-09-26 because confirming a reschedule
+  // import used to just close the review screen and pop a transient
+  // alert(), leaving no visible trace on the home screen of which records
+  // actually got saved.
+  lastReschedItems: null,
+  recentReschedIds: null,
+  // Same reasoning, for "Remove Duplicates" — that action also used to just
+  // alert() a count and close the review screen, with no lasting record of
+  // which specific duplicate rows were actually removed.
+  lastDedupeInfo: null,
   loadError: null,
   confirmedStudentMatches: new Set(),
   showSwipeAssignPicker: false,
@@ -1887,6 +1932,11 @@ async function loadDay(dateStr){
   // "recently imported".
   state.recentImportIds = null;
   state.filter = state.filter === 'recentImport' ? 'all' : state.filter;
+  // Same reasoning, for the reschedule/cancel "just saved" banner below.
+  state.recentReschedIds = null;
+  state.lastReschedItems = null;
+  state.filter = state.filter === 'recentResched' ? 'all' : state.filter;
+  state.lastDedupeInfo = null;
   // Same reasoning as recentImportIds just above — scoped to whichever
   // date the sync happened on, so switching dates doesn't leave a stale
   // "filled N calls" message pointing at a sync that ran on a different day.
@@ -4996,6 +5046,7 @@ function render(){
   else if(state.filter==='woi') filtered = sortedRows.filter(r=>r.woi);
   else if(state.filter==='conflict') filtered = sortedRows.filter(r=>conflictIds.has(r.id));
   else if(state.filter==='recentImport') filtered = sortedRows.filter(r=>state.recentImportIds && state.recentImportIds.has(r.id));
+  else if(state.filter==='recentResched') filtered = sortedRows.filter(r=>state.recentReschedIds && state.recentReschedIds.has(r.id));
 
   if(state.assigneeFilter){
     // Matches Coverage Desk's own local assignee field, the Driving
@@ -5094,6 +5145,24 @@ function render(){
         <button class="btn ghost" id="undoLastImportBtn" style="color:var(--coral);border-color:var(--coral)">↩ Undo import (remove ${state.lastImportedIds.length})</button>
         <button class="btn ghost" id="dismissLastImportBtn">Dismiss</button>
       </span>
+    </div>` : ''}
+    ${state.lastReschedItems && state.lastReschedItems.items.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>✅ Saved ${state.lastReschedItems.items.length} reschedule/cancel update(s)${state.lastReschedItems.skippedCount ? ` (${state.lastReschedItems.skippedCount} message(s) were skipped)` : ''}:</span>
+        <button class="btn ghost" id="dismissLastReschedBtn">Dismiss</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--text)">
+        ${state.lastReschedItems.items.map(it=>`<div>${statusBadgeInfo(it.status).icon} <b>${escapeHtml(it.candidate)}</b>${it.time?' — '+escapeHtml(it.time):''}${it.company?' — '+escapeHtml(it.company):''} → ${statusBadgeInfo(it.status).label}</div>`).join('')}
+      </div>
+    </div>` : ''}
+    ${state.lastDedupeInfo && state.lastDedupeInfo.removed.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>✅ Removed ${state.lastDedupeInfo.removed.length} duplicate call(s) and saved. A backup was taken — use 🕐 Backups to restore if needed.</span>
+        <button class="btn ghost" id="dismissLastDedupeBtn">Dismiss</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--text)">
+        ${state.lastDedupeInfo.removed.map(r=>`<div>✕ <b>${escapeHtml(r.candidate)}</b>${r.time?' — '+escapeHtml(r.time):''}${r.company?' — '+escapeHtml(r.company):''}</div>`).join('')}
+      </div>
     </div>` : ''}
     ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>📡 Portal sync error: ${escapeHtml(state.portalSyncError)}</span>
@@ -5345,6 +5414,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="filter-chip ${state.filter==='woi'?'active':''}" data-f="woi">WOI<span class="n">${sum.woi}</span></button>
       <button class="filter-chip ${state.filter==='conflict'?'active':''}" data-f="conflict">Conflicts<span class="n">${sum.conflicts}</span></button>
       ${(state.recentImportIds && state.recentImportIds.size) ? `<button class="filter-chip ${state.filter==='recentImport'?'active':''}" data-f="recentImport" style="color:var(--teal)" title="Calls added or updated by the most recent import">🆕 Recent Import<span class="n">${state.recentImportIds.size}</span></button>` : ''}
+      ${(state.recentReschedIds && state.recentReschedIds.size) ? `<button class="filter-chip ${state.filter==='recentResched'?'active':''}" data-f="recentResched" style="color:var(--teal)" title="Calls just marked rescheduled/cancelled/no-response">🔁 Recent Reschedule<span class="n">${state.recentReschedIds.size}</span></button>` : ''}
     </div>
 
     ${(!isReadOnly && state.selectedIds.size) ? renderBulkBar() : ''}
@@ -8046,7 +8116,12 @@ function renderTable(rows, conflictIds, clientConflicts){
       category==='Healthcare'?'row-healthcare':'',
       category==='Education'?'row-education':'',
       longDuration?'row-long-duration':'',
-      r.onsite?'row-onsite':''
+      r.onsite?'row-onsite':'',
+      // Purely additive — lets the mobile card view give a rescheduled/
+      // cancelled/not-responded call its own accent color at a glance
+      // (see the "MOBILE CARD VIEW" status accent rules), same idea as
+      // the existing Healthcare/Education side-stripes just above.
+      r.status?'row-status-'+r.status:''
     ].filter(Boolean).join(' ');
     return `<tr data-id="${r.id}" data-bucket="${(()=>{ const m = timeToMinutes(r.time); return m===9999 ? '?' : Math.floor(m/30); })()}" class="${rowClasses}">
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
@@ -9539,8 +9614,14 @@ function attachHandlers(conflictIds){
     render();
     await createBackup('pre-dedupe', state.date, state.rows);
     const idsToRemove = new Set();
+    const removedInfo = [];
     groups.forEach(g=>{
-      g.rows.forEach(r=>{ if(r.id !== g.keepId) idsToRemove.add(r.id); });
+      g.rows.forEach(r=>{
+        if(r.id !== g.keepId){
+          idsToRemove.add(r.id);
+          removedInfo.push({ candidate: r.candidate||'(no name)', company: r.company||'', time: r.time||'' });
+        }
+      });
     });
     state.rows = state.rows.filter(r=>!idsToRemove.has(r.id));
     markDirty();
@@ -9550,14 +9631,17 @@ function attachHandlers(conflictIds){
     // real save failure here is never reported as a success.
     await saveAllChanges();
     state.duplicatesRemoving = false;
+    state.duplicatesReview = null;
     if(state.saveError){
-      state.duplicatesReview = null;
       render();
       alert(`Removed ${idsToRemove.size} duplicate call(s) locally, but saving failed: ${state.saveError}. Try "Save changes" again — until then this isn't saved to the database yet.`);
     } else {
-      state.duplicatesReview = null;
+      // Persistent banner instead of a transient alert() — same reasoning
+      // as the reschedule-confirm fix above: naming exactly which rows were
+      // removed, not just a count, and a backup-restore reminder that stays
+      // visible instead of disappearing the moment the popup is dismissed.
+      state.lastDedupeInfo = { removed: removedInfo };
       render();
-      alert(`Removed ${idsToRemove.size} duplicate call(s) and saved.\nA backup of the calls exactly as they were before this was taken — use 🕐 Backups to restore it if needed.`);
     }
   };
 
@@ -9577,6 +9661,12 @@ function attachHandlers(conflictIds){
   };
   const dismissLastImportBtn = document.getElementById('dismissLastImportBtn');
   if(dismissLastImportBtn) dismissLastImportBtn.onclick = ()=>{ state.lastImportedIds = null; render(); };
+
+  const dismissLastReschedBtn = document.getElementById('dismissLastReschedBtn');
+  if(dismissLastReschedBtn) dismissLastReschedBtn.onclick = ()=>{ state.lastReschedItems = null; render(); };
+
+  const dismissLastDedupeBtn = document.getElementById('dismissLastDedupeBtn');
+  if(dismissLastDedupeBtn) dismissLastDedupeBtn.onclick = ()=>{ state.lastDedupeInfo = null; render(); };
   const cancelImport = document.getElementById('cancelImport');
   if(cancelImport) cancelImport.onclick = ()=>{ closeAllPanels(); render(); };
   const runImport = document.getElementById('runImport');
@@ -9862,6 +9952,10 @@ function attachHandlers(conflictIds){
   if(confirmRescheduleApply) confirmRescheduleApply.onclick = async ()=>{
     const items = state.rescheduleReview || [];
     let appliedCount = 0, skippedCount = 0;
+    // Kept alongside appliedCount/skippedCount so the confirmation the
+    // person sees afterward can actually name which calls changed, not
+    // just report a number — see the lastReschedItems banner below.
+    const appliedItems = [];
     items.forEach(it=>{
       if(it.skip || !it.selectedRowId){ skippedCount++; return; }
       const row = state.rows.find(r=>r.id === it.selectedRowId);
@@ -9872,6 +9966,7 @@ function attachHandlers(conflictIds){
       row.status = it.status;
       row.statusFields = fields.length ? fields : (it.status === 'rescheduled' ? [{label:'New Date', value:''}, {label:'New Time', value:''}] : [{label:'Reason', value:''}]);
       appliedCount++;
+      appliedItems.push({ id: row.id, candidate: row.candidate || '(no name)', time: row.time || '', company: row.company || '', status: it.status });
     });
     if(!appliedCount){
       alert('Nothing to save — every message was skipped or has no call selected.');
@@ -9900,12 +9995,18 @@ function attachHandlers(conflictIds){
     }
     state.rescheduleApplying = false;
     state.rescheduleReview = null;
-    render();
     if(saveErr){
       alert('Some calls were tagged but the save failed: ' + saveErr);
     } else {
-      alert(`${appliedCount} call(s) marked rescheduled/cancelled and saved.${skippedCount ? ` ${skippedCount} message(s) were skipped.` : ''}`);
+      // Replaces a plain alert() as the confirmation — that popup was easy
+      // to dismiss without registering exactly which records it meant, and
+      // gave no lasting trace once closed. This is the same pattern already
+      // used for "↩ Undo import": a banner on the home screen naming what
+      // just happened, plus a filter chip to pull up just those rows.
+      state.lastReschedItems = { items: appliedItems, skippedCount };
+      state.recentReschedIds = new Set(appliedItems.map(it=>it.id));
     }
+    render();
     scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
     scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
   };
