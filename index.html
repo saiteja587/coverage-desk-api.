@@ -4264,8 +4264,13 @@ async function computeClosuresPerformance(forceRefresh){
     }
     if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
     const handler = match.assignee;
-    if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0 };
+    if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0, records: [] };
     byHandler[handler].closures++;
+    // Kept alongside the count so the "By Handler" list can show exactly
+    // which closures make up that number (on hover), not just the total —
+    // requested 2026-09-26 after the count alone left no way to see the
+    // actual records behind it.
+    byHandler[handler].records.push({ candidate: c.candidate, company: c.company, salary: c.salary || '', createdAt: c.createdAt || null });
   });
   const rows = Object.values(byHandler).sort((a,b)=> b.closures - a.closures);
   return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length, unmatchedDetails };
@@ -7093,11 +7098,25 @@ function renderClosuresPanel(){
     } else if(!perf.rows.length){
       perfHtml = `<div class="hint">No closure could be matched to a handler yet — either no closures are recorded, or none matched a call record's candidate/company on file.</div>`;
     } else {
-      const rowsHtml = perf.rows.map(r=>`
+      const rowsHtml = perf.rows.map(r=>{
+        // Hover the closure count to see exactly which records make it up —
+        // requested 2026-09-26. A plain title attribute (native browser
+        // tooltip) rather than a custom popover: zero new state/handlers,
+        // works identically on every browser, and this is exactly the kind
+        // of "just let me glance at it" info a tooltip is for.
+        const sortedRecords = (r.records||[]).slice().sort((a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0));
+        const MAX_TOOLTIP_ROWS = 25;
+        const tooltipLines = sortedRecords.slice(0, MAX_TOOLTIP_ROWS).map(rec=>
+          `${rec.candidate} — ${rec.company}${rec.salary ? ' — '+rec.salary : ''}${rec.createdAt ? ' ('+new Date(rec.createdAt).toLocaleDateString()+')' : ''}`
+        );
+        if(sortedRecords.length > MAX_TOOLTIP_ROWS) tooltipLines.push(`…and ${sortedRecords.length - MAX_TOOLTIP_ROWS} more`);
+        const tooltip = tooltipLines.join('\n');
+        return `
         <div class="notif-row">
-          <div class="notif-name">${escapeHtml(r.handler)}${r.team?` <span class="notif-chip">${escapeHtml(r.team)}</span>`:''} <span class="notif-warn" style="color:var(--teal)">${r.closures} closure${r.closures===1?'':'s'}</span></div>
+          <div class="notif-name">${escapeHtml(r.handler)}${r.team?` <span class="notif-chip">${escapeHtml(r.team)}</span>`:''} <span class="notif-warn" style="color:var(--teal);cursor:default;border-bottom:1px dotted currentColor" title="${escapeHtml(tooltip)}">${r.closures} closure${r.closures===1?'':'s'}</span></div>
         </div>
-      `).join('');
+      `;
+      }).join('');
       const notes = [];
       if(perf.teamOnlyCount) notes.push(`${perf.teamOnlyCount} matched only to a team-level assignment, not an individual`);
       if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
