@@ -509,9 +509,19 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .pin-field label{display:block;font-size:10.5px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;}
 .pin-field input{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;font-size:13px;}
 .move-2nd:hover{border-color:var(--violet);}
+/* Shared by EVERY panel (Incentives, Closures, Backups, Reports, all of
+   them) — this is the one piece of chrome every panel has in common, so
+   giving it real visual weight here (rather than the plain inline
+   "← Back to calls" + bold text it used to be) is the single highest-
+   leverage place to make the whole app feel like one consistently
+   designed system, without having to touch each panel individually. */
+.panel-header-bar{display:flex;align-items:center;gap:12px;margin:-4px 0 18px;padding-bottom:14px;border-bottom:1px solid var(--border-soft);}
+.panel-header-title{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:-.01em;}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-faint);}
+.empty-state-icon{font-size:40px;line-height:1;margin-bottom:14px;opacity:.75;}
 .empty-state h3{font-family:var(--display);color:var(--text-muted);font-weight:600;font-size:16px;margin-bottom:6px;}
-.empty-state p{font-size:13px;margin:0 0 16px;}
+.empty-state p{font-size:13px;margin:0 0 16px;max-width:420px;margin-left:auto;margin-right:auto;}
+.empty-state-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
 .footer-note{margin-top:14px;font-size:11.5px;color:var(--text-faint);text-align:center;}
 /* MOBILE CARD VIEW — transforms the calls table into stacked cards below
@@ -681,6 +691,18 @@ tbody tr[data-id]{touch-action:pan-y;}
   .strip-hint{display:none;}
   .tabs-wrap{margin-bottom:10px;}
 
+  /* Header toolbar cleanup (2026-09-26): Home/date-nav/Notifications/DB/
+     Import/Closures/Reports/Save/theme used to all wrap onto 2-3 full-width
+     rows on a phone — a wall of buttons before any actual call is visible.
+     None of these can be removed or moved into another menu without either
+     breaking a control someone relies on or touching the regression suite's
+     direct id-based clicks, so instead this turns the row into a single
+     horizontally-scrollable strip (exactly how the coverage-by-hour graph
+     above it already handles overflow) — same controls, same ids, same
+     order, just one compact scrollable line instead of a tall wrapped block. */
+  .date-row{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+  .date-row .btn, .date-row .more-menu-wrap, .date-row .arrow-btn, .date-row input[type=date]{flex-shrink:0;}
+
   /* Collapsed by default on mobile — these two sections are useful but
      secondary to the actual call list, and together with the header/
      buttons above them were pushing the first real call off the bottom
@@ -704,7 +726,8 @@ tbody tr[data-id]{touch-action:pan-y;}
   .team-load-strip{gap:6px;margin-bottom:10px;}
   .team-load-cell{padding:6px 10px;font-size:11px;}
   .toolbar{gap:6px;margin-bottom:10px;}
-  .filter-bar{gap:6px;margin-bottom:10px;padding:6px 8px;}
+  .filter-bar{gap:6px;margin-bottom:10px;padding:6px 8px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .filter-bar > *{flex-shrink:0;}
   .toolbar .btn{font-size:11.5px;padding:6px 10px;}
   .filter-bar .btn{font-size:11.5px;padding:6px 10px;}
   /* The person/client filter selects used to size themselves to fit
@@ -714,7 +737,7 @@ tbody tr[data-id]{touch-action:pan-y;}
      mobile-viewport-ballooning quirk (the same root cause as the earlier
      dropdown-menu overflow bug). Capping them here, tighter than the
      220px desktop cap, keeps both selects comfortably on one row. */
-  .filter-bar-select{max-width:44vw !important;}
+  .filter-bar-select{max-width:44vw !important;flex:0 0 auto !important;min-width:130px !important;}
   /* The Tools/More dropdown used to anchor left:0 (or right:0) relative
      to its own toggle button. That's fragile on mobile in two directions
      at once: the More button sits toward the right of its toolbar (so
@@ -1421,6 +1444,18 @@ function statusBadgeInfo(status){
   if(status === 'cancelled') return { icon:'✕', label:'Cancelled', shortLabel:'CANCELLED', colorVar:'var(--coral)' };
   if(status === 'not_responded') return { icon:'☎', label:'Not Responded', shortLabel:'NOT RESPONDED', colorVar:'var(--amber)' };
   return { icon:'↻', label:'Rescheduled', shortLabel:'RESCHED.', colorVar:'var(--violet)' };
+}
+// Clears a "just happened" confirmation banner (state[stateKey]) on its own
+// after a while, so a person who doesn't click Dismiss doesn't end up with
+// these piling up across a busy shift. Reference-checks the value before
+// clearing it — if a NEWER banner of the same kind has already replaced
+// this one by the time the timer fires, this only clears its own, never a
+// later banner that happens to still be showing.
+function autoDismissBanner(stateKey, ms){
+  const ref = state[stateKey];
+  setTimeout(()=>{
+    if(state[stateKey] === ref){ state[stateKey] = null; render(); }
+  }, ms);
 }
 function currentMonthKey(){
   const d = new Date();
@@ -5174,9 +5209,9 @@ function render(){
     </div>` : ''}
     ${(state.portalSyncedAt && !state.portalSyncError) ? `<div class="hint" style="background:var(--panel-2,rgba(255,255,255,0.04));border:1px solid var(--border);padding:8px 14px;border-radius:8px;margin:-10px 0 16px">📡 Last synced from Portal: ${escapeHtml(state.portalSyncedAt)} (${(state.portalAssignments||[]).length} records)</div>` : ''}
     ${activePanel ? `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <div class="panel-header-bar">
       <button class="btn ghost" id="backToCalls">← Back to calls</button>
-      <div style="font-weight:700;font-size:16px">${escapeHtml(panelTitle(activePanel))}</div>
+      <div class="panel-header-title">${escapeHtml(panelTitle(activePanel))}</div>
     </div>
     ${renderActivePanel(activePanel)}
     ` : `
@@ -8236,21 +8271,35 @@ function renderTable(rows, conflictIds, clientConflicts){
 }
 
 function renderEmpty(){
+  // Visual refresh (2026-09-26): a plain two-line message read as "did
+  // something break?" on a genuinely light day, especially since it's the
+  // very first thing a person sees after the (now much more colorful)
+  // summary/toolbar above it. An icon plus a real, working shortcut into
+  // the action that actually fixes the empty state reads as "nothing here
+  // yet" instead.
   if(state.view==='doubts'){
     return `<div class="empty-state">
+      <div class="empty-state-icon">❔</div>
       <h3>No doubts right now</h3>
       <p>Everything imported so far had a clear time, company, and round.</p>
     </div>`;
   }
   if(state.view==='rescheduled'){
     return `<div class="empty-state">
+      <div class="empty-state-icon">↻</div>
       <h3>No rescheduled, cancelled, or no-response calls</h3>
       <p>Calls tagged ↻ Rescheduled, ✕ Cancelled, or ☎ Not Responded — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
     </div>`;
   }
+  const isReadOnly = CURRENT_ROLE === 'user' || CURRENT_ROLE === 'team_lead';
   return `<div class="empty-state">
+    <div class="empty-state-icon">📭</div>
     <h3>No calls here yet</h3>
     <p>Import today's WhatsApp list or add a call manually to get started.</p>
+    ${isReadOnly ? '' : `<div class="empty-state-actions">
+      <button class="btn primary" id="emptyStateImportBtn">📥 Import calls</button>
+      <button class="btn ghost" id="emptyStateAddCallBtn">＋ Add call manually</button>
+    </div>`}
   </div>`;
 }
 
@@ -8417,6 +8466,16 @@ function attachHandlers(conflictIds){
     openOnlyPanel('showImport');
     render();
   };
+  // Same action as the toolbar's "📥 Import" button, reachable straight
+  // from the empty-state message on a day with no calls yet.
+  const emptyStateImportBtn = document.getElementById('emptyStateImportBtn');
+  if(emptyStateImportBtn) emptyStateImportBtn.onclick = ()=>{
+    state.importDefaultRound = state.view==='2nd' ? '2nd' : '1st';
+    openOnlyPanel('showImport');
+    render();
+  };
+  const emptyStateAddCallBtn = document.getElementById('emptyStateAddCallBtn');
+  if(emptyStateAddCallBtn) emptyStateAddCallBtn.onclick = ()=>{ addBlankCallRow(); };
   const importHubTabNewBtn = document.getElementById('importHubTabNew');
   if(importHubTabNewBtn) importHubTabNewBtn.onclick = ()=>{ state.showImport = true; state.showRescheduleImport = false; render(); };
   const importHubTabRescheduleBtn = document.getElementById('importHubTabReschedule');
@@ -9641,6 +9700,7 @@ function attachHandlers(conflictIds){
       // removed, not just a count, and a backup-restore reminder that stays
       // visible instead of disappearing the moment the popup is dismissed.
       state.lastDedupeInfo = { removed: removedInfo };
+      autoDismissBanner('lastDedupeInfo', 20000);
       render();
     }
   };
@@ -10005,6 +10065,7 @@ function attachHandlers(conflictIds){
       // just happened, plus a filter chip to pull up just those rows.
       state.lastReschedItems = { items: appliedItems, skippedCount };
       state.recentReschedIds = new Set(appliedItems.map(it=>it.id));
+      autoDismissBanner('lastReschedItems', 20000);
     }
     render();
     scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
