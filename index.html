@@ -1247,7 +1247,19 @@ async function apiCall(resource, opts){
   if(res.status === 401){ AUTH_FAILED = true; throw new Error('Unauthorized — wrong or missing credentials'); }
   if(res.status === 403){ throw new Error('Read-only account — admin permission required to save changes.'); }
   AUTH_FAILED = false;
-  if(!res.ok) throw new Error(`API ${resource} failed: ${res.status}`);
+  if(!res.ok){
+    // FIX (2026-09-27): this used to throw just the HTTP status code
+    // ("API closure_manual_match failed: 500"), discarding whatever actual
+    // explanation the backend sent back in its JSON error body — reported
+    // as a manual closure match silently "not stored," when what was
+    // actually happening was a real save failure with a real reason
+    // (e.g. a database table that hasn't been created yet) that the person
+    // had no way to see. Read the body first; fall back to the plain
+    // status code only if the response isn't valid JSON at all.
+    let detail = '';
+    try{ const body = await res.json(); detail = body && body.error ? body.error : ''; }catch(e){ /* not JSON — fall through */ }
+    throw new Error(detail ? `${resource}: ${detail}` : `API ${resource} failed: ${res.status}`);
+  }
   return await res.json();
   } finally {
     setNetworkBusy(-1);
@@ -4220,20 +4232,41 @@ function findClosureMatchWithOverride(closure, allRows){
 // applied without an explicit click.
 function findClosureMatchSuggestions(closure, allRows){
   const candFirst = (closure.candidate||'').trim().toLowerCase().split(/\s+/)[0] || '';
+  const dedupeKey = r => r.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(r.company) + '|' + (r._date||'');
   const seen = new Set();
-  return allRows
-    .filter(r=>{
-      if(!r.candidate) return false;
-      const key = r.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(r.company) + '|' + (r._date||'');
-      if(seen.has(key)) return false;
-      const companyLikely = fuzzyCompanyKeyMatch(r.company, closure.company) || normalizeCompanyKey(r.company).includes(normalizeCompanyKey(closure.company)) || normalizeCompanyKey(closure.company).includes(normalizeCompanyKey(r.company));
-      const nameLikely = candFirst && r.candidate.trim().toLowerCase().split(/\s+/)[0] === candFirst;
-      if(!companyLikely && !nameLikely) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
-    .slice(0, 8);
+  const likely = [];
+  allRows.forEach(r=>{
+    if(!r.candidate) return;
+    const key = dedupeKey(r);
+    if(seen.has(key)) return;
+    const companyLikely = fuzzyCompanyKeyMatch(r.company, closure.company) || normalizeCompanyKey(r.company).includes(normalizeCompanyKey(closure.company)) || normalizeCompanyKey(closure.company).includes(normalizeCompanyKey(r.company));
+    const nameLikely = candFirst && r.candidate.trim().toLowerCase().split(/\s+/)[0] === candFirst;
+    if(!companyLikely && !nameLikely) return;
+    seen.add(key);
+    likely.push(r);
+  });
+  likely.sort((a,b)=> (b._date||'').localeCompare(a._date||''));
+  // FIX (2026-09-27): the picker used to show NOTHING at all whenever the
+  // spelling drift was too large even for this loose heuristic — reported
+  // as "no sign of records." Since this list is only ever a human-picked
+  // shortlist (nothing here is ever applied automatically), it's safe to
+  // pad it out with the most recent calls overall once the "likely" pool
+  // runs short, rather than leaving a genuinely unmatched closure with no
+  // way to be matched by hand at all.
+  if(likely.length < 8){
+    allRows
+      .filter(r=>{
+        if(!r.candidate) return false;
+        const key = dedupeKey(r);
+        if(seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+      .slice(0, 8 - likely.length)
+      .forEach(r=>likely.push(Object.assign({_fallback:true}, r)));
+  }
+  return likely.slice(0, 8);
 }
 async function computeClosuresPerformance(forceRefresh){
   if(!state.closuresLoaded) await loadClosures();
@@ -7003,9 +7036,11 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
       const options = (suggestions||[]).map((r,i)=>
         `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}</option>`
       ).join('');
+      const allFallback = (suggestions||[]).length > 0 && suggestions.every(r=>r._fallback);
       pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+        ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:8px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
         ${suggestions && suggestions.length ? `
-          <div class="hint" style="margin-bottom:6px">Pick the call this closure actually belongs to:</div>
+          <div class="hint" style="margin-bottom:6px">${allFallback ? 'No obvious match by name or company — pick from the most recent calls on file:' : 'Pick the call this closure actually belongs to:'}</div>
           <select id="closureMatchSelect-${closure.id}" style="width:100%;margin-bottom:8px">
             ${options}
           </select>
@@ -7013,7 +7048,7 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
             <button class="btn primary" data-confirm-closure-match="${closure.id}" ${state.closureManualMatchSaving?'disabled':''}>${state.closureManualMatchSaving?'<span class="spinner"></span>Saving…':'Confirm match'}</button>
             <button class="btn ghost" data-cancel-closure-match="${closure.id}">Cancel</button>
           </div>
-        ` : `<div class="hint">No plausible call record found automatically — check the candidate/company spelling on the original call, or this closure may predate your records. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>`}
+        ` : `<div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>`}
       </div>`;
     }
     return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
@@ -7027,7 +7062,6 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
   }).join('');
   return `<div style="margin-top:14px">
     <div style="font-weight:700;font-size:13px;margin-bottom:6px">Unmatched closures</div>
-    ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:6px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
     ${rowsHtml}
   </div>`;
 }
@@ -7095,7 +7129,7 @@ function renderClosuresPanel(){
       perfHtml = `<div class="hint">${perf && perf.loading ? '<span class="spinner"></span>Cross-referencing closures against call records…' : 'Loading…'}</div>`;
     } else if(perf.error){
       perfHtml = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(perf.error)}</div>`;
-    } else if(!perf.rows.length){
+    } else if(!perf.rows.length && !(perf.unmatchedDetails && perf.unmatchedDetails.length)){
       perfHtml = `<div class="hint">No closure could be matched to a handler yet — either no closures are recorded, or none matched a call record's candidate/company on file.</div>`;
     } else {
       const rowsHtml = perf.rows.map(r=>{
