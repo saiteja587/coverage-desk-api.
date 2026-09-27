@@ -4327,11 +4327,23 @@ function getClosureMatchCandidateList(closureId){
   const detail = (state.closuresPerformance && state.closuresPerformance.unmatchedDetails || []).find(d=>d.closure.id === closureId);
   if(!detail) return { list: [], searching: false };
   const q = (state.closureMatchSearch||'').trim().toLowerCase();
+  const closureCandKey = (detail.closure.candidate||'').trim().toLowerCase();
   if(q.length >= 2){
     const allRows = (state.closuresPerformance && state.closuresPerformance.allRowsSnapshot) || [];
+    // FIX (2026-09-27): searching by company text (e.g. "your golf" for
+    // "Your Golf Travel") surfaces every call at that company — including
+    // OTHER candidates' calls, which is exactly right when the person is
+    // trying to find a call under a spelling variant, but reported as
+    // confusing when a same-company-different-person result ranked above,
+    // or looked identical to, the person they were actually searching for
+    // ("this call is related to Reshma but... Srirama Dasu is appearing").
+    // Same-candidate matches now always sort first, and every option is
+    // tagged so a same-company-but-different-person result can't be
+    // mistaken for the person being searched for.
     const list = allRows
       .filter(r=>r.candidate && (r.candidate.toLowerCase().includes(q) || (r.company||'').toLowerCase().includes(q)))
-      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+      .map(r=>({ ...r, _sameCandidate: closureCandKey && r.candidate.trim().toLowerCase() === closureCandKey }))
+      .sort((a,b)=> (b._sameCandidate - a._sameCandidate) || (b._date||'').localeCompare(a._date||''))
       .slice(0, 30);
     return { list, searching: true };
   }
@@ -4388,19 +4400,30 @@ async function computeClosuresPerformance(forceRefresh){
     const match = found ? found.row : null;
     if(!match){
       unmatchedCount++;
+      const reasonDetail = crossReferenceClosure(c.candidate, c.company, allRows);
       unmatchedDetails.push({
         closure: c,
-        reason: crossReferenceClosure(c.candidate, c.company, allRows).message,
+        reason: reasonDetail.message,
+        reasonDetail,
         suggestions: findClosureMatchSuggestions(c, allRows),
       });
       return;
     }
-    if(!match.assignee){
-      // FIX (2026-09-27): a closure IS matched here — either automatically
-      // or via a manual override the person already picked and saved — but
-      // the call record it matched to has no assignee on it, so there's no
-      // handler to credit. This used to be lumped in with "couldn't be
-      // matched at all" and kept reappearing in the Unmatched
+    // FIX (2026-09-27): "most of the times calls will be assigned to
+    // persons or driving person also" — Driving Person is who actually ran
+    // the call and is frequently the only individual name on the record
+    // (Assigned To is often just the team, or blank); crediting only
+    // `assignee` meant plenty of genuinely-handled closures fell into the
+    // no-handler bucket below even though the real handler was sitting
+    // right there in Driving Person. Same drivingPerson-first precedence
+    // computePersonCallCounts() already uses elsewhere in this file.
+    const handler = match.drivingPerson || match.assignee;
+    if(!handler){
+      // A closure IS matched here — either automatically or via a manual
+      // override the person already picked and saved — but the call
+      // record it matched to has neither a driving person nor an assignee,
+      // so there's no handler to credit. This used to be lumped in with
+      // "couldn't be matched at all" and kept reappearing in the Unmatched
       // closures/manual-match list even right after a manual match was
       // successfully saved — reported as "i saved it but... still it is
       // visible in manual area." A resolved match (nothing more to pick)
@@ -4409,8 +4432,7 @@ async function computeClosuresPerformance(forceRefresh){
       noAssigneeCount++;
       return;
     }
-    if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
-    const handler = match.assignee;
+    if(teamNames.has(handler)){ teamOnlyCount++; return; }
     if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0, records: [] };
     byHandler[handler].closures++;
     // Kept alongside the count so the "By Handler" list can show exactly
@@ -7148,8 +7170,24 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
   if(!unmatchedDetails.length) return '';
   const pickerId = state.closureManualMatchPickerId;
   const hasAnyRecords = !!((state.closuresPerformance && state.closuresPerformance.allRowsSnapshot || []).length);
-  const rowsHtml = unmatchedDetails.map(({closure, reason})=>{
+  const rowsHtml = unmatchedDetails.map(({closure, reason, reasonDetail})=>{
     const isOpen = pickerId === closure.id;
+    // "🔗 Same company?" quick-alias buttons (2026-09-27) — requested as
+    // "read the company mismatch or spelling automatically... example LSU
+    // and LSUHSC-Shreveport". A fully-automatic guess isn't safe here (two
+    // spellings this different can't be told apart from two genuinely
+    // different companies without risking false matches elsewhere), but
+    // when this candidate has a call on file at a DIFFERENT company, that's
+    // a strong, human-reviewable hint (crossReferenceClosure() already
+    // confirmed it's the same person) — one click saves it as a confirmed
+    // Company alias instead of retyping both names into that form by hand.
+    // Admin-only, same as the Company Aliases section itself.
+    const quickAliasCompanies = (CURRENT_ROLE === 'admin' && reasonDetail && reasonDetail.companiesOnFile) ? reasonDetail.companiesOnFile : [];
+    const quickAliasHtml = quickAliasCompanies.length ? `
+      <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="hint" style="font-size:11px">Same company as one of these, just spelled differently?</span>
+        ${quickAliasCompanies.map(co=>`<button class="btn ghost" data-quick-alias-closure="${closure.id}" data-quick-alias-company="${escapeHtml(co)}" style="font-size:11px;padding:2px 8px">🔗 = "${escapeHtml(co)}"</button>`).join('')}
+      </div>` : '';
     let pickerHtml = '';
     if(isOpen){
       if(!hasAnyRecords){
@@ -7165,9 +7203,18 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
         // search EVERY call record on file by candidate or company name,
         // not just the suggested handful.
         const { list, searching } = getClosureMatchCandidateList(closure.id);
-        const options = list.map((r,i)=>
-          `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}</option>`
-        ).join('');
+        // FIX (2026-09-27): reported case — searching by company text
+        // ("your golf" for "Your Golf Travel") surfaced another candidate's
+        // call (Srirama Dasu) for a closure that was actually Reshma
+        // Shaik's, and nothing in the option text called that out. Every
+        // option for a different candidate than this closure's own now
+        // says so explicitly, so a same-company-different-person result
+        // can never be mistaken for a match on the right person.
+        const closureCandKey = (closure.candidate||'').trim().toLowerCase();
+        const options = list.map((r,i)=>{
+          const differentCandidate = closureCandKey && r.candidate.trim().toLowerCase() !== closureCandKey;
+          return `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}${differentCandidate?' ⚠ different candidate':''}</option>`;
+        }).join('');
         const allFallback = !searching && list.length > 0 && list.every(r=>r._fallback);
         let hint;
         if(searching) hint = list.length ? 'Search results:' : 'No calls on file match that search — try a different spelling.';
@@ -7195,6 +7242,7 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
         ${!isOpen ? `<button class="btn ghost" data-open-closure-match="${closure.id}" style="font-size:12px">🔗 Match manually</button>` : ''}
       </div>
       <div class="hint" style="margin-top:2px">${escapeHtml(reason)}</div>
+      ${quickAliasHtml}
       ${pickerHtml}
     </div>`;
   }).join('');
@@ -7329,6 +7377,7 @@ function renderClosuresPanel(){
     </div>
     ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
+    <div class="hint" style="margin-top:4px">Want to search any candidate/company and see their full call-by-call timeline? Use ⋯ More → 🔎 Search Everywhere, then tap 📋 Timeline on any result.</div>
     ${CURRENT_ROLE === 'admin' ? renderCompanyAliasesHtml() : ''}
   </div>`;
 }
@@ -8313,7 +8362,17 @@ function crossReferenceClosure(candidate, company, allRows){
       status: 'mismatch',
       message: companiesOnFile.length
         ? `Found call(s) for this candidate, but none at "${company}" (even allowing for a spelling variant). On file: ${companiesOnFile.join(', ')}.`
-        : `Found call(s) for this candidate, but none had a company on file to compare against.`
+        : `Found call(s) for this candidate, but none had a company on file to compare against.`,
+      // Kept as structured data (not just parsed out of the message above)
+      // for the "🔗 Same company?" quick-alias buttons in
+      // renderUnmatchedClosuresHtml() — added 2026-09-27 so a real
+      // spelling/abbreviation mismatch (e.g. "LSU Health Science" vs.
+      // "LSUHSC-Shreveport") can be resolved with one click instead of
+      // retyping both names into the Company Aliases form by hand. Only
+      // offered here, not as a blind automatic match: the CANDIDATE match
+      // is already exact (same person), so "this other company they also
+      // had a call at" is a strong, human-reviewable hint, not a guess.
+      companiesOnFile,
     };
   }
   return { status: 'no_match', message: 'No matching call found in the system for this candidate — check the spelling, or this may be from before your records started. You can match it to a call manually from the Closures panel.' };
@@ -8831,6 +8890,25 @@ function attachHandlers(conflictIds){
         if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(false);
       }catch(e){
         state.companyAliasError = (e && e.message) ? e.message : 'Could not remove this alias — try again.';
+      }
+      render();
+    };
+  });
+  // "🔗 Same company?" quick-alias buttons — see renderUnmatchedClosuresHtml()
+  // above. One click saves the closure's own company text and the
+  // candidate's on-file company as a confirmed alias, same effect as
+  // filling in the Company Aliases form by hand.
+  document.querySelectorAll('[data-quick-alias-closure]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const closureId = Number(btn.dataset.quickAliasClosure);
+      const detail = (state.closuresPerformance && state.closuresPerformance.unmatchedDetails || []).find(d=>d.closure.id === closureId);
+      if(!detail) return;
+      state.companyAliasError = null;
+      try{
+        await saveCompanyAliasPair(detail.closure.company, btn.dataset.quickAliasCompany);
+        state.closuresPerformance = await computeClosuresPerformance(false);
+      }catch(e){
+        state.companyAliasError = (e && e.message) ? e.message : 'Could not save this alias — try again.';
       }
       render();
     };
