@@ -1054,6 +1054,10 @@ let state = {
   stuckPipelineLoading: false,
   timeToCloseData: null,
   timeToCloseLoading: false,
+  showDataHealth: false,
+  dataHealthLoading: false,
+  dataHealthGeneratedAt: null,
+  showDailyDigest: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -5144,6 +5148,8 @@ function closeAllPanels(){
   state.clearAllReview = null;
   state.showCandidateProfile = false;
   state.showCompanyScorecard = false;
+  state.showDataHealth = false;
+  state.showDailyDigest = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -5173,6 +5179,8 @@ function getActivePanelName(){
   if(state.clearAllReview) return 'clearAllReview';
   if(state.showCandidateProfile) return 'candidateProfile';
   if(state.showCompanyScorecard) return 'companyScorecard';
+  if(state.showDataHealth) return 'dataHealth';
+  if(state.showDailyDigest) return 'dailyDigest';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -5208,6 +5216,8 @@ function renderActivePanel(name){
   if(name === 'clearAllReview') return renderClearAllReviewPanel();
   if(name === 'candidateProfile') return renderCandidateProfilePanel();
   if(name === 'companyScorecard') return renderCompanyScorecardPanel();
+  if(name === 'dataHealth') return renderDataHealthPanel();
+  if(name === 'dailyDigest') return renderDailyDigestPanel();
   return '';
 }
 function panelTitle(name){
@@ -5220,9 +5230,137 @@ function panelTitle(name){
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
     duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts',
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
-    companyScorecard: 'Company Scorecard'
+    companyScorecard: 'Company Scorecard',
+    dataHealth: 'Data Health',
+    dailyDigest: "Today's Briefing"
   };
   return titles[name] || '';
+}
+// ---------- Data Health triage view (2026-09-27) ---------- Saiteja is the
+// sole day-to-day user of this app, and several "things worth a look" were
+// already computable — unmatched closures, no-handler-credit closures, WOI
+// aging, stuck pipeline, today's absences, today's conflicts — but each one
+// lived behind its own tab, so actually catching all of them meant
+// remembering to check five different places every day. This pulls the
+// COUNTS into one glance, with a one-click jump into whichever tab has the
+// detail, instead of duplicating that detail here. Deliberately reuses the
+// exact same state fields (state.closuresPerformance, state.woiAgingData,
+// state.stuckPipelineData) that Closures/Notifications already populate —
+// so a scan here also warms those tabs, and opening them afterward doesn't
+// re-fetch.
+function dataHealthIssueCount(){
+  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null) return null;
+  return (state.closuresPerformance.unmatchedDetails.length || 0)
+    + (state.closuresPerformance.noAssigneeCount || 0)
+    + state.woiAgingData.length
+    + state.stuckPipelineData.length
+    + state.absentIds.length
+    + computeConflicts(state.rows).size;
+}
+async function runDataHealthScan(){
+  state.dataHealthLoading = true;
+  render();
+  const [closuresPerf, woi, stuck] = await Promise.all([
+    computeClosuresPerformance(true),
+    scanWoiAging(true),
+    computeStuckPipeline(true),
+  ]);
+  state.closuresPerformance = closuresPerf;
+  state.woiAgingData = woi;
+  state.stuckPipelineData = stuck;
+  state.dataHealthLoading = false;
+  state.dataHealthGeneratedAt = new Date().toISOString();
+  render();
+}
+// Shared by renderDataHealthPanel() and renderDailyDigestPanel() below — both
+// need the exact same six-category list, and duplicating it would risk the
+// two silently disagreeing (e.g. one counting a WOI candidate the other
+// doesn't) if either is ever edited without the other.
+function buildDataHealthItems(){
+  const closuresPerf = state.closuresPerformance;
+  const woi = state.woiAgingData;
+  const stuck = state.stuckPipelineData;
+  const conflictsCount = computeConflicts(state.rows).size;
+  return [
+    { icon:'🔗', label:'Unmatched closures', count: closuresPerf.unmatchedDetails.length,
+      desc: "Closures that couldn't be matched to a call record — need a manual match.", action:'closures' },
+    { icon:'🙈', label:'No handler credited', count: closuresPerf.noAssigneeCount,
+      desc: 'Matched to a call record, but that record has no individual assignee or driving person — no one gets credit.', action:'closures' },
+    { icon:'⏳', label:'Waiting for invite too long', count: woi.length,
+      desc: 'Still marked "Waiting for Invite" — easy to lose track of once it scrolls off the day it was logged.', action:'notif:woiAging' },
+    { icon:'🧊', label:'Gone quiet (14+ days)', count: stuck.length,
+      desc: `Had a real call, then nothing for ${STUCK_PIPELINE_MIN_DAYS}+ days — no closure, no reschedule, no explicit outcome.`, action:'notif:stuckPipeline' },
+    { icon:'🚫', label:'Absent today', count: state.absentIds.length,
+      desc: "Marked absent on today's board.", action:'notif:absent' },
+    { icon:'⚠️', label:'Scheduling conflicts today', count: conflictsCount,
+      desc: 'Two calls overlapping for the same person today.', action:'conflicts' },
+  ];
+}
+function renderDataHealthItemsHtml(items){
+  return items.map(it=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-weight:600">${it.icon} ${it.label} <span class="n" style="background:${it.count>0?'var(--coral)':'var(--teal)'}">${it.count}</span></div>
+        <div class="hint" style="margin:2px 0 0">${it.desc}</div>
+      </div>
+      ${it.count ? `<button class="btn ghost" data-datahealth-open="${it.action}" style="flex-shrink:0">Open →</button>` : ''}
+    </div>
+  `).join('');
+}
+function renderDataHealthPanel(){
+  if(state.dataHealthLoading){
+    return `<div class="hint">🔍 Scanning closures, WOI, and stalled candidates…</div>`;
+  }
+  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null){
+    return `
+      <div class="hint" style="margin-bottom:10px">One scan across everything that tends to get missed day to day: closures waiting on a manual match, closures with no one to credit, candidates waiting on an invite too long, candidates that have gone quiet, plus today's absences and conflicts.</div>
+      <button class="btn primary" id="runDataHealthScan">🩺 Run Data Health scan</button>
+    `;
+  }
+  const items = buildDataHealthItems();
+  const totalIssues = items.reduce((sum,it)=>sum+(it.count||0), 0);
+  return `
+    <div class="hint" style="margin-bottom:10px">${totalIssues ? `${totalIssues} item(s) worth a look.` : "✅ Nothing outstanding right now."}${state.dataHealthGeneratedAt ? ` Last scanned ${new Date(state.dataHealthGeneratedAt).toLocaleTimeString()}.` : ''}</div>
+    ${renderDataHealthItemsHtml(items)}
+    <button class="btn ghost" id="runDataHealthScan" style="margin-top:12px">↻ Re-scan</button>
+  `;
+}
+// ---------- Daily Digest / "Today's Briefing" (2026-09-27) ---------- The
+// Summary panel already answers "what does today's board look like"; Data
+// Health above already answers "what's been quietly slipping through the
+// cracks across every date." Neither alone is the one-glance morning read
+// Saiteja actually asked for — this is that: today's headline numbers PLUS
+// the Data Health issue list, together, so opening this one panel first
+// thing is enough to know whether anything needs attention before diving
+// into the board. Reuses the exact same state (state.closuresPerformance /
+// woiAgingData / stuckPipelineData) and the exact same jump-to-panel
+// buttons as Data Health, rather than re-deriving or re-rendering its own
+// copy of that list.
+function renderDailyDigestPanel(){
+  const all = state.rows;
+  const conflictIds = computeConflicts(all);
+  const sum = summarize(all, conflictIds);
+  const dataReady = state.closuresPerformance !== null && state.woiAgingData !== null && state.stuckPipelineData !== null;
+  const items = dataReady ? buildDataHealthItems() : [];
+  const totalIssues = items.reduce((s,it)=>s+(it.count||0), 0);
+  return `
+    <div class="strip-title" style="margin-bottom:6px"><span>📋 Today — ${escapeHtml(state.date)}</span></div>
+    <div class="summary-big-grid" style="margin-bottom:14px">
+      <div class="summary-big-cell"><div class="summary-big-num">${sum.total}</div><div class="summary-big-lbl">Total Calls</div></div>
+      <div class="summary-big-cell sbg-teal"><div class="summary-big-num">${sum.assigned}</div><div class="summary-big-lbl">Assigned</div></div>
+      <div class="summary-big-cell sbg-coral"><div class="summary-big-num">${sum.unassigned}</div><div class="summary-big-lbl">Unassigned</div></div>
+      <div class="summary-big-cell sbg-amber"><div class="summary-big-num">${sum.woi}</div><div class="summary-big-lbl">WOI</div></div>
+      <div class="summary-big-cell sbg-violet"><div class="summary-big-num">${sum.conflicts}</div><div class="summary-big-lbl">Conflicts</div></div>
+    </div>
+    <div class="strip-title" style="margin-bottom:6px"><span>🩺 Needs a look</span></div>
+    ${!dataReady
+      ? `<div class="hint" style="margin-bottom:10px">Hasn't been scanned yet this session — pulls in unmatched closures, stale WOIs, stalled candidates, absences and conflicts.</div><button class="btn primary" id="runDataHealthScan">🩺 Scan now</button>`
+      : (totalIssues
+          ? renderDataHealthItemsHtml(items.filter(it=>it.count))
+          : `<div class="hint" style="color:var(--teal)">✅ Nothing outstanding — closures, WOI, and stalled candidates all clear.</div>`)
+    }
+    ${dataReady ? `<div class="hint" style="margin-top:10px">Last scanned ${state.dataHealthGeneratedAt ? new Date(state.dataHealthGeneratedAt).toLocaleTimeString() : 'just now'}. <button class="btn ghost" id="runDataHealthScan" style="margin-left:6px">↻ Re-scan</button></div>` : ''}
+  `;
 }
 
 function render(){
@@ -5317,9 +5455,11 @@ function render(){
         ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
+        ${(()=>{ const c = dataHealthIssueCount(); return `<button class="btn ${state.showDataHealth?'active':''} ${c>0?'notif-alert':''}" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="n">${c}</span>` : ''}</button>`; })()}
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
+            <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
@@ -10564,6 +10704,42 @@ function attachHandlers(conflictIds){
     // first (which was the only other place this cache used to get filled).
     if(!_allRowsAcrossDatesCache) fetchAllRowsAcrossDates(false).then(()=>render());
   };
+
+  const toggleDataHealthBtn = document.getElementById('toggleDataHealth');
+  if(toggleDataHealthBtn) toggleDataHealthBtn.onclick = ()=>{
+    const wasOpen = state.showDataHealth;
+    openOnlyPanel('showDataHealth');
+    render();
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null)){
+      runDataHealthScan();
+    }
+  };
+  const toggleDailyDigestBtn = document.getElementById('toggleDailyDigest');
+  if(toggleDailyDigestBtn) toggleDailyDigestBtn.onclick = ()=>{
+    const wasOpen = state.showDailyDigest;
+    openOnlyPanel('showDailyDigest');
+    render();
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null)){
+      runDataHealthScan();
+    }
+  };
+  const runDataHealthScanBtn = document.getElementById('runDataHealthScan');
+  if(runDataHealthScanBtn) runDataHealthScanBtn.onclick = runDataHealthScan;
+  document.querySelectorAll('[data-datahealth-open]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const action = btn.dataset.datahealthOpen;
+      if(action === 'closures'){
+        openOnlyPanel('showClosures');
+        state.closuresView = 'byHandler';
+      } else if(action.indexOf('notif:') === 0){
+        openOnlyPanel('showNotifications');
+        state.notifTab = action.slice('notif:'.length);
+      } else if(action === 'conflicts'){
+        openOnlyPanel('showConflicts');
+      }
+      render();
+    };
+  });
 
   const addRosterBtn = document.getElementById('addRosterBtn');
   const teamSelect = document.getElementById('newRosterTeam');
