@@ -3052,6 +3052,52 @@ function exportIncentivesToExcel(){
 
   XLSX.writeFile(wb, `Coverage-Desk-Incentives-${monthKey}.xlsx`);
 }
+// Closures export (requested 2026-09-27) — every closure on file, with
+// which handler it's credited to (using the same manual-override-aware
+// matcher the on-screen By Handler view uses, so the file matches exactly
+// what's shown) and its round count, plus a By Handler summary sheet.
+function exportClosuresToExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('The Excel library did not load (probably a network/ad-blocker issue) — try refreshing the page.');
+    return;
+  }
+  const list = state.closures || [];
+  if(!list.length){
+    alert('There are no closures recorded yet to export.');
+    return;
+  }
+  const perf = state.closuresPerformance;
+  const allRows = (perf && perf.allRowsSnapshot) || _allRowsAcrossDatesCache || [];
+  const closureRows = list.slice()
+    .sort((a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0))
+    .map(c=>{
+      const found = allRows.length ? findClosureMatchWithOverride(c, allRows) : null;
+      const match = found ? found.row : null;
+      const timeline = buildClosureRoundTimeline(c.candidate, c.company);
+      return {
+        'Candidate': c.candidate || '',
+        'Company': c.company || '',
+        'Salary': c.salary || '',
+        'Recorded': c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '',
+        'Handler': match ? (match.assignee || '(no assignee on the matched call)') : '(not matched to a call record)',
+        'Rounds on file': timeline.length || 0,
+      };
+    });
+  const byHandlerRows = ((perf && perf.rows) || []).slice()
+    .sort((a,b)=> b.closures - a.closures)
+    .map(r=>({ 'Handler': r.handler, 'Team': r.team || '', 'Closures': r.closures }));
+
+  const wb = XLSX.utils.book_new();
+  const closuresSheet = XLSX.utils.json_to_sheet(closureRows);
+  closuresSheet['!cols'] = [{wch:22},{wch:26},{wch:14},{wch:12},{wch:26},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, closuresSheet, 'Closures');
+  if(byHandlerRows.length){
+    const handlerSheet = XLSX.utils.json_to_sheet(byHandlerRows);
+    handlerSheet['!cols'] = [{wch:20},{wch:18},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, handlerSheet, 'By Handler');
+  }
+  XLSX.writeFile(wb, `Coverage-Desk-Closures-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
   if(teamNames.has(assignee)) return assignee;
@@ -4333,18 +4379,33 @@ async function computeClosuresPerformance(forceRefresh){
   const byHandler = {};
   let unmatchedCount = 0;
   let teamOnlyCount = 0;
+  let noAssigneeCount = 0;
   const unmatchedDetails = [];
   (state.closures || []).forEach(c=>{
     if(!c.candidate || !c.company){ unmatchedCount++; return; }
     const found = findClosureMatchWithOverride(c, allRows);
     const match = found ? found.row : null;
-    if(!match || !match.assignee){
+    if(!match){
       unmatchedCount++;
       unmatchedDetails.push({
         closure: c,
         reason: crossReferenceClosure(c.candidate, c.company, allRows).message,
         suggestions: findClosureMatchSuggestions(c, allRows),
       });
+      return;
+    }
+    if(!match.assignee){
+      // FIX (2026-09-27): a closure IS matched here — either automatically
+      // or via a manual override the person already picked and saved — but
+      // the call record it matched to has no assignee on it, so there's no
+      // handler to credit. This used to be lumped in with "couldn't be
+      // matched at all" and kept reappearing in the Unmatched
+      // closures/manual-match list even right after a manual match was
+      // successfully saved — reported as "i saved it but... still it is
+      // visible in manual area." A resolved match (nothing more to pick)
+      // is a different situation from a still-unresolved one, so it gets
+      // its own bucket and is no longer shown as needing a match.
+      noAssigneeCount++;
       return;
     }
     if(teamNames.has(match.assignee)){ teamOnlyCount++; return; }
@@ -4362,7 +4423,7 @@ async function computeClosuresPerformance(forceRefresh){
   // filter across every call record on file, not just the up-to-8
   // pre-computed suggestions — a real record that didn't make the
   // suggestion shortlist is still just a search away instead of unreachable.
-  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length, unmatchedDetails, allRowsSnapshot: allRows };
+  return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, allRowsSnapshot: allRows };
 }
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
@@ -7223,7 +7284,7 @@ function renderClosuresPanel(){
       perfHtml = `<div class="hint">${perf && perf.loading ? '<span class="spinner"></span>Cross-referencing closures against call records…' : 'Loading…'}</div>`;
     } else if(perf.error){
       perfHtml = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(perf.error)}</div>`;
-    } else if(!perf.rows.length && !(perf.unmatchedDetails && perf.unmatchedDetails.length)){
+    } else if(!perf.rows.length && !(perf.unmatchedDetails && perf.unmatchedDetails.length) && !perf.teamOnlyCount && !perf.noAssigneeCount){
       perfHtml = `<div class="hint">No closure could be matched to a handler yet — either no closures are recorded, or none matched a call record's candidate/company on file.</div>`;
     } else {
       const rowsHtml = perf.rows.map(r=>{
@@ -7247,6 +7308,7 @@ function renderClosuresPanel(){
       }).join('');
       const notes = [];
       if(perf.teamOnlyCount) notes.push(`${perf.teamOnlyCount} matched only to a team-level assignment, not an individual`);
+      if(perf.noAssigneeCount) notes.push(`${perf.noAssigneeCount} matched to a call record with no assignee, so no handler to credit`);
       if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
       perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
       perfHtml += renderUnmatchedClosuresHtml(perf.unmatchedDetails || []);
@@ -7262,8 +7324,10 @@ function renderClosuresPanel(){
     <div class="notif-tabs" style="margin-bottom:10px">
       <button class="notif-tab-btn ${view==='list'?'active':''}" data-closuresview="list">📋 All Closures</button>
       <button class="notif-tab-btn ${view==='byHandler'?'active':''}" data-closuresview="byHandler">🏆 By Handler</button>
+      ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:auto">📊 Export to Excel</button>` : ''}
     </div>
     ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
+    <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
   </div>`;
 }
 
@@ -8663,6 +8727,8 @@ function attachHandlers(conflictIds){
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
   const exportIncentivesExcelBtn = document.getElementById('exportIncentivesExcelBtn');
   if(exportIncentivesExcelBtn) exportIncentivesExcelBtn.onclick = exportIncentivesToExcel;
+  const exportClosuresExcelBtn = document.getElementById('exportClosuresExcelBtn');
+  if(exportClosuresExcelBtn) exportClosuresExcelBtn.onclick = exportClosuresToExcel;
 
   // Monthly goal tracking (2026-09-25) — the ₹ target on Incentives and
   // the count target on Closures share the same edit/save/cancel pattern.
