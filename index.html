@@ -934,6 +934,7 @@ let state = {
   closureManualMatchSaving: false,
   closureMatchError: null,
   closureMatchSearch: '', // manual-match picker's search box text — see getClosureMatchCandidateList()
+  companyAliasError: null, // error text for the "🔗 Company aliases" add form — see renderCompanyAliasesHtml()
   appSettings: {}, // generic key/value settings map — see loadAppSettings()/saveAppSetting()
   editingIncentiveTarget: false,
   editingClosuresTarget: false,
@@ -7328,6 +7329,34 @@ function renderClosuresPanel(){
     </div>
     ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
+    ${CURRENT_ROLE === 'admin' ? renderCompanyAliasesHtml() : ''}
+  </div>`;
+}
+// Admin-only "these two company spellings are the same client" list —
+// added 2026-09-27 after "LSU Health Science" (calls) vs
+// "LSUHSC-Shreveport" (closure) was reported as the same client not being
+// recognized as such. See getCompanyAliasPairs()/companiesAreAliased() —
+// this is just the management UI for that list.
+function renderCompanyAliasesHtml(){
+  const pairs = getCompanyAliasPairs();
+  const rowsHtml = pairs.map(([a,b],i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+      <span style="flex:1">${escapeHtml(a)}</span>
+      <span class="hint">=</span>
+      <span style="flex:1">${escapeHtml(b)}</span>
+      <button class="btn ghost" data-remove-company-alias="${i}" title="Remove this alias" style="font-size:11px;padding:2px 8px">✕</button>
+    </div>
+  `).join('');
+  return `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-soft)">
+    <div style="font-weight:700;font-size:13px;margin-bottom:4px">🔗 Company aliases</div>
+    <div class="hint" style="margin-bottom:8px">For when the same client is spelled very differently between a call record and a closure (e.g. an abbreviation like "LSUHSC-Shreveport" vs. the full name "LSU Health Science") — too different for automatic spelling-match to catch safely, so add it here once and every closure/call match for that client uses it from then on.</div>
+    ${rowsHtml || '<div class="hint" style="margin-bottom:8px">No aliases added yet.</div>'}
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <input type="text" id="companyAliasInputA" placeholder="Company name as it appears here…" style="flex:1;min-width:140px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-soft);background:var(--surface);color:inherit">
+      <input type="text" id="companyAliasInputB" placeholder="…and as it appears there" style="flex:1;min-width:140px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-soft);background:var(--surface);color:inherit">
+      <button class="btn ghost" id="addCompanyAliasBtn">＋ Add alias</button>
+    </div>
+    ${state.companyAliasError ? `<div class="hint" style="color:var(--coral);margin-top:6px">⚠ ${escapeHtml(state.companyAliasError)}</div>` : ''}
   </div>`;
 }
 
@@ -8092,6 +8121,45 @@ function classifyCompany(company){
 function normalizeCompanyKey(company){
   return (company||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 }
+// Manually-curated company aliases (2026-09-27) — reported real case: a
+// closure recorded as "LSUHSC-Shreveport" is genuinely the same client as
+// calls recorded under "LSU Health Science", but the two spellings (an
+// abbreviation + campus name vs. a shortened full name) are too different
+// for fuzzyCompanyKeyMatch()'s spelling-drift/prefix heuristics below to
+// ever safely catch on their own — making those heuristics that
+// permissive would risk matching genuinely unrelated companies elsewhere.
+// This is an explicit, admin-curated list instead — "these spellings are
+// known to mean the same client" — added one pair at a time as real cases
+// come up (see the Closures panel's "🔗 Company aliases" section), stored
+// in the generic app_settings store (same one goal targets use) as a JSON
+// array of [nameA, nameB] pairs, so it's shared across the team and
+// survives reloads without needing its own table/migration.
+function getCompanyAliasPairs(){
+  try{
+    const raw = state.appSettings && state.appSettings.company_aliases;
+    if(!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(p=>Array.isArray(p) && p.length>=2) : [];
+  }catch(e){ return []; }
+}
+function companiesAreAliased(companyA, companyB){
+  const a = normalizeCompanyKey(companyA), b = normalizeCompanyKey(companyB);
+  if(!a || !b) return false;
+  return getCompanyAliasPairs().some(([x,y])=>{
+    const kx = normalizeCompanyKey(x), ky = normalizeCompanyKey(y);
+    return (kx===a && ky===b) || (kx===b && ky===a);
+  });
+}
+async function saveCompanyAliasPair(nameA, nameB){
+  const pairs = getCompanyAliasPairs();
+  pairs.push([nameA, nameB]);
+  await saveAppSetting('company_aliases', JSON.stringify(pairs));
+}
+async function removeCompanyAliasPair(index){
+  const pairs = getCompanyAliasPairs();
+  pairs.splice(index, 1);
+  await saveAppSetting('company_aliases', JSON.stringify(pairs));
+}
 // Same idea as the "First L." abbreviation matching in
 // findStudentMasterMatchWithConfidence() above, but symmetric (either name
 // can be the abbreviated one) and with a small amount of typo tolerance on
@@ -8159,6 +8227,11 @@ function fuzzyCompanyKeyMatch(companyA, companyB){
   const a = normalizeCompanyKey(companyA), b = normalizeCompanyKey(companyB);
   if(!a || !b) return false;
   if(a === b) return true;
+  // An explicit admin-curated alias ("LSUHSC-Shreveport" = "LSU Health
+  // Science" — see getCompanyAliasPairs() above) — checked before the
+  // generic spelling-drift heuristics below since it's a known, confirmed
+  // match rather than a guess.
+  if(companiesAreAliased(companyA, companyB)) return true;
   // One key is the other plus a suffix/prefix — "bimbobakeries" vs
   // "bimbobakeriesusa" or "bimbobakeriesinc" — a very common way the same
   // client ends up typed two different ways (a legal suffix added or
@@ -8729,6 +8802,39 @@ function attachHandlers(conflictIds){
   if(exportIncentivesExcelBtn) exportIncentivesExcelBtn.onclick = exportIncentivesToExcel;
   const exportClosuresExcelBtn = document.getElementById('exportClosuresExcelBtn');
   if(exportClosuresExcelBtn) exportClosuresExcelBtn.onclick = exportClosuresToExcel;
+
+  // Company aliases (2026-09-27) — see renderCompanyAliasesHtml() above.
+  const addCompanyAliasBtn = document.getElementById('addCompanyAliasBtn');
+  if(addCompanyAliasBtn) addCompanyAliasBtn.onclick = async ()=>{
+    const inputA = document.getElementById('companyAliasInputA');
+    const inputB = document.getElementById('companyAliasInputB');
+    const a = (inputA && inputA.value || '').trim();
+    const b = (inputB && inputB.value || '').trim();
+    if(!a || !b){ state.companyAliasError = 'Enter both company names.'; render(); return; }
+    if(normalizeCompanyKey(a) === normalizeCompanyKey(b)){ state.companyAliasError = 'Those are already the same spelling.'; render(); return; }
+    state.companyAliasError = null;
+    try{
+      await saveCompanyAliasPair(a, b);
+      // Company matching just changed, so re-run the By Handler computation
+      // if it's the current view, same as after a manual match is saved.
+      if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(false);
+    }catch(e){
+      state.companyAliasError = (e && e.message) ? e.message : 'Could not save this alias — try again.';
+    }
+    render();
+  };
+  document.querySelectorAll('[data-remove-company-alias]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const idx = Number(btn.dataset.removeCompanyAlias);
+      try{
+        await removeCompanyAliasPair(idx);
+        if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(false);
+      }catch(e){
+        state.companyAliasError = (e && e.message) ? e.message : 'Could not remove this alias — try again.';
+      }
+      render();
+    };
+  });
 
   // Monthly goal tracking (2026-09-25) — the ₹ target on Incentives and
   // the count target on Closures share the same edit/save/cancel pattern.
