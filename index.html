@@ -933,6 +933,7 @@ let state = {
   closureManualMatchPickerId: null, // which closure's "Match manually" picker is currently open, if any
   closureManualMatchSaving: false,
   closureMatchError: null,
+  closureMatchSearch: '', // manual-match picker's search box text — see getClosureMatchCandidateList()
   appSettings: {}, // generic key/value settings map — see loadAppSettings()/saveAppSetting()
   editingIncentiveTarget: false,
   editingClosuresTarget: false,
@@ -4268,6 +4269,57 @@ function findClosureMatchSuggestions(closure, allRows){
   }
   return likely.slice(0, 8);
 }
+// Shared between rendering the manual-match picker and resolving what was
+// actually picked on Confirm, so both sides always agree on what option N
+// in the <select> refers to. When state.closureMatchSearch has ≥2 chars,
+// searches every call record on file by candidate/company substring
+// (added 2026-09-27, after the pre-computed 8-suggestion shortlist alone
+// still wasn't enough to reach some real records); otherwise falls back to
+// the normal pre-computed suggestions for that closure.
+function getClosureMatchCandidateList(closureId){
+  const detail = (state.closuresPerformance && state.closuresPerformance.unmatchedDetails || []).find(d=>d.closure.id === closureId);
+  if(!detail) return { list: [], searching: false };
+  const q = (state.closureMatchSearch||'').trim().toLowerCase();
+  if(q.length >= 2){
+    const allRows = (state.closuresPerformance && state.closuresPerformance.allRowsSnapshot) || [];
+    const list = allRows
+      .filter(r=>r.candidate && (r.candidate.toLowerCase().includes(q) || (r.company||'').toLowerCase().includes(q)))
+      .sort((a,b)=> (b._date||'').localeCompare(a._date||''))
+      .slice(0, 30);
+    return { list, searching: true };
+  }
+  return { list: detail.suggestions || [], searching: false };
+}
+// Round-by-round timeline for one closure — "when did Round 1 happen, when
+// did Round 2 happen, when did Round 3 happen" — requested 2026-09-27.
+// Reuses the same candidate + fuzzy-company-match discipline as
+// findClosureMatchSuggestions(), reading from the same cross-date call
+// cache used everywhere else in the file (_allRowsAcrossDatesCache) rather
+// than triggering its own async fetch, so it can be called synchronously
+// from inside render().
+function buildClosureRoundTimeline(candidate, company){
+  const candKey = (candidate||'').trim().toLowerCase();
+  if(!candKey) return [];
+  const allRows = _allRowsAcrossDatesCache || [];
+  const matches = allRows.filter(r=>{
+    if(!r.candidate || r.candidate.trim().toLowerCase() !== candKey) return false;
+    return fuzzyCompanyKeyMatch(r.company, company) || normalizeCompanyKey(r.company) === normalizeCompanyKey(company);
+  });
+  const seen = new Set();
+  const entries = [];
+  matches.forEach(r=>{
+    const key = (r.round||'') + '|' + (r._date||'') + '|' + (r.time||'');
+    if(seen.has(key)) return;
+    seen.add(key);
+    entries.push({ round: r.round || '1st Round', date: r._date || '', time: r.time || '' });
+  });
+  // Chronological order is what actually answers "when did round 2 happen
+  // relative to round 1" — sorting by the round label's text would not,
+  // since it's a free-typed string ("2nd Round", "2ns Round", etc.), not a
+  // reliable number.
+  entries.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+  return entries;
+}
 async function computeClosuresPerformance(forceRefresh){
   if(!state.closuresLoaded) await loadClosures();
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
@@ -4306,7 +4358,11 @@ async function computeClosuresPerformance(forceRefresh){
     byHandler[handler].records.push({ candidate: c.candidate, company: c.company, salary: c.salary || '', createdAt: c.createdAt || null });
   });
   const rows = Object.values(byHandler).sort((a,b)=> b.closures - a.closures);
-  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length, unmatchedDetails };
+  // Kept so the manual-match picker's search box (added 2026-09-27) can
+  // filter across every call record on file, not just the up-to-8
+  // pre-computed suggestions — a real record that didn't make the
+  // suggestion shortlist is still just a search away instead of unreachable.
+  return { rows, unmatchedCount, teamOnlyCount, totalClosures: (state.closures||[]).length, unmatchedDetails, allRowsSnapshot: allRows };
 }
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
@@ -7029,27 +7085,47 @@ function renderClosureConfirmPanel(){
 function renderUnmatchedClosuresHtml(unmatchedDetails){
   if(!unmatchedDetails.length) return '';
   const pickerId = state.closureManualMatchPickerId;
-  const rowsHtml = unmatchedDetails.map(({closure, reason, suggestions})=>{
+  const hasAnyRecords = !!((state.closuresPerformance && state.closuresPerformance.allRowsSnapshot || []).length);
+  const rowsHtml = unmatchedDetails.map(({closure, reason})=>{
     const isOpen = pickerId === closure.id;
     let pickerHtml = '';
     if(isOpen){
-      const options = (suggestions||[]).map((r,i)=>
-        `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}</option>`
-      ).join('');
-      const allFallback = (suggestions||[]).length > 0 && suggestions.every(r=>r._fallback);
-      pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
-        ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:8px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
-        ${suggestions && suggestions.length ? `
-          <div class="hint" style="margin-bottom:6px">${allFallback ? 'No obvious match by name or company — pick from the most recent calls on file:' : 'Pick the call this closure actually belongs to:'}</div>
-          <select id="closureMatchSelect-${closure.id}" style="width:100%;margin-bottom:8px">
-            ${options}
-          </select>
-          <div style="display:flex;gap:8px">
-            <button class="btn primary" data-confirm-closure-match="${closure.id}" ${state.closureManualMatchSaving?'disabled':''}>${state.closureManualMatchSaving?'<span class="spinner"></span>Saving…':'Confirm match'}</button>
-            <button class="btn ghost" data-cancel-closure-match="${closure.id}">Cancel</button>
-          </div>
-        ` : `<div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>`}
-      </div>`;
+      if(!hasAnyRecords){
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+          <div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>
+        </div>`;
+      } else {
+        // FIX (2026-09-27): the select used to only ever offer the up-to-8
+        // pre-computed suggestions, with no way to reach a real record that
+        // simply wasn't in that shortlist — reported as "records not
+        // showing" a second time even after the earlier fallback fix. A
+        // search box (getClosureMatchCandidateList()) now lets the person
+        // search EVERY call record on file by candidate or company name,
+        // not just the suggested handful.
+        const { list, searching } = getClosureMatchCandidateList(closure.id);
+        const options = list.map((r,i)=>
+          `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}</option>`
+        ).join('');
+        const allFallback = !searching && list.length > 0 && list.every(r=>r._fallback);
+        let hint;
+        if(searching) hint = list.length ? 'Search results:' : 'No calls on file match that search — try a different spelling.';
+        else if(allFallback) hint = 'No obvious match by name or company — pick from the most recent calls on file, or search below:';
+        else hint = 'Pick the call this closure actually belongs to, or search below:';
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+          ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:8px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
+          <input type="text" id="closureMatchSearch-${closure.id}" class="closure-match-search-input" data-closure-match-search="${closure.id}" placeholder="🔎 Search by candidate or company name…" value="${escapeHtml(state.closureMatchSearch||'')}" style="width:100%;margin-bottom:8px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-soft);background:var(--surface);color:inherit">
+          <div class="hint" style="margin-bottom:6px">${hint}</div>
+          ${list.length ? `
+            <select id="closureMatchSelect-${closure.id}" style="width:100%;margin-bottom:8px">
+              ${options}
+            </select>
+            <div style="display:flex;gap:8px">
+              <button class="btn primary" data-confirm-closure-match="${closure.id}" ${state.closureManualMatchSaving?'disabled':''}>${state.closureManualMatchSaving?'<span class="spinner"></span>Saving…':'Confirm match'}</button>
+              <button class="btn ghost" data-cancel-closure-match="${closure.id}">Cancel</button>
+            </div>
+          ` : `<button class="btn ghost" data-cancel-closure-match="${closure.id}">Close</button>`}
+        </div>`;
+      }
     }
     return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -7101,12 +7177,30 @@ function renderClosuresPanel(){
   groups.sort((a,b)=>b.sortKey - a.sortKey);
 
   const groupsHtml = groups.map(g=>{
-    const rowsHtml = g.rows.map(c=>`<tr>
+    const rowsHtml = g.rows.map(c=>{
+      // Round-by-round timeline (requested 2026-09-27): a native tooltip on
+      // the round count, same lightweight pattern as the By Handler
+      // hover-tooltip added 2026-09-26 — no new state/popover needed.
+      const timeline = buildClosureRoundTimeline(c.candidate, c.company);
+      let roundsCell;
+      if(!_allRowsAcrossDatesCache){
+        roundsCell = `<span class="hint" style="font-size:11px">loading…</span>`;
+      } else if(!timeline.length){
+        roundsCell = `<span class="hint" style="font-size:11px">—</span>`;
+      } else {
+        const tooltip = timeline.map((t,i)=>
+          `${t.round}${t.date ? ' — '+new Date(t.date+'T00:00:00').toLocaleDateString() : ''}${t.time ? ' at '+t.time : ''}`
+        ).join('\n');
+        roundsCell = `<span class="notif-warn" style="color:var(--teal);cursor:default;border-bottom:1px dotted currentColor" title="${escapeHtml(tooltip)}">${timeline.length} round${timeline.length===1?'':'s'}</span>`;
+      }
+      return `<tr>
         <td>${escapeHtml(c.candidate)}</td>
         <td>${escapeHtml(c.company)}</td>
         <td>${escapeHtml(c.salary||'—')}</td>
         <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
-      </tr>`).join('');
+        <td>${roundsCell}</td>
+      </tr>`;
+    }).join('');
     return `<div style="margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <div style="font-weight:700;font-size:13px">${escapeHtml(g.label)}</div>
@@ -7114,7 +7208,7 @@ function renderClosuresPanel(){
       </div>
       <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
         <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
-          <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th>
+          <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th><th style="padding:6px 8px">Rounds</th>
         </tr></thead>
         <tbody style="font-size:13px">${rowsHtml}</tbody>
       </table></div>
@@ -8832,24 +8926,32 @@ function attachHandlers(conflictIds){
   // unmatched closures in the By Handler view — see
   // renderUnmatchedClosuresHtml()/findClosureMatchSuggestions()).
   document.querySelectorAll('[data-open-closure-match]').forEach(btn=>{
-    btn.onclick = ()=>{ state.closureManualMatchPickerId = Number(btn.dataset.openClosureMatch); state.closureMatchError = null; render(); };
+    btn.onclick = ()=>{ state.closureManualMatchPickerId = Number(btn.dataset.openClosureMatch); state.closureMatchError = null; state.closureMatchSearch = ''; render(); };
   });
   document.querySelectorAll('[data-cancel-closure-match]').forEach(btn=>{
-    btn.onclick = ()=>{ state.closureManualMatchPickerId = null; state.closureMatchError = null; render(); };
+    btn.onclick = ()=>{ state.closureManualMatchPickerId = null; state.closureMatchError = null; state.closureMatchSearch = ''; render(); };
+  });
+  // Search box inside the open picker — filters across every call record
+  // on file (getClosureMatchCandidateList()), not just the pre-computed
+  // shortlist. A full render() on every keystroke is the same pattern used
+  // elsewhere in this file for live-filtering inputs (e.g. notifSearchAllResched).
+  document.querySelectorAll('[data-closure-match-search]').forEach(input=>{
+    input.oninput = ()=>{ state.closureMatchSearch = input.value; render(); };
   });
   document.querySelectorAll('[data-confirm-closure-match]').forEach(btn=>{
     btn.onclick = async ()=>{
       const closureId = Number(btn.dataset.confirmClosureMatch);
       const select = document.getElementById(`closureMatchSelect-${closureId}`);
-      const detail = (state.closuresPerformance && state.closuresPerformance.unmatchedDetails || []).find(d=>d.closure.id === closureId);
-      if(!select || !detail || !detail.suggestions || !detail.suggestions.length) return;
-      const chosen = detail.suggestions[Number(select.value)];
+      const { list } = getClosureMatchCandidateList(closureId);
+      if(!select || !list.length) return;
+      const chosen = list[Number(select.value)];
       if(!chosen) return;
       state.closureManualMatchSaving = true;
       render();
       try{
         await saveClosureManualMatch(closureId, chosen.candidate, chosen.company);
         state.closureManualMatchPickerId = null;
+        state.closureMatchSearch = '';
         // Re-run the By Handler computation so this closure now counts.
         state.closuresPerformance = await computeClosuresPerformance(false);
       }catch(e){
@@ -10205,6 +10307,12 @@ function attachHandlers(conflictIds){
     openOnlyPanel('showClosures');
     render();
     if(!state.closuresLoaded) loadClosures();
+    // Warms the cross-date call cache in the background so each closure's
+    // round-by-round timeline tooltip (buildClosureRoundTimeline(), added
+    // 2026-09-27) has real data to show as soon as it's hovered, instead of
+    // "no round history on file yet" until By Handler happens to be opened
+    // first (which was the only other place this cache used to get filled).
+    if(!_allRowsAcrossDatesCache) fetchAllRowsAcrossDates(false).then(()=>render());
   };
 
   const addRosterBtn = document.getElementById('addRosterBtn');
