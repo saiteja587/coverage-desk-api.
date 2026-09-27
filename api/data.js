@@ -259,6 +259,20 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|app_settings|users|whoami' });
   } catch (err) {
     console.error(err);
+    // FIX (2026-09-27): a save against a table that hasn't been created yet
+    // (e.g. closure_manual_matches or app_settings, both added 2026-09-25 —
+    // schema.sql lists them but they have to be run against the live
+    // database by hand, they're never auto-created at request time) used to
+    // fall through to the fully generic message below, which just looks
+    // like "not stored" with no way to tell why. The missing table's own
+    // name (it's already public in schema.sql, not sensitive) is safe and
+    // genuinely actionable to hand back here — everything else about the
+    // error (connection details, query text) still stays server-log-only.
+    if (err && err.code === 'ER_NO_SUCH_TABLE') {
+      const m = /Table '[^']*\.(\w+)' doesn't exist/.exec(err.sqlMessage || err.message || '');
+      const tableName = m ? m[1] : 'a required table';
+      return res.status(500).json({ error: `The "${tableName}" table doesn't exist in your database yet — run its CREATE TABLE statement from schema.sql, then try again.` });
+    }
     // The full error (including internal details like table/column names,
     // or MySQL connection specifics) goes to the server log above, not to
     // the client — a generic message here avoids handing that detail to
