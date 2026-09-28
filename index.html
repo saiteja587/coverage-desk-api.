@@ -1070,6 +1070,8 @@ let state = {
   candidateProfileClosureForm: null,
   candidateProfileClosureSaving: false,
   closureMatchRefreshing: false,
+  incentivesExpandedHandler: null,
+  incentiveAddingClosureKey: null,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -8149,6 +8151,60 @@ function renderClosuresGoalHtml(thisMonthCount){
     ${renderGoalProgressBar(thisMonthCount, target, `${thisMonthCount} of ${target}${thisMonthCount>=target?' — target reached! 🎉':''}`)}
   </div>`;
 }
+// ---------- Incentives → per-record breakdown + push to Closures
+// (2026-09-28) ---------- The Incentives panel above only ever showed
+// aggregate ₹ totals per handler (Promotion/Selection/Total/Records-count)
+// — enough to know a handler earned ₹4,000 in Selections, never enough to
+// see WHICH candidates that came from. Saiteja's own example: Bharath's
+// ₹4,000 Selection total is two ₹2,000 records, and one of them (Amulya)
+// had never been entered into Coverage Desk's Closures list at all — he
+// had to spot the gap by doing the math on a screenshot. This reuses the
+// same per-record Interview Portal data (state.portalAssignments) the
+// manual-match Portal fallback above already reads, filtered to one
+// handler and the month currently being viewed, so the actual records
+// behind a total are visible right there — and each one that doesn't
+// already have a matching Closures entry gets a one-click "Add as
+// closure" button (saveNewClosures(), the exact same save path the normal
+// paste-in import and the Timeline quick-add both already use).
+function closureAlreadyRecordedFor(candidate, company){
+  const candKey = (candidate||'').trim().toLowerCase();
+  if(!candKey) return false;
+  return (state.closures||[]).some(c =>
+    (c.candidate||'').trim().toLowerCase() === candKey &&
+    (normalizeCompanyKey(c.company) === normalizeCompanyKey(company) || fuzzyCompanyKeyMatch(c.company, company))
+  );
+}
+function renderIncentiveHandlerRecordsHtml(handler, monthKey){
+  if(!state.portalAssignments || !state.portalAssignments.length){
+    return `<div class="hint">Run 📡 Team Sync → Full Sync first to see this handler's individual Portal records here — right now only the aggregate totals above are available.</div>`;
+  }
+  // Person-name matching stays exact, never fuzzy — same rule as
+  // everywhere else in this file (team isolation / no fuzzy person
+  // matching), so this can never quietly attribute one handler's records
+  // to a similarly-named other person.
+  const records = state.portalAssignments
+    .filter(p => namesEquivalent(p.handler||p.assignee, handler) && (!p.dateKey || p.dateKey.startsWith(monthKey)))
+    .slice()
+    .sort((a,b)=> (b.dateKey||'').localeCompare(a.dateKey||''));
+  if(!records.length){
+    return `<div class="hint">No individual Portal records found for ${escapeHtml(handler)} in ${escapeHtml(monthKeyLabel(monthKey))} — the totals above come from the Portal's own aggregate, which doesn't always line up one-to-one with its per-record assignment log.</div>`;
+  }
+  return records.map(r=>{
+    const already = closureAlreadyRecordedFor(r.candidate, r.client);
+    const key = (r.candidate||'').trim().toLowerCase() + '|' + normalizeCompanyKey(r.client);
+    const adding = state.incentiveAddingClosureKey === key;
+    return `<div class="notif-row">
+      <div class="notif-name">${escapeHtml(r.candidate||'Candidate')}${r.client?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(r.client)}</span>`:''}</div>
+      <div class="notif-detail">
+        ${r.dateKey?`<span class="notif-chip">${escapeHtml(r.dateKey)}</span>`:''}
+        ${r.status?`<span class="notif-chip">${escapeHtml(r.status)}</span>`:''}
+        ${already
+          ? `<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">✅ In Closures</span>`
+          : `<button class="btn ghost" data-incentive-add-closure="${escapeHtml(r.candidate)}" data-incentive-add-company="${escapeHtml(r.client||'')}" ${adding?'disabled':''} style="font-size:10.5px;padding:3px 8px">${adding?'<span class="spinner"></span>Adding…':'🏆 Add as closure'}</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
 function renderIncentivesPanel(){
   const monthKey = state.incentivesMonth || currentMonthKey();
   const d = state.incentivesData;
@@ -8188,13 +8244,16 @@ function renderIncentivesPanel(){
         <table style="width:100%;min-width:480px;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="text-align:left;background:var(--surface)"><th style="padding:6px 14px">Handler</th><th style="padding:6px 14px">Promotion</th><th style="padding:6px 14px">Selection</th><th style="padding:6px 14px">Total</th><th style="padding:6px 14px">Records</th></tr></thead>
           <tbody>
-            ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>`<tr style="border-top:1px solid var(--border-soft)">
+            ${group.rows.sort((a,b)=>Number(b.total||0)-Number(a.total||0)).map(r=>{
+              const isExpanded = state.incentivesExpandedHandler === r.handler;
+              return `<tr style="border-top:1px solid var(--border-soft)">
               <td style="padding:7px 14px;font-weight:600">${escapeHtml(r.handler)}</td>
               <td style="padding:7px 14px">₹${Number(r.promotion||0).toLocaleString('en-IN')}</td>
               <td style="padding:7px 14px">₹${Number(r.selection||0).toLocaleString('en-IN')}</td>
               <td style="padding:7px 14px;font-weight:700">₹${Number(r.total||0).toLocaleString('en-IN')}</td>
-              <td style="padding:7px 14px;color:var(--text-faint)">${r.records||0}</td>
-            </tr>`).join('')}
+              <td style="padding:7px 14px"><button class="btn ghost" data-incentive-expand="${escapeHtml(r.handler)}" style="font-size:10.5px;padding:3px 8px;color:var(--text-faint)">${isExpanded?'▾':'▸'} ${r.records||0}</button></td>
+            </tr>${isExpanded ? `<tr style="border-top:1px solid var(--border-soft)"><td colspan="5" style="padding:8px 14px;background:var(--surface)">${renderIncentiveHandlerRecordsHtml(r.handler, monthKey)}</td></tr>` : ''}`;
+            }).join('')}
           </tbody>
         </table>
         </div>
@@ -9454,6 +9513,35 @@ function attachHandlers(conflictIds){
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
   const exportIncentivesExcelBtn = document.getElementById('exportIncentivesExcelBtn');
   if(exportIncentivesExcelBtn) exportIncentivesExcelBtn.onclick = exportIncentivesToExcel;
+
+  // Incentives → per-record breakdown + push to Closures (2026-09-28).
+  document.querySelectorAll('[data-incentive-expand]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const handler = btn.dataset.incentiveExpand;
+      state.incentivesExpandedHandler = (state.incentivesExpandedHandler === handler) ? null : handler;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-incentive-add-closure]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const candidate = btn.dataset.incentiveAddClosure;
+      const company = btn.dataset.incentiveAddCompany || '';
+      const key = candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(company);
+      state.incentiveAddingClosureKey = key;
+      render();
+      try{
+        await saveNewClosures([{ candidate, company, salary: '', raw: '' }]);
+        // Same staleness fix as everywhere else a closure gets saved —
+        // otherwise it wouldn't show up in By Handler until something else
+        // happened to trigger a re-scan.
+        if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
+      }catch(e){
+        alert('Failed to save: ' + (e && e.message ? e.message : 'could not reach the server'));
+      }
+      state.incentiveAddingClosureKey = null;
+      render();
+    };
+  });
   const exportClosuresExcelBtn = document.getElementById('exportClosuresExcelBtn');
   if(exportClosuresExcelBtn) exportClosuresExcelBtn.onclick = exportClosuresToExcel;
 
