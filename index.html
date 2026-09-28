@@ -1061,6 +1061,14 @@ let state = {
   showDailyDigest: false,
   showDailyDigestBanner: false,
   showQuickSearchModal: false,
+  showActivePipeline: false,
+  activePipelineData: null,
+  activePipelineLoading: false,
+  activePipelineGeneratedAt: null,
+  finalRoundNudgeData: null,
+  finalRoundNudgeLoading: false,
+  candidateProfileClosureForm: null,
+  candidateProfileClosureSaving: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -3138,6 +3146,30 @@ function autoRouteRows(newRows, existingRows){
   seedFrom(existingRows);
   seedFrom(newRows.filter(r=>r.assignee)); // rows already assigned in this same batch (e.g. via arrow-list merge)
 
+  // Carry-forward assignee (2026-09-28) — if this exact candidate already
+  // has real history at the same company, handled by a real individual
+  // (not a team), assign the same person again instead of leaving it
+  // blank. This is the strongest possible signal for who should run this
+  // round, and it's the ONLY auto-assignment that applies to advanced
+  // rounds at all — the specialist/team routing below deliberately skips
+  // 2nd round and up entirely (`isAdvancedRound(row.round)` guard), so
+  // without this, every follow-up round has always required a fully
+  // manual pick. Reads findPriorOccurrence()'s existing state.notifications
+  // scan (already warmed by the fire-and-forget scanForRepeatCandidates()
+  // call on app load) rather than a fresh cross-date fetch, so this stays
+  // synchronous like the rest of autoRouteRows() — if that scan hasn't
+  // completed yet (e.g. import happens within the first second of a page
+  // load), findPriorOccurrence() just returns null and this is a no-op,
+  // falling through to the routing below exactly as before this existed.
+  newRows.forEach(row=>{
+    if(row.woi || row.assignee || !row.candidate) return;
+    const prior = findPriorOccurrence(row);
+    if(!prior || !prior.assignee || teamNames.has(prior.assignee)) return;
+    if(!fuzzyCompanyKeyMatch(row.company, prior.company)) return;
+    row.assignee = prior.assignee;
+    if(row.doubts) row.doubts.push(`Carried forward: ${prior.assignee} handled this candidate’s ${prior.round||'earlier round'} at this company on ${prior.date} — double-check before assuming.`);
+  });
+
   function hasRoom(team, time){
     const size = team==='HYD Team' ? hydCount : (team==='Pradeep Anna Team' ? paCount : Infinity);
     return (occupied[team+'|'+time]||0) < size;
@@ -4938,6 +4970,102 @@ async function computeStuckPipeline(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
+// ---------- Final-round-no-closure nudge (2026-09-28) ---------- A narrower,
+// earlier-warning sibling to Stuck Pipeline above: that one catches ANY
+// candidate gone quiet 14+ days, regardless of round. This one is specific
+// to the highest-stakes case — someone whose MOST RECENT touchpoint was
+// already an advanced round (2nd+) and nothing's been recorded since,
+// meaning either a closure or a next step is overdue. An advanced round
+// should resolve far faster than a 1st round ever would, so this uses a
+// much shorter threshold than Stuck Pipeline's 14 days — 5 days is enough
+// to rule out normal turnaround (feedback, scheduling the next round,
+// paperwork) without waiting long enough that the candidate's gone cold.
+const FINAL_ROUND_NUDGE_MIN_DAYS = 5;
+async function computeFinalRoundNudges(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const todayKey = todayStr();
+  // Same "latest row per candidate" approach as Stuck Pipeline/Active
+  // Pipeline — what matters is where the candidate stands NOW, not every
+  // round they've ever had.
+  const byCandidate = {};
+  allRows.forEach(row=>{
+    const key = (row.candidate||'').trim().toLowerCase();
+    if(!key || row.woi) return;
+    const existing = byCandidate[key];
+    if(!existing || (row._date && row._date >= (existing._date||''))){
+      byCandidate[key] = row;
+    }
+  });
+  const closedCandidates = new Set((state.closures||[]).map(c=>(c.candidate||'').trim().toLowerCase()));
+  const daysBetween = (a,b)=>{
+    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(b+'T00:00:00Z').getTime();
+    return Math.max(0, Math.round((db-da)/86400000));
+  };
+  return Object.values(byCandidate)
+    .filter(row=>{
+      const key = (row.candidate||'').trim().toLowerCase();
+      if(closedCandidates.has(key)) return false;
+      if(row.status && STUCK_PIPELINE_EXCLUDE_STATUSES.includes(row.status)) return false;
+      if(!row._date || !isAdvancedRound(row.round)) return false;
+      return daysBetween(row._date, todayKey) >= FINAL_ROUND_NUDGE_MIN_DAYS;
+    })
+    .map(row=>({
+      candidate: row.candidate, company: row.company||'', round: row.round||'',
+      lastDate: row._date, daysSince: daysBetween(row._date, todayKey),
+      status: row.status||'', assignee: row.assignee||'',
+    }))
+    .sort((a,b)=> b.daysSince - a.daysSince);
+}
+// ---------- Active Pipeline view (2026-09-28) ---------- Right now "who's
+// actually in flight and where do they stand" only exists split across
+// several places: WOI Aging, Stuck Pipeline, the daily board, Closures.
+// Piecing together the whole book of business means opening all of them.
+// This is one view: every candidate who has a real touchpoint on file and
+// is NOT yet closed, grouped by their CURRENT stage (based on their single
+// most recent touchpoint, same "latest row per candidate" approach
+// computeStuckPipeline() already established) — Waiting for Invite, 1st
+// Round, 2nd Round & Above, or Rescheduled (needs rebooking). Cancelled and
+// Not Responded are deliberately excluded — those are terminal outcomes,
+// not "active." Sorted oldest-first within each stage, same convention as
+// WOI Aging/Stuck Pipeline, so whatever's gone longest without movement is
+// what you see first.
+const ACTIVE_PIPELINE_EXCLUDE_STATUSES = ['cancelled','not_responded'];
+async function computeActivePipeline(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const todayKey = todayStr();
+  const byCandidate = {};
+  allRows.forEach(row=>{
+    const key = (row.candidate||'').trim().toLowerCase();
+    if(!key) return;
+    const existing = byCandidate[key];
+    if(!existing || (row._date && row._date >= (existing._date||''))){
+      byCandidate[key] = row;
+    }
+  });
+  const closedCandidates = new Set((state.closures||[]).map(c=>(c.candidate||'').trim().toLowerCase()));
+  const daysBetween = (a,b)=>{
+    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(b+'T00:00:00Z').getTime();
+    return Math.max(0, Math.round((db-da)/86400000));
+  };
+  const stages = { woi: [], firstRound: [], advanced: [], rescheduled: [] };
+  Object.values(byCandidate).forEach(row=>{
+    const key = (row.candidate||'').trim().toLowerCase();
+    if(closedCandidates.has(key)) return;
+    if(row.status && ACTIVE_PIPELINE_EXCLUDE_STATUSES.includes(row.status)) return;
+    if(!row._date) return;
+    const entry = {
+      candidate: row.candidate, company: row.company||'', round: row.round||'',
+      lastDate: row._date, daysSince: daysBetween(row._date, todayKey),
+      assignee: row.assignee||'', status: row.status||'',
+    };
+    if(row.woi) stages.woi.push(entry);
+    else if(row.status === 'rescheduled') stages.rescheduled.push(entry);
+    else if(isAdvancedRound(row.round)) stages.advanced.push(entry);
+    else stages.firstRound.push(entry);
+  });
+  Object.values(stages).forEach(list => list.sort((a,b)=> b.daysSince - a.daysSince));
+  return stages;
+}
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
 // a JSON array of roster person IDs — this reads that same entry back for
@@ -5153,6 +5281,7 @@ function closeAllPanels(){
   state.showCompanyScorecard = false;
   state.showDataHealth = false;
   state.showDailyDigest = false;
+  state.showActivePipeline = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -5184,6 +5313,7 @@ function getActivePanelName(){
   if(state.showCompanyScorecard) return 'companyScorecard';
   if(state.showDataHealth) return 'dataHealth';
   if(state.showDailyDigest) return 'dailyDigest';
+  if(state.showActivePipeline) return 'activePipeline';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -5221,6 +5351,7 @@ function renderActivePanel(name){
   if(name === 'companyScorecard') return renderCompanyScorecardPanel();
   if(name === 'dataHealth') return renderDataHealthPanel();
   if(name === 'dailyDigest') return renderDailyDigestPanel();
+  if(name === 'activePipeline') return renderActivePipelinePanel();
   return '';
 }
 function panelTitle(name){
@@ -5235,7 +5366,8 @@ function panelTitle(name){
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
     companyScorecard: 'Company Scorecard',
     dataHealth: 'Data Health',
-    dailyDigest: "Today's Briefing"
+    dailyDigest: "Today's Briefing",
+    activePipeline: 'Active Pipeline'
   };
   return titles[name] || '';
 }
@@ -5252,25 +5384,28 @@ function panelTitle(name){
 // so a scan here also warms those tabs, and opening them afterward doesn't
 // re-fetch.
 function dataHealthIssueCount(){
-  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null) return null;
+  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null || state.finalRoundNudgeData === null) return null;
   return (state.closuresPerformance.unmatchedDetails.length || 0)
     + (state.closuresPerformance.noAssigneeCount || 0)
     + state.woiAgingData.length
     + state.stuckPipelineData.length
+    + state.finalRoundNudgeData.length
     + state.absentIds.length
     + computeConflicts(state.rows).size;
 }
 async function runDataHealthScan(){
   state.dataHealthLoading = true;
   render();
-  const [closuresPerf, woi, stuck] = await Promise.all([
+  const [closuresPerf, woi, stuck, finalRoundNudges] = await Promise.all([
     computeClosuresPerformance(true),
     scanWoiAging(true),
     computeStuckPipeline(true),
+    computeFinalRoundNudges(true),
   ]);
   state.closuresPerformance = closuresPerf;
   state.woiAgingData = woi;
   state.stuckPipelineData = stuck;
+  state.finalRoundNudgeData = finalRoundNudges;
   state.dataHealthLoading = false;
   state.dataHealthGeneratedAt = new Date().toISOString();
   render();
@@ -5293,6 +5428,8 @@ function buildDataHealthItems(){
       desc: 'Still marked "Waiting for Invite" — easy to lose track of once it scrolls off the day it was logged.', action:'notif:woiAging' },
     { icon:'🧊', label:'Gone quiet (14+ days)', count: stuck.length,
       desc: `Had a real call, then nothing for ${STUCK_PIPELINE_MIN_DAYS}+ days — no closure, no reschedule, no explicit outcome.`, action:'notif:stuckPipeline' },
+    { icon:'🎯', label:'Final round, no closure', count: state.finalRoundNudgeData.length,
+      desc: `Most recent round was already 2nd round or later, ${FINAL_ROUND_NUDGE_MIN_DAYS}+ days ago, with no closure recorded since.`, action:'notif:finalRoundNudge' },
     { icon:'🚫', label:'Absent today', count: state.absentIds.length,
       desc: "Marked absent on today's board.", action:'notif:absent' },
     { icon:'⚠️', label:'Scheduling conflicts today', count: conflictsCount,
@@ -5314,9 +5451,9 @@ function renderDataHealthPanel(){
   if(state.dataHealthLoading){
     return `<div class="hint">🔍 Scanning closures, WOI, and stalled candidates…</div>`;
   }
-  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null){
+  if(state.closuresPerformance === null || state.woiAgingData === null || state.stuckPipelineData === null || state.finalRoundNudgeData === null){
     return `
-      <div class="hint" style="margin-bottom:10px">One scan across everything that tends to get missed day to day: closures waiting on a manual match, closures with no one to credit, candidates waiting on an invite too long, candidates that have gone quiet, plus today's absences and conflicts.</div>
+      <div class="hint" style="margin-bottom:10px">One scan across everything that tends to get missed day to day: closures waiting on a manual match, closures with no one to credit, candidates waiting on an invite too long, candidates that have gone quiet, advanced rounds overdue for a closure, plus today's absences and conflicts.</div>
       <button class="btn primary" id="runDataHealthScan">🩺 Run Data Health scan</button>
     `;
   }
@@ -5343,7 +5480,7 @@ function renderDailyDigestPanel(){
   const all = state.rows;
   const conflictIds = computeConflicts(all);
   const sum = summarize(all, conflictIds);
-  const dataReady = state.closuresPerformance !== null && state.woiAgingData !== null && state.stuckPipelineData !== null;
+  const dataReady = state.closuresPerformance !== null && state.woiAgingData !== null && state.stuckPipelineData !== null && state.finalRoundNudgeData !== null;
   const items = dataReady ? buildDataHealthItems() : [];
   const totalIssues = items.reduce((s,it)=>s+(it.count||0), 0);
   return `
@@ -5364,6 +5501,57 @@ function renderDailyDigestPanel(){
     }
     ${dataReady ? `<div class="hint" style="margin-top:10px">Last scanned ${state.dataHealthGeneratedAt ? new Date(state.dataHealthGeneratedAt).toLocaleTimeString() : 'just now'}. <button class="btn ghost" id="runDataHealthScan" style="margin-left:6px">↻ Re-scan</button></div>` : ''}
   `;
+}
+function renderActivePipelineStageHtml(label, list, emptyNote){
+  if(!list.length) return `<div class="strip-title" style="margin-bottom:6px"><span>${label} <span class="n" style="background:var(--teal)">0</span></span></div><div class="hint" style="margin-bottom:14px">${emptyNote}</div>`;
+  const rowsHtml = list.map(e=>`
+    <div class="notif-row">
+      <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>${escapeHtml(e.candidate)}</span>
+        <span class="notif-warn">${e.daysSince}d since last touch</span>
+      </div>
+      <div class="notif-detail">
+        <span class="notif-chip">${escapeHtml(e.company||'no company')}</span>
+        <span class="notif-chip">${escapeHtml(e.round||'round n/a')}</span>
+        <span class="notif-chip">${escapeHtml(e.lastDate)}</span>
+        ${e.assignee?`<span class="notif-chip">${escapeHtml(e.assignee)}</span>`:''}
+      </div>
+    </div>
+  `).join('');
+  return `<div class="strip-title" style="margin-bottom:6px"><span>${label} <span class="n" style="background:var(--coral)">${list.length}</span></span></div>${rowsHtml}<div style="margin-bottom:14px"></div>`;
+}
+// ---------- Active Pipeline panel (2026-09-28) — see computeActivePipeline()
+// for why this exists: one screen for the whole in-flight book of business,
+// grouped by current stage, instead of piecing it together from WOI Aging,
+// Stuck Pipeline, and the daily board separately.
+function renderActivePipelinePanel(){
+  if(state.activePipelineLoading){
+    return `<div class="hint">🔍 Scanning every saved date…</div>`;
+  }
+  if(state.activePipelineData === null){
+    return `
+      <div class="hint" style="margin-bottom:10px">Every candidate who has a real touchpoint on file and isn't closed yet, grouped by their current stage — Waiting for Invite, 1st Round, 2nd Round &amp; Above, or Rescheduled (needs rebooking). Oldest-since-last-touch first in each group.</div>
+      <button class="btn primary" id="runActivePipelineScan">📈 Scan active pipeline</button>
+    `;
+  }
+  const d = state.activePipelineData;
+  const total = d.woi.length + d.firstRound.length + d.advanced.length + d.rescheduled.length;
+  return `
+    <div class="hint" style="margin-bottom:12px">${total} candidate(s) currently in flight.</div>
+    ${renderActivePipelineStageHtml('⏳ Waiting for Invite', d.woi, 'Nobody waiting on an invite right now.')}
+    ${renderActivePipelineStageHtml('1️⃣ 1st Round', d.firstRound, 'Nobody sitting at 1st round right now.')}
+    ${renderActivePipelineStageHtml('2️⃣ 2nd Round & Above', d.advanced, 'Nobody in an advanced round right now.')}
+    ${renderActivePipelineStageHtml('↻ Rescheduled — needs rebooking', d.rescheduled, 'Nothing sitting rescheduled without a new time.')}
+    <div class="hint" style="margin-top:4px">Last scanned ${state.activePipelineGeneratedAt ? new Date(state.activePipelineGeneratedAt).toLocaleTimeString() : 'just now'}. <button class="btn ghost" id="runActivePipelineScan" style="margin-left:6px">↻ Re-scan</button></div>
+  `;
+}
+async function runActivePipelineScan(){
+  state.activePipelineLoading = true;
+  render();
+  state.activePipelineData = await computeActivePipeline(true);
+  state.activePipelineLoading = false;
+  state.activePipelineGeneratedAt = new Date().toISOString();
+  render();
 }
 
 function render(){
@@ -5464,6 +5652,7 @@ function render(){
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
+            <button class="more-menu-item" id="toggleActivePipeline" title="Every in-flight candidate, grouped by current stage — the whole book of business in one screen">📈 Active Pipeline</button>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
@@ -6243,7 +6432,10 @@ function renderUniversalSearchPanel(){
       <div class="notif-row">
         <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <span>${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</span>
-          ${r.candidate ? `<button class="btn ghost" data-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px;flex-shrink:0">📋 Timeline</button>` : ''}
+          <span style="display:flex;gap:6px;flex-shrink:0">
+            ${r.candidate ? `<button class="btn ghost" data-view-timeline-closure="${escapeHtml(r.candidate)}" data-company="${escapeHtml(r.company||'')}" style="font-size:11px;padding:4px 10px">🏆 Closure</button>` : ''}
+            ${r.candidate ? `<button class="btn ghost" data-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px">📋 Timeline</button>` : ''}
+          </span>
         </div>
         <div class="notif-detail">
           <span class="notif-chip">${escapeHtml(r._date)}</span>
@@ -6306,7 +6498,10 @@ function renderQuickSearchModal(){
       <div class="notif-row">
         <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <span>${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</span>
-          ${r.candidate ? `<button class="btn ghost" data-quicksearch-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px;flex-shrink:0">📋 Timeline</button>` : ''}
+          <span style="display:flex;gap:6px;flex-shrink:0">
+            ${r.candidate ? `<button class="btn ghost" data-view-timeline-closure="${escapeHtml(r.candidate)}" data-company="${escapeHtml(r.company||'')}" style="font-size:11px;padding:4px 10px">🏆 Closure</button>` : ''}
+            ${r.candidate ? `<button class="btn ghost" data-quicksearch-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px">📋 Timeline</button>` : ''}
+          </span>
         </div>
         <div class="notif-detail">
           <span class="notif-chip">${escapeHtml(r._date)}${isToday?' (today)':''}</span>
@@ -6422,18 +6617,46 @@ function renderCandidateProfilePanel(){
       </div>
     </div>`;
   }).join('');
+  // Quick-add a closure right from the timeline (2026-09-28) — the whole
+  // point is that a closure shouldn't need a separate trip to Closures'
+  // paste-in import when you're already looking at the exact candidate and
+  // already know the company. Only offered when no closure exists yet
+  // (hasClosure) — once one's on file, this isn't the place to add another.
+  const lastCallCompany = data.calls.length ? data.calls[data.calls.length-1].company : '';
+  let closureFormHtml = '';
+  if(!hasClosure){
+    const form = state.candidateProfileClosureForm;
+    if(form){
+      closureFormHtml = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;background:var(--surface-2)">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">🏆 Record a closure for ${escapeHtml(state.candidateProfileName)}</div>
+          <label class="hint">Company</label>
+          <input class="cell-input" id="closureQuickAddCompany" value="${escapeHtml(form.company||'')}" style="width:100%;margin-bottom:8px">
+          <label class="hint">Salary (optional)</label>
+          <input class="cell-input" id="closureQuickAddSalary" value="${escapeHtml(form.salary||'')}" placeholder="e.g. $75,000 per annum" style="width:100%;margin-bottom:10px">
+          <div style="display:flex;gap:8px">
+            <button class="btn primary" id="closureQuickAddSave" ${state.candidateProfileClosureSaving?'disabled':''}>${state.candidateProfileClosureSaving?'Saving…':'Save closure'}</button>
+            <button class="btn ghost" id="closureQuickAddCancel" ${state.candidateProfileClosureSaving?'disabled':''}>Cancel</button>
+          </div>
+        </div>`;
+    } else {
+      closureFormHtml = `<button class="btn ghost" id="closureQuickAddOpen" style="margin-bottom:12px">🏆 Record closure</button>`;
+    }
+  }
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>, oldest first.</div>
     <div style="margin-bottom:12px">${summaryChips}</div>
+    ${closureFormHtml}
     ${eventsHtml}
   </div>`;
 }
-async function openCandidateProfile(name){
+async function openCandidateProfile(name, opts){
   closeAllPanels();
   state.showCandidateProfile = true;
   state.candidateProfileName = name;
   state.candidateProfileLoading = true;
   state.candidateProfileData = null;
+  state.candidateProfileClosureForm = null;
   render();
   try{
     state.candidateProfileData = await computeCandidateProfile(name, false);
@@ -6441,6 +6664,16 @@ async function openCandidateProfile(name){
     state.candidateProfileData = { name, calls: [], closures: [] };
   }
   state.candidateProfileLoading = false;
+  // Opened from a "🏆 Closure" shortcut elsewhere (Quick Search, Search
+  // Everywhere) — go straight to the pre-filled form instead of making the
+  // person find and click "Record closure" a second time.
+  if(opts && opts.openClosureForm){
+    const lastCall = state.candidateProfileData.calls.length ? state.candidateProfileData.calls[state.candidateProfileData.calls.length-1] : null;
+    state.candidateProfileClosureForm = {
+      company: (opts.company || (lastCall && lastCall.company) || ''),
+      salary: '',
+    };
+  }
   render();
 }
 // Company scorecard (2026-09-24, pipeline-visibility batch) — see
@@ -6741,6 +6974,7 @@ function renderNotificationsPanel(){
     { key:'weeklyRecap', label:'📈 Weekly Team Recap' },
     { key:'conversionFunnel', label:'🎯 Conversion Funnel' },
     { key:'stuckPipeline', label:'🧊 Stuck in Pipeline' },
+    { key:'finalRoundNudge', label:'🎯 Final Round, No Closure' },
     { key:'timeToClose', label:'⏱ Time to Close' }
   ];
   const active = state.notifTab || 'absent';
@@ -7107,6 +7341,36 @@ function renderNotificationsPanel(){
         <div class="row" style="margin-bottom:8px">
           <div class="hint">${state.stuckPipelineData.length} candidate(s) stalled ${STUCK_PIPELINE_MIN_DAYS}+ days, worst first.</div>
           <button class="btn ghost" id="runStuckPipelineScan">Re-scan</button>
+        </div>
+        ${rowsHtml}`;
+    }
+  } else if(active === 'finalRoundNudge'){
+    if(state.finalRoundNudgeLoading){
+      content = `<div class="hint"><span class="spinner"></span> Scanning advanced rounds for missing closures…</div>`;
+    } else if(state.finalRoundNudgeData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Finds candidates whose most recent touchpoint was already a 2nd round or later, with no closure recorded since — for ${FINAL_ROUND_NUDGE_MIN_DAYS}+ days. This is the same idea as 🧊 Stuck in Pipeline, but narrower and earlier: it only looks at advanced rounds (which should resolve fast) and fires much sooner.</div>
+        <button class="btn primary" id="runFinalRoundNudgeScan">🔍 Scan advanced rounds</button>`;
+    } else if(!state.finalRoundNudgeData.length){
+      content = `<div class="hint" style="color:var(--teal)">✅ No advanced-round candidate is overdue for a closure right now. <button class="btn ghost" id="runFinalRoundNudgeScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else {
+      const rowsHtml = state.finalRoundNudgeData.map(s=>{
+        const urgent = s.daysSince >= 10;
+        return `<div class="notif-row">
+          <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}</div>
+          <div class="notif-detail">
+            <span class="notif-chip" style="${urgent?'color:var(--coral);border-color:var(--coral)':'color:var(--amber);border-color:var(--amber)'}">${s.daysSince} days since last round, no closure</span>
+            <span class="notif-chip">${escapeHtml(s.round||'advanced round')} on ${escapeHtml(s.lastDate)}</span>
+            ${s.status?`<span class="notif-chip">last status: ${escapeHtml(statusBadgeInfo(s.status).label)}</span>`:''}
+            ${s.assignee?`<span class="notif-chip">${escapeHtml(s.assignee)}</span>`:''}
+            ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+          </div>
+        </div>`;
+      }).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.finalRoundNudgeData.length} candidate(s) overdue for a closure after their last round, worst first.</div>
+          <button class="btn ghost" id="runFinalRoundNudgeScan">Re-scan</button>
         </div>
         ${rowsHtml}`;
     }
@@ -9721,6 +9985,66 @@ function attachHandlers(conflictIds){
   document.querySelectorAll('[data-view-timeline]').forEach(btn=>{
     btn.onclick = ()=>{ openCandidateProfile(btn.dataset.viewTimeline); };
   });
+  // "🏆 Closure" shortcuts on a search result row — jumps straight to that
+  // candidate's Timeline with the quick-add closure form already open,
+  // instead of opening the Timeline first and then hunting for the button.
+  // Also closes the independent Quick Search overlay first, same reasoning
+  // as [data-quicksearch-view-timeline] below — opening the Timeline panel
+  // underneath doesn't automatically close that separate overlay.
+  document.querySelectorAll('[data-view-timeline-closure]').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.showQuickSearchModal = false;
+      openCandidateProfile(btn.dataset.viewTimelineClosure, { openClosureForm: true, company: btn.dataset.company||'' });
+    };
+  });
+  // ---------- Closure quick-add from Timeline (2026-09-28) ----------
+  const closureQuickAddOpenBtn = document.getElementById('closureQuickAddOpen');
+  if(closureQuickAddOpenBtn) closureQuickAddOpenBtn.onclick = ()=>{
+    const data = state.candidateProfileData;
+    const lastCall = (data && data.calls.length) ? data.calls[data.calls.length-1] : null;
+    state.candidateProfileClosureForm = { company: (lastCall && lastCall.company) || '', salary: '' };
+    render();
+    const input = document.getElementById('closureQuickAddCompany');
+    if(input) input.focus();
+  };
+  const closureQuickAddCancelBtn = document.getElementById('closureQuickAddCancel');
+  if(closureQuickAddCancelBtn) closureQuickAddCancelBtn.onclick = ()=>{
+    state.candidateProfileClosureForm = null;
+    render();
+  };
+  const closureQuickAddCompanyInput = document.getElementById('closureQuickAddCompany');
+  if(closureQuickAddCompanyInput) closureQuickAddCompanyInput.oninput = ()=>{
+    if(state.candidateProfileClosureForm) state.candidateProfileClosureForm.company = closureQuickAddCompanyInput.value;
+  };
+  const closureQuickAddSalaryInput = document.getElementById('closureQuickAddSalary');
+  if(closureQuickAddSalaryInput) closureQuickAddSalaryInput.oninput = ()=>{
+    if(state.candidateProfileClosureForm) state.candidateProfileClosureForm.salary = closureQuickAddSalaryInput.value;
+  };
+  const closureQuickAddSaveBtn = document.getElementById('closureQuickAddSave');
+  if(closureQuickAddSaveBtn) closureQuickAddSaveBtn.onclick = async ()=>{
+    const form = state.candidateProfileClosureForm;
+    if(!form) return;
+    const company = (form.company||'').trim();
+    if(!company){
+      alert('A company is needed to record the closure.');
+      return;
+    }
+    state.candidateProfileClosureSaving = true;
+    render();
+    try{
+      await saveNewClosures([{ candidate: state.candidateProfileName, company, salary: form.salary||'', raw: '' }]);
+      // Re-pull the timeline so the newly saved closure shows up in the
+      // merged event list immediately, same as any other cross-date refresh.
+      state.candidateProfileData = await computeCandidateProfile(state.candidateProfileName, true);
+      state.candidateProfileClosureForm = null;
+      state.candidateProfileClosureSaving = false;
+      render();
+    }catch(e){
+      state.candidateProfileClosureSaving = false;
+      render();
+      alert('Failed to save: ' + (e && e.message ? e.message : 'could not reach the server'));
+    }
+  };
   const toggleCompanyScorecardBtn = document.getElementById('toggleCompanyScorecard');
   if(toggleCompanyScorecardBtn) toggleCompanyScorecardBtn.onclick = ()=>{ openOnlyPanel('showCompanyScorecard'); render(); };
   const runCompanyScorecardBtn = document.getElementById('runCompanyScorecardBtn');
@@ -9794,6 +10118,14 @@ function attachHandlers(conflictIds){
     render();
     state.stuckPipelineData = await computeStuckPipeline(true);
     state.stuckPipelineLoading = false;
+    render();
+  };
+  const runFinalRoundNudgeBtn = document.getElementById('runFinalRoundNudgeScan');
+  if(runFinalRoundNudgeBtn) runFinalRoundNudgeBtn.onclick = async ()=>{
+    state.finalRoundNudgeLoading = true;
+    render();
+    state.finalRoundNudgeData = await computeFinalRoundNudges(true);
+    state.finalRoundNudgeLoading = false;
     render();
   };
   const runTimeToCloseBtn = document.getElementById('runTimeToCloseScan');
@@ -10821,7 +11153,7 @@ function attachHandlers(conflictIds){
     const wasOpen = state.showDataHealth;
     openOnlyPanel('showDataHealth');
     render();
-    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null)){
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null || state.finalRoundNudgeData===null)){
       runDataHealthScan();
     }
   };
@@ -10830,7 +11162,7 @@ function attachHandlers(conflictIds){
     const wasOpen = state.showDailyDigest;
     openOnlyPanel('showDailyDigest');
     render();
-    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null)){
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null || state.finalRoundNudgeData===null)){
       runDataHealthScan();
     }
   };
@@ -10839,7 +11171,7 @@ function attachHandlers(conflictIds){
     state.showDailyDigestBanner = false;
     openOnlyPanel('showDailyDigest');
     render();
-    if(state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null){
+    if(state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null || state.finalRoundNudgeData===null){
       runDataHealthScan();
     }
   };
@@ -10848,6 +11180,17 @@ function attachHandlers(conflictIds){
     state.showDailyDigestBanner = false;
     render();
   };
+  const toggleActivePipelineBtn = document.getElementById('toggleActivePipeline');
+  if(toggleActivePipelineBtn) toggleActivePipelineBtn.onclick = ()=>{
+    const wasOpen = state.showActivePipeline;
+    openOnlyPanel('showActivePipeline');
+    render();
+    if(!wasOpen && state.activePipelineData===null){
+      runActivePipelineScan();
+    }
+  };
+  const runActivePipelineScanBtn = document.getElementById('runActivePipelineScan');
+  if(runActivePipelineScanBtn) runActivePipelineScanBtn.onclick = runActivePipelineScan;
   const runDataHealthScanBtn = document.getElementById('runDataHealthScan');
   if(runDataHealthScanBtn) runDataHealthScanBtn.onclick = runDataHealthScan;
   document.querySelectorAll('[data-datahealth-open]').forEach(btn=>{
@@ -12044,7 +12387,17 @@ function findPriorOccurrence(row){
     !(o.date === state.date && o.time === row.time && o.round === row.round)
   );
   if(!prior.length) return null;
-  return prior[prior.length - 1]; // most recent prior occurrence
+  // Real bug, found and fixed 2026-09-28 while building carry-forward
+  // assignee on import (which depends on this returning the truly most
+  // recent prior touchpoint): entry.occurrences is sorted most-recent-first
+  // (see scanForRepeatCandidates()'s own sort), so the last element after
+  // filtering is the OLDEST remaining occurrence, not the most recent —
+  // this had been silently returning the oldest one, contradicting its own
+  // "most recent prior occurrence" comment (and the "Handled before" P
+  // badge's own tooltip wording) ever since it was written. Was low-stakes
+  // as a hint on a badge; it's load-bearing now that autoRouteRows() also
+  // uses it to decide who to actually assign a call to.
+  return prior[0];
 }
 
 // Specifically flags when this SAME candidate had a call marked
