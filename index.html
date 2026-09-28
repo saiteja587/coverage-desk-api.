@@ -1074,6 +1074,8 @@ let state = {
   incentiveAddingClosureKey: null,
   closureDeletingId: null,
   closureDeleteError: null,
+  noAssigneeApplyingId: null,
+  noAssigneeApplyError: null,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -4476,6 +4478,7 @@ async function computeClosuresPerformance(forceRefresh){
   let teamOnlyCount = 0;
   let noAssigneeCount = 0;
   const unmatchedDetails = [];
+  const noAssigneeDetails = [];
   (state.closures || []).forEach(c=>{
     if(!c.candidate || !c.company){ unmatchedCount++; return; }
     const found = findClosureMatchWithOverride(c, allRows);
@@ -4512,6 +4515,18 @@ async function computeClosuresPerformance(forceRefresh){
       // is a different situation from a still-unresolved one, so it gets
       // its own bucket and is no longer shown as needing a match.
       noAssigneeCount++;
+      // FIX (2026-09-29): "some calls gets after first round only" — a
+      // closure this recent almost always has real Portal sync data behind
+      // it (who the Portal shows as handling that exact call), but nothing
+      // in the app ever surfaced that here — the per-row 📡 badge only
+      // shows on whatever date is currently open on the board, and the
+      // auto-fill-on-sync only ever touches 1st Round calls on the CURRENT
+      // date too, so a closure pointing at a past date's row (any round)
+      // never got the benefit of either. Recorded here so the UI can offer
+      // a one-click "apply the Portal's driving person" action instead of
+      // making the person navigate to that exact historical date to fix it
+      // by hand.
+      noAssigneeDetails.push({ closure: c, match });
       return;
     }
     if(teamNames.has(handler)){ teamOnlyCount++; return; }
@@ -4528,7 +4543,7 @@ async function computeClosuresPerformance(forceRefresh){
   // filter across every call record on file, not just the up-to-8
   // pre-computed suggestions — a real record that didn't make the
   // suggestion shortlist is still just a search away instead of unreachable.
-  return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, allRowsSnapshot: allRows };
+  return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, allRowsSnapshot: allRows };
 }
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
@@ -7853,6 +7868,47 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
     ${rowsHtml}
   </div>`;
 }
+// "No handler credited" closures (2026-09-29): matched to a real call
+// record, but that record has neither a Driving Person nor an Assignee —
+// "some calls gets after first round only" made clear this isn't only an
+// advanced-round problem (where auto-fill is deliberately skipped
+// everywhere else in this app), it's also just calls on a PAST date that
+// never got a Sync run while that date happened to be open on the board,
+// since the Portal auto-fill only ever touches whatever's in state.rows
+// for the currently-viewed date. Cross-references state.portalAssignments
+// (from the last 📡 Team Sync) for the same candidate+company and, when
+// found, offers a one-click way to push that name into Driving Person on
+// the call's own date — without needing to navigate there by hand.
+function renderNoAssigneeClosuresHtml(noAssigneeDetails){
+  if(!noAssigneeDetails.length) return '';
+  const rowsHtml = noAssigneeDetails.map(({closure, match})=>{
+    const portalRow = (state.portalAssignments||[]).find(p =>
+      (p.candidate||'').trim().toLowerCase() === (match.candidate||'').trim().toLowerCase() &&
+      normalizeCompanyKey(p.client) === normalizeCompanyKey(match.company)
+    );
+    const portalHandler = portalRow && (portalRow.handler || portalRow.assignee);
+    const applying = state.noAssigneeApplyingId === closure.id;
+    let actionHtml;
+    if(portalHandler){
+      actionHtml = `<button class="btn ghost" data-apply-portal-driving="${closure.id}" data-apply-portal-name="${escapeHtml(portalHandler)}" data-apply-portal-date="${escapeHtml(match._date||'')}" data-apply-portal-callid="${escapeHtml(String(match.id))}" ${applying?'disabled':''} style="font-size:12px">${applying?'<span class="spinner"></span>Applying…':`📡 Apply "${escapeHtml(portalHandler)}" as Driving Person`}</button>`;
+    } else if(!state.portalAssignments || !state.portalAssignments.length){
+      actionHtml = `<span class="hint" style="font-size:11px">Run 📡 Team Sync → Full Sync to check whether the Portal shows who handled this one.</span>`;
+    } else {
+      actionHtml = `<span class="hint" style="font-size:11px">No Portal record found for this call either — set Driving Person manually on ${escapeHtml(match._date||'that date')}.</span>`;
+    }
+    return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="notif-name">${escapeHtml(closure.candidate)} <span class="notif-chip">${escapeHtml(closure.company)}</span></div>
+        ${actionHtml}
+      </div>
+      <div class="hint" style="margin-top:2px">Matched to a call on ${escapeHtml(match._date||'—')}${match.round?` (${escapeHtml(match.round)})`:''} — that record has no Driving Person or Assigned To set, so no one gets credit for this closure yet.</div>
+    </div>`;
+  }).join('');
+  return `<div style="margin-top:14px">
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">No handler credited</div>
+    ${rowsHtml}
+  </div>`;
+}
 function renderClosuresPanel(){
   const list = state.closures || [];
   const now = new Date();
@@ -7974,11 +8030,13 @@ function renderClosuresPanel(){
       if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
       perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
       perfHtml += renderUnmatchedClosuresHtml(perf.unmatchedDetails || []);
+      perfHtml += renderNoAssigneeClosuresHtml(perf.noAssigneeDetails || []);
     }
   }
   return `<div class="import-panel">
     ${renderClosureImportSection()}
     ${state.closureDeleteError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.closureDeleteError)}</div>` : ''}
+    ${state.noAssigneeApplyError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.noAssigneeApplyError)}</div>` : ''}
     <div class="summary" style="margin-bottom:14px">
       <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
       <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
@@ -9638,6 +9696,56 @@ function attachHandlers(conflictIds){
         state.closureDeleteError = (e && e.message) ? `Could not delete this closure: ${e.message}` : 'Could not delete this closure — try again.';
       }
       state.closureDeletingId = null;
+      render();
+    };
+  });
+
+  // "📡 Apply <name> as Driving Person" — see renderNoAssigneeClosuresHtml()
+  // above for the "some calls gets after first round only" report this
+  // answers. The call this closure matched is very likely on a PAST date,
+  // not today's board, so this saves straight to that date rather than
+  // requiring a navigate-there-first.
+  //
+  // IMPORTANT: the driving_person endpoint is a full-replace-for-the-date
+  // write (same delete-then-insert pattern as call_status/notes/roster) —
+  // it expects the COMPLETE current set of Driving Person values for that
+  // date, not just the one changed row. Sending only this one row would
+  // silently WIPE OUT every other Driving Person already saved for that
+  // date. So this always fetches that date's full row set first (or reuses
+  // state.rows when it happens to be today's own date already loaded) and
+  // sends the complete payload back with just this one row's value changed.
+  document.querySelectorAll('[data-apply-portal-driving]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const closureId = Number(btn.dataset.applyPortalDriving);
+      const name = btn.dataset.applyPortalName;
+      const date = btn.dataset.applyPortalDate;
+      const callId = btn.dataset.applyPortalCallid;
+      if(!name || !date || !callId) return;
+      state.noAssigneeApplyingId = closureId;
+      state.noAssigneeApplyError = null;
+      render();
+      try{
+        let dateRows;
+        if(date === state.date){
+          dateRows = state.rows || [];
+        } else {
+          const data = await apiCall('calls', {qs:'date='+encodeURIComponent(date)});
+          dateRows = data.rows || [];
+        }
+        const payload = dateRows.map(r=>({
+          callId: r.id,
+          drivingPerson: String(r.id) === String(callId) ? name : (r.drivingPerson || ''),
+        }));
+        await apiCall('driving_person', {method:'POST', body:{date, rows: payload}});
+        if(date === state.date){
+          const localRow = (state.rows||[]).find(r=>String(r.id)===String(callId));
+          if(localRow) localRow.drivingPerson = name;
+        }
+        state.closuresPerformance = await computeClosuresPerformance(true);
+      }catch(e){
+        state.noAssigneeApplyError = (e && e.message) ? `Could not apply this: ${e.message}` : 'Could not apply this — try again.';
+      }
+      state.noAssigneeApplyingId = null;
       render();
     };
   });
