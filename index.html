@@ -7775,11 +7775,13 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
       // earlier in the session — a call added, edited, or a closure pasted
       // in since the last scan used to be silently invisible here.
       if(state.closureMatchRefreshing){
-        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;color:var(--teal)">🔗 Matching: ${escapeHtml(closure.candidate)} — ${escapeHtml(closure.company)}</div>
           <div class="hint"><span class="spinner"></span> Pulling the latest calls and closures before searching…</div>
         </div>`;
       } else if(!hasAnyRecords){
-        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;color:var(--teal)">🔗 Matching: ${escapeHtml(closure.candidate)} — ${escapeHtml(closure.company)}</div>
           <div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>
         </div>`;
       } else {
@@ -7817,7 +7819,8 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
         }
         else if(allFallback) hint = 'No obvious match by name or company — pick from the most recent calls on file, or search below:';
         else hint = 'Pick the call this closure actually belongs to, or search below:';
-        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;color:var(--teal)">🔗 Matching: ${escapeHtml(closure.candidate)} — ${escapeHtml(closure.company)}</div>
           ${state.closureMatchError ? `<div class="hint" style="color:var(--coral);margin-bottom:8px">⚠ ${escapeHtml(state.closureMatchError)}</div>` : ''}
           <input type="text" id="closureMatchSearch-${closure.id}" class="closure-match-search-input" data-closure-match-search="${closure.id}" placeholder="🔎 Search by candidate or company name…" value="${escapeHtml(state.closureMatchSearch||'')}" style="width:100%;margin-bottom:8px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-soft);background:var(--surface);color:inherit">
           <div class="hint" style="margin-bottom:6px">${hint}</div>
