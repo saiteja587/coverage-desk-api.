@@ -1058,6 +1058,7 @@ let state = {
   dataHealthLoading: false,
   dataHealthGeneratedAt: null,
   showDailyDigest: false,
+  showDailyDigestBanner: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -5487,6 +5488,13 @@ function render(){
         <button class="arrow-btn" id="toggleThemeBtn" title="${state.theme==='light' ? 'Switch to dark mode' : 'Switch to light mode'}">${state.theme==='light' ? '🌙' : '☀️'}</button>
       </div>
     </div>
+    ${state.showDailyDigestBanner ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>📋 Today's Briefing is ready — today's numbers plus anything that needs a look, in one glance.</span>
+      <span style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn ghost" id="openDailyDigestBannerBtn" style="color:var(--teal);border-color:#1F4A43">View briefing →</button>
+        <button class="btn ghost" id="dismissDailyDigestBannerBtn">Dismiss</button>
+      </span>
+    </div>` : ''}
     ${state.loadError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>⚠ Couldn't load today's data: ${escapeHtml(state.loadError)}</span>
       <button class="btn ghost" id="retryLoadBtn">↻ Retry</button>
@@ -10723,6 +10731,20 @@ function attachHandlers(conflictIds){
       runDataHealthScan();
     }
   };
+  const openDailyDigestBannerBtn = document.getElementById('openDailyDigestBannerBtn');
+  if(openDailyDigestBannerBtn) openDailyDigestBannerBtn.onclick = ()=>{
+    state.showDailyDigestBanner = false;
+    openOnlyPanel('showDailyDigest');
+    render();
+    if(state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null){
+      runDataHealthScan();
+    }
+  };
+  const dismissDailyDigestBannerBtn = document.getElementById('dismissDailyDigestBannerBtn');
+  if(dismissDailyDigestBannerBtn) dismissDailyDigestBannerBtn.onclick = ()=>{
+    state.showDailyDigestBanner = false;
+    render();
+  };
   const runDataHealthScanBtn = document.getElementById('runDataHealthScan');
   if(runDataHealthScanBtn) runDataHealthScanBtn.onclick = runDataHealthScan;
   document.querySelectorAll('[data-datahealth-open]').forEach(btn=>{
@@ -11765,6 +11787,32 @@ async function startApp(){
   // Demo/seed data disabled — see note at the other call sites.
   // await maybeSeedMaster(); await maybeSeedAug11(); await maybeSeedAug12(); await maybeSeedAug13();
   render();
+  // Surfaces a "Today's Briefing is ready" banner once per day, the first
+  // time the app is loaded that day — added 2026-09-28. Deliberately a
+  // BANNER, not auto-opening the panel itself: an earlier version of this
+  // auto-opened 📋 Today's Briefing directly on load, which replaced the
+  // home screen's row list — breaking the immediate "swipe to assign" /
+  // "add a call" flows the home screen exists for (caught by the mobile
+  // regression suite crashing on a swipe gesture with no row on screen to
+  // swipe). A banner is informative without being in the way, matching the
+  // existing lastImportedIds/lastReschedItems banner pattern elsewhere.
+  // Deliberately does NOT eagerly run the cross-date Data Health scan here
+  // either — an earlier version did, and that raced with whatever the
+  // Closures/Notifications panels compute on their own (both write into the
+  // same state.closuresPerformance/woiAgingData/stuckPipelineData slots),
+  // so whichever finished last silently won. The scan only ever runs when
+  // something on screen actually asks for it (Data Health, the digest
+  // panel, or the individual tabs), same as before this feature existed.
+  // Tracked in localStorage (single-user app, so a per-device flag is
+  // enough — no shared/backend flag every coordinator would collide on).
+  try{
+    const seenKey = 'cd_daily_briefing_shown_date';
+    if(localStorage.getItem(seenKey) !== state.date){
+      state.showDailyDigestBanner = true;
+      localStorage.setItem(seenKey, state.date);
+      render();
+    }
+  }catch(e){ /* localStorage unavailable (private mode, etc.) — just skip the banner */ }
   // PWA home-screen shortcuts (long-press the installed app icon) land
   // here with an ?action= param — handled once, right after the first
   // real render so there's actual data/state to act on, then the URL is
