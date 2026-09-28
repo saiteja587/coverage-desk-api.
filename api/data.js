@@ -873,6 +873,22 @@ async function handleClosures(req, res, db) {
     return res.status(200).json({ rows });
   }
   if (req.method === 'POST') {
+    // Delete — a closure entered by mistake (wrong candidate, duplicate
+    // paste-in, test data) needs to be removable, even though the normal
+    // path (a real offer/placement) is append-only by design (see the file
+    // comment above). Uses the same {action:'delete', id} shape as
+    // handleUsers below rather than a real HTTP DELETE, since this API's
+    // CORS policy only allows GET/POST. Also clears any manual-match
+    // pointer for that closure (closure_manual_matches has no FK/cascade of
+    // its own) so a later closure reusing the same id can't inherit a
+    // stale routing row that was never meant for it.
+    if (req.body && req.body.action === 'delete') {
+      const id = Number(req.body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      await db.query('DELETE FROM closures WHERE id = ?', [id]);
+      await db.query('DELETE FROM closure_manual_matches WHERE closure_id = ?', [id]);
+      return res.status(200).json({ ok: true });
+    }
     const { rows } = req.body;
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows[] required' });
     const recordedBy = req.headers['x-username'] || 'admin'; // 'admin' when using the shared master password, which has no per-account username
