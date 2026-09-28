@@ -1072,6 +1072,8 @@ let state = {
   closureMatchRefreshing: false,
   incentivesExpandedHandler: null,
   incentiveAddingClosureKey: null,
+  closureDeletingId: null,
+  closureDeleteError: null,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -7903,12 +7905,23 @@ function renderClosuresPanel(){
         ).join('\n');
         roundsCell = `<span class="notif-warn" style="color:var(--teal);cursor:default;border-bottom:1px dotted currentColor" title="${escapeHtml(tooltip)}">${timeline.length} round${timeline.length===1?'':'s'}</span>`;
       }
+      // Delete (admin-only, requested 2026-09-28) — a closure entered by
+      // mistake (wrong candidate, duplicate paste-in) needs a way out, even
+      // though the normal path is append-only by design. A native confirm()
+      // guards it (same lightweight pattern used elsewhere in this app for
+      // destructive actions) rather than a second custom "are you sure"
+      // panel — this is a rare, deliberate action, not a frequent one.
+      const deleting = state.closureDeletingId === c.id;
+      const deleteCell = CURRENT_ROLE === 'admin' ? `<td>
+        <button class="btn ghost" data-delete-closure="${c.id}" data-delete-closure-candidate="${escapeHtml(c.candidate)}" ${deleting?'disabled':''} title="Delete this closure — for a mistaken entry, not a real outcome you want to undo" style="font-size:11px;padding:3px 8px;color:var(--coral)">${deleting?'<span class="spinner"></span>':'🗑'}</button>
+      </td>` : '';
       return `<tr>
         <td>${escapeHtml(c.candidate)}</td>
         <td>${escapeHtml(c.company)}</td>
         <td>${escapeHtml(c.salary||'—')}</td>
         <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
         <td>${roundsCell}</td>
+        ${deleteCell}
       </tr>`;
     }).join('');
     return `<div style="margin-bottom:16px">
@@ -7918,7 +7931,7 @@ function renderClosuresPanel(){
       </div>
       <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
         <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase">
-          <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th><th style="padding:6px 8px">Rounds</th>
+          <th style="padding:6px 8px">Candidate</th><th style="padding:6px 8px">Company</th><th style="padding:6px 8px">Salary</th><th style="padding:6px 8px">Recorded</th><th style="padding:6px 8px">Rounds</th>${CURRENT_ROLE==='admin'?'<th style="padding:6px 8px"></th>':''}
         </tr></thead>
         <tbody style="font-size:13px">${rowsHtml}</tbody>
       </table></div>
@@ -7965,6 +7978,7 @@ function renderClosuresPanel(){
   }
   return `<div class="import-panel">
     ${renderClosureImportSection()}
+    ${state.closureDeleteError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.closureDeleteError)}</div>` : ''}
     <div class="summary" style="margin-bottom:14px">
       <div class="cell total"><div class="num">${thisMonthCount}</div><div class="lbl">Closures in ${escapeHtml(monthLabel)}</div></div>
       <div class="cell assigned"><div class="num">${list.length}</div><div class="lbl">All-time total</div></div>
@@ -9596,6 +9610,34 @@ function attachHandlers(conflictIds){
       }catch(e){
         state.companyAliasError = (e && e.message) ? e.message : 'Could not save this alias — try again.';
       }
+      render();
+    };
+  });
+
+  // Delete a closure (admin-only, requested 2026-09-28) — "add delete
+  // option in closures area". A native confirm() guards it since this is a
+  // rare, deliberate, hard-to-undo action (see the backend comment on
+  // handleClosures for why closures are normally append-only). Removes it
+  // from state locally on success rather than re-fetching the whole list,
+  // and force-refreshes closuresPerformance if the By Handler view has
+  // already computed it, so a deleted closure's credit disappears from
+  // that view immediately instead of lingering until the next scan.
+  document.querySelectorAll('[data-delete-closure]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = Number(btn.dataset.deleteClosure);
+      const candidate = btn.dataset.deleteClosureCandidate || 'this closure';
+      if(!confirm(`Delete the closure for "${candidate}"? This is for a mistaken entry (wrong name, duplicate paste-in) — a real placement shouldn't normally be deleted. This can't be undone.`)) return;
+      state.closureDeletingId = id;
+      state.closureDeleteError = null;
+      render();
+      try{
+        await apiCall('closures', {method:'POST', body:{action:'delete', id}});
+        state.closures = (state.closures||[]).filter(c=>c.id !== id);
+        if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
+      }catch(e){
+        state.closureDeleteError = (e && e.message) ? `Could not delete this closure: ${e.message}` : 'Could not delete this closure — try again.';
+      }
+      state.closureDeletingId = null;
       render();
     };
   });
