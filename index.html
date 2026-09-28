@@ -659,6 +659,7 @@ tbody tr[data-id]{touch-action:pan-y;}
 
 .my-name-picker-overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;}
 .my-name-picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:18px 16px 22px;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;box-shadow:var(--shadow-md);}
+.quick-search-card{max-width:640px;max-height:80vh;}
 .my-name-picker-title{font-family:var(--display);font-weight:700;font-size:17px;margin-bottom:4px;}
 .my-name-picker-sub{color:var(--text-muted);font-size:12.5px;margin-bottom:14px;}
 .my-name-picker-list{display:flex;flex-direction:column;gap:2px;}
@@ -1059,6 +1060,7 @@ let state = {
   dataHealthGeneratedAt: null,
   showDailyDigest: false,
   showDailyDigestBanner: false,
+  showQuickSearchModal: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -5457,6 +5459,7 @@ function render(){
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
         ${(()=>{ const c = dataHealthIssueCount(); return `<button class="btn ${state.showDataHealth?'active':''} ${c>0?'notif-alert':''}" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="n">${c}</span>` : ''}</button>`; })()}
+        <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
         <div class="more-menu-wrap">
           <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
@@ -5632,6 +5635,7 @@ function render(){
       </div>
     </div>`;
     })() : ''}
+    ${state.showQuickSearchModal ? renderQuickSearchModal() : ''}
   `;
 
   attachHandlers(conflictIds);
@@ -6201,6 +6205,30 @@ function renderConflictsPanel(){
 // substring match on all three fields rather than fuzzy normalization —
 // simpler to reason about for a "search everything" box, and the other two
 // panels remain available for their more specific fuzzy-matching behavior.
+// Shared by the full 🔎 Search Everywhere panel and the 🔍 Quick Search
+// modal below — both need the exact same search-across-every-date logic
+// against the exact same state fields, so a person can start typing in
+// one and see the identical result if they open the other.
+async function executeUniversalSearch(query){
+  const q = (query||'').trim();
+  state.universalSearchQuery = q;
+  if(!q){ state.universalSearchResults = []; render(); return; }
+  state.universalSearchLoading = true;
+  render();
+  const allRows = await fetchAllRowsAcrossDates(true);
+  let results;
+  if(state.universalSearchCompanyOnly){
+    const qKey = normalizeCompanyKey(q);
+    results = allRows.filter(r => r.company && normalizeCompanyKey(r.company).includes(qKey));
+  } else {
+    const qLower = q.toLowerCase();
+    results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.assignee||'').toLowerCase().includes(qLower));
+  }
+  results.sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
+  state.universalSearchResults = results;
+  state.universalSearchLoading = false;
+  render();
+}
 function renderUniversalSearchPanel(){
   const q = (state.universalSearchQuery||'').trim();
   let body;
@@ -6242,6 +6270,102 @@ function renderUniversalSearchPanel(){
     </label>
     ${body}
   </div>`;
+}
+// ---------- Quick Search modal (2026-09-28) ---------- Saiteja's report:
+// checking a candidate's round history currently means leaving whatever
+// page he's on (🔎 Search Everywhere replaces the whole screen, same as
+// every other panel), searching, then navigating back to find and assign
+// the call he actually came from — losing his place every single time.
+// This is a genuine floating overlay instead — same pattern as the
+// existing swipe-assign picker (.my-name-picker-overlay) below, which
+// already proved out "shows on top of whatever's on screen, closes back to
+// exactly where you were, no navigation" for that picker. Deliberately
+// shares state.universalSearchQuery/Results/Loading with the full panel
+// above (via the shared executeUniversalSearch()) rather than keeping its
+// own copy, so searching in one place is reflected in the other too.
+// Today's matches get a real inline "Assigned to" dropdown, wired through
+// the exact same delegated change handler every other assignee dropdown
+// uses (see the `data-quicksearch-id` case in handleFieldEvent below) — so
+// picking a name here is a real, saved assignment, not a preview. A match
+// from a different date can't be safely edited from here (that date's rows
+// aren't loaded into state), so it gets a "Go to that date" jump instead —
+// still one click, still from inside the same search, never a dead end.
+function renderQuickSearchModal(){
+  const q = (state.universalSearchQuery||'').trim();
+  let body;
+  if(state.universalSearchLoading){
+    body = `<div class="hint">Searching every saved date…</div>`;
+  } else if(state.universalSearchResults === null){
+    body = `<div class="hint">Type a candidate, company, or assignee — checks every date you've ever saved. A match on today's board can be assigned right here.</div>`;
+  } else if(state.universalSearchResults.length === 0){
+    body = `<div class="hint">No calls found matching "${escapeHtml(q)}".</div>`;
+  } else {
+    const rowsHtml = state.universalSearchResults.map(r=>{
+      const isToday = r._date === state.date;
+      return `
+      <div class="notif-row">
+        <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>${escapeHtml(r.candidate||'Candidate')}${r.status?` <span class="notif-warn" style="color:${statusBadgeInfo(r.status).colorVar}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).label}</span>`:''}</span>
+          ${r.candidate ? `<button class="btn ghost" data-quicksearch-view-timeline="${escapeHtml(r.candidate)}" style="font-size:11px;padding:4px 10px;flex-shrink:0">📋 Timeline</button>` : ''}
+        </div>
+        <div class="notif-detail">
+          <span class="notif-chip">${escapeHtml(r._date)}${isToday?' (today)':''}</span>
+          <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
+          <span class="notif-chip">${escapeHtml(r.company||'no company')}</span>
+          <span class="notif-chip">${escapeHtml(r.round||'round n/a')}</span>
+          ${(!isToday && r.assignee) ? `<span class="notif-chip">${escapeHtml(r.assignee)}</span>` : ''}
+        </div>
+        <div style="margin-top:6px">
+          ${isToday
+            ? `<div data-quicksearch-id="${escapeHtml(r.id)}">
+                 <select class="cell-input ${(!r.assignee && !r.woi)?'empty':''}" data-field="assignee" ${r.woi?'disabled':''} style="width:100%">
+                   <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
+                   ${buildRosterOptions(r.round, r.assignee)}
+                 </select>
+               </div>`
+            : `<button class="btn ghost" data-jump-to-quick-search-date="${escapeHtml(r._date)}" style="font-size:11.5px;padding:5px 10px">📅 Go to ${escapeHtml(r._date)} to assign →</button>`
+          }
+        </div>
+      </div>
+    `;
+    }).join('');
+    const uniqueDates = new Set(state.universalSearchResults.map(r=>r._date)).size;
+    body = `<div class="hint" style="margin-bottom:10px">${state.universalSearchResults.length} call(s) across ${uniqueDates} date(s), most recent first.</div>${rowsHtml}`;
+  }
+  return `<div class="my-name-picker-overlay" id="quickSearchOverlay">
+    <div class="my-name-picker-card quick-search-card">
+      <div class="my-name-picker-title" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <span>🔍 Quick Search</span>
+        <button class="btn ghost" id="closeQuickSearchBtn" style="font-size:12px;padding:4px 10px;flex-shrink:0">✕ Close</button>
+      </div>
+      <div class="my-name-picker-sub">Search any date without leaving this page — a match on today's board can be assigned right here.</div>
+      <div class="add-row" style="margin:10px 0 8px">
+        <input type="text" id="quickSearchInput" placeholder="Candidate, company, or assignee…" value="${escapeHtml(state.universalSearchQuery||'')}" style="flex:1">
+        <button class="btn primary" id="runQuickSearchBtn">Search</button>
+      </div>
+      <div class="my-name-picker-list">${body}</div>
+    </div>
+  </div>`;
+}
+// Same dirty-check / date-switching sequence the date picker itself uses
+// (see the #datePicker onchange handler) — a standalone copy rather than a
+// shared refactor, so this new "jump from Quick Search" flow can't
+// accidentally change how the date picker/prev/next-day buttons behave.
+async function jumpToDateFromQuickSearch(dateStr){
+  if(state.dirty && !confirm('You have unsaved changes that will be lost if you switch dates without saving. Switch anyway?')){
+    return;
+  }
+  state.showQuickSearchModal = false;
+  state.date = dateStr;
+  state.dirty = false;
+  state.lastImportedIds = null;
+  state.dateSwitching = true;
+  render();
+  await loadDay(state.date);
+  state.dateSwitching = false;
+  render();
+  scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
+  scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
 }
 // Candidate profile timeline (2026-09-24, pipeline-visibility batch) — see
 // computeCandidateProfile() above for why this is an exact-name lookup,
@@ -9582,28 +9706,7 @@ function attachHandlers(conflictIds){
   const runUniversalSearchBtn = document.getElementById('runUniversalSearchBtn');
   if(runUniversalSearchBtn) runUniversalSearchBtn.onclick = async ()=>{
     const input = document.getElementById('universalSearchInput');
-    const q = input ? input.value.trim() : '';
-    state.universalSearchQuery = q;
-    if(!q){ state.universalSearchResults = []; render(); return; }
-    state.universalSearchLoading = true;
-    render();
-    const allRows = await fetchAllRowsAcrossDates(true);
-    let results;
-    if(state.universalSearchCompanyOnly){
-      // Client History Search's original behavior, folded in here as a mode
-      // (2026-09-24) rather than kept as a second, separate panel: fuzzy-
-      // normalized company matching only (normalizeCompanyKey), so slightly
-      // different spellings/punctuation of the same client name still match.
-      const qKey = normalizeCompanyKey(q);
-      results = allRows.filter(r => r.company && normalizeCompanyKey(r.company).includes(qKey));
-    } else {
-      const qLower = q.toLowerCase();
-      results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.assignee||'').toLowerCase().includes(qLower));
-    }
-    results.sort((a,b)=> b._date.localeCompare(a._date) || String(b.time||'').localeCompare(String(a.time||'')));
-    state.universalSearchResults = results;
-    state.universalSearchLoading = false;
-    render();
+    await executeUniversalSearch(input ? input.value : '');
   };
   const universalSearchCompanyOnlyToggle = document.getElementById('universalSearchCompanyOnlyToggle');
   if(universalSearchCompanyOnlyToggle) universalSearchCompanyOnlyToggle.onchange = (e)=>{
@@ -10763,6 +10866,56 @@ function attachHandlers(conflictIds){
     };
   });
 
+  // ---------- 🔍 Quick Search modal (2026-09-28) ----------
+  // Deliberately does NOT go through openOnlyPanel()/closeAllPanels() —
+  // it's a floating overlay independent of the panel system on purpose, so
+  // opening or closing it never disturbs whatever panel or board state was
+  // already on screen. See renderQuickSearchModal() for the full reasoning.
+  const toggleQuickSearchBtn = document.getElementById('toggleQuickSearch');
+  if(toggleQuickSearchBtn) toggleQuickSearchBtn.onclick = ()=>{
+    state.showQuickSearchModal = true;
+    render();
+    const input = document.getElementById('quickSearchInput');
+    if(input) input.focus();
+  };
+  const closeQuickSearchBtn = document.getElementById('closeQuickSearchBtn');
+  if(closeQuickSearchBtn) closeQuickSearchBtn.onclick = ()=>{
+    state.showQuickSearchModal = false;
+    render();
+  };
+  const quickSearchOverlay = document.getElementById('quickSearchOverlay');
+  if(quickSearchOverlay) quickSearchOverlay.onclick = (e)=>{
+    // Same "clicking the backdrop itself (not the card) closes it" pattern
+    // the swipe-assign picker overlay already uses.
+    if(e.target.id === 'quickSearchOverlay'){
+      state.showQuickSearchModal = false;
+      render();
+    }
+  };
+  const runQuickSearchBtn = document.getElementById('runQuickSearchBtn');
+  if(runQuickSearchBtn) runQuickSearchBtn.onclick = async ()=>{
+    const input = document.getElementById('quickSearchInput');
+    await executeUniversalSearch(input ? input.value : '');
+    const inputAgain = document.getElementById('quickSearchInput');
+    if(inputAgain) inputAgain.focus();
+  };
+  const quickSearchInput = document.getElementById('quickSearchInput');
+  if(quickSearchInput) quickSearchInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('runQuickSearchBtn').click(); }
+  });
+  document.querySelectorAll('[data-jump-to-quick-search-date]').forEach(btn=>{
+    btn.onclick = ()=>{ jumpToDateFromQuickSearch(btn.dataset.jumpToQuickSearchDate); };
+  });
+  // A distinct attribute from the full panel's own [data-view-timeline] —
+  // opening the Candidate Profile panel underneath doesn't automatically
+  // close this independent overlay, so this closes it first.
+  document.querySelectorAll('[data-quicksearch-view-timeline]').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.showQuickSearchModal = false;
+      openCandidateProfile(btn.dataset.quicksearchViewTimeline);
+    };
+  });
+
   const addRosterBtn = document.getElementById('addRosterBtn');
   const teamSelect = document.getElementById('newRosterTeam');
   if(teamSelect) teamSelect.onchange = ()=>{
@@ -11038,9 +11191,19 @@ function attachHandlers(conflictIds){
       // doesn't re-run this a second time right after its own 'input'.
       const expectedEvt = (input.tagName==='SELECT' || input.type==='checkbox' || field==='time') ? 'change' : 'input';
       if(e.type !== expectedEvt) return;
-      const tr = input.closest('tr[data-id]');
+      // Also matches `[data-quicksearch-id]` (2026-09-28) — the 🔍 Quick
+      // Search modal's inline "Assigned to" dropdown is wrapped in a plain
+      // `<div data-quicksearch-id="...">` (not a `<tr>` — a bare `<tr>`
+      // outside a `<table>` gets silently dropped by the HTML parser), so it
+      // can reuse this exact same save path instead of a copy of the
+      // assignee-saving logic. Deliberately a NEW, distinct attribute rather
+      // than widening this to a bare `[data-id]` — some unrelated inputs
+      // elsewhere (e.g. Students Master's own fields) carry a `data-id` of
+      // their own for a completely different purpose, and would have
+      // wrongly started matching here too.
+      const tr = input.closest('tr[data-id]') || input.closest('[data-quicksearch-id]');
       if(!tr) return;
-      const id = tr.dataset.id;
+      const id = tr.dataset.id || tr.dataset.quicksearchId;
       const row = state.rows.find(r=>r.id===id);
       if(!row) return;
       if(field==='woi'){
@@ -11065,8 +11228,11 @@ function attachHandlers(conflictIds){
         render();
         // Fast sequential assigning: after picking someone, jump straight to
         // the next still-unassigned row's dropdown instead of requiring a
-        // manual click each time.
-        if(field==='assignee' && input.value){
+        // manual click each time. Skipped for the 🔍 Quick Search modal's
+        // own dropdown (input.closest('tr') is null there, since it's a
+        // plain div, not a table row) — auto-focusing some other, hidden
+        // row underneath the still-open modal would just be confusing.
+        if(field==='assignee' && input.value && input.closest('tr')){
           const selects = Array.from(document.querySelectorAll('select[data-field="assignee"]'));
           const currentIdx = selects.findIndex(s => s.closest('tr') && s.closest('tr').dataset.id === id);
           for(let i = currentIdx+1; i < selects.length; i++){
