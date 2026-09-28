@@ -4307,6 +4307,23 @@ function findClosureMatchWithOverride(closure, allRows){
     const overrideCompKey = normalizeCompanyKey(override.company);
     const row = allRows.find(r => (r.candidate||'').trim().toLowerCase() === overrideCandKey && normalizeCompanyKey(r.company) === overrideCompKey);
     if(row) return { row, matchType: 'manual' };
+    // FIX (2026-09-28): a manual match confirmed against a Portal-only
+    // record (see getClosureMatchCandidateList()) has no Coverage Desk row
+    // to find here — the saved override still only ever stores the plain
+    // candidate/company spelling (no schema change needed), so it's
+    // resolved live against state.portalAssignments the same way, instead
+    // of needing its own separate storage. Re-derived fresh every time
+    // rather than frozen at save-time, same reasoning as the staleness fix
+    // above — if a later, better sync updates who the Portal shows as the
+    // handler, this picks that up automatically.
+    const portalRow = (state.portalAssignments||[]).find(p => (p.candidate||'').trim().toLowerCase() === overrideCandKey && normalizeCompanyKey(p.client) === overrideCompKey);
+    if(portalRow){
+      return { row: {
+        candidate: portalRow.candidate, company: portalRow.client||'',
+        assignee: portalRow.handler||portalRow.assignee||'', drivingPerson: '',
+        _date: portalRow.dateKey||'', time: portalRow.time||'', _portalOnly: true,
+      }, matchType: 'manualPortal' };
+    }
   }
   return findClosureMatch(closure.candidate, closure.company, allRows);
 }
@@ -4380,12 +4397,33 @@ function getClosureMatchCandidateList(closureId){
     // Same-candidate matches now always sort first, and every option is
     // tagged so a same-company-but-different-person result can't be
     // mistaken for the person being searched for.
-    const list = allRows
+    const coverageDeskList = allRows
       .filter(r=>r.candidate && (r.candidate.toLowerCase().includes(q) || (r.company||'').toLowerCase().includes(q)))
-      .map(r=>({ ...r, _sameCandidate: closureCandKey && r.candidate.trim().toLowerCase() === closureCandKey }))
+      .map(r=>({ ...r, _sameCandidate: closureCandKey && r.candidate.trim().toLowerCase() === closureCandKey }));
+    // FIX (2026-09-28): "take portal data here if we not found proper
+    // record in coverage desk" — sometimes the real call was never entered
+    // into Coverage Desk's own board at all (or predates it), but it DOES
+    // exist in the separate Interview Portal system that gets synced in via
+    // 📡 Team Sync. Once a sync has been run this session (state.
+    // portalAssignments), those records are searched too, as a genuinely
+    // separate, clearly-labeled source — never silently merged with real
+    // Coverage Desk rows, since a Portal-only record has no Coverage Desk
+    // row backing it (see findClosureMatchWithOverride() for how picking
+    // one of these still gets credited correctly).
+    const cdKeys = new Set(coverageDeskList.map(r => r.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(r.company)));
+    const portalList = (state.portalAssignments||[])
+      .filter(p => p.candidate && ((p.candidate||'').toLowerCase().includes(q) || (p.client||'').toLowerCase().includes(q)))
+      .map(p => ({
+        candidate: p.candidate, company: p.client||'', assignee: p.handler||p.assignee||'',
+        _date: p.dateKey||'', time: p.time||'',
+        _sameCandidate: closureCandKey && p.candidate.trim().toLowerCase() === closureCandKey,
+        _portalOnly: true,
+      }))
+      .filter(p => !cdKeys.has(p.candidate.trim().toLowerCase() + '|' + normalizeCompanyKey(p.company))); // already found as a real Coverage Desk row — don't show it twice
+    const list = coverageDeskList.concat(portalList)
       .sort((a,b)=> (b._sameCandidate - a._sameCandidate) || (b._date||'').localeCompare(a._date||''))
       .slice(0, 30);
-    return { list, searching: true };
+    return { list, searching: true, portalSearched: !!(state.portalAssignments && state.portalAssignments.length) };
   }
   return { list: detail.suggestions || [], searching: false };
 }
@@ -7750,7 +7788,7 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
         // search box (getClosureMatchCandidateList()) now lets the person
         // search EVERY call record on file by candidate or company name,
         // not just the suggested handful.
-        const { list, searching } = getClosureMatchCandidateList(closure.id);
+        const { list, searching, portalSearched } = getClosureMatchCandidateList(closure.id);
         // FIX (2026-09-27): reported case — searching by company text
         // ("your golf" for "Your Golf Travel") surfaced another candidate's
         // call (Srirama Dasu) for a closure that was actually Reshma
@@ -7761,11 +7799,20 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
         const closureCandKey = (closure.candidate||'').trim().toLowerCase();
         const options = list.map((r,i)=>{
           const differentCandidate = closureCandKey && r.candidate.trim().toLowerCase() !== closureCandKey;
-          return `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}${differentCandidate?' ⚠ different candidate':''}</option>`;
+          return `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}${differentCandidate?' ⚠ different candidate':''}${r._portalOnly?' 📡 Portal only (no Coverage Desk record)':''}</option>`;
         }).join('');
         const allFallback = !searching && list.length > 0 && list.every(r=>r._fallback);
         let hint;
-        if(searching) hint = list.length ? 'Search results:' : 'No calls on file match that search — try a different spelling.';
+        // FIX (2026-09-28): "take portal data here if we not found proper
+        // record in coverage desk" — the search now also checks the
+        // separately-synced Interview Portal data (state.portalAssignments)
+        // once a sync has been run this session, for the case where a real
+        // call was never entered into Coverage Desk's own board at all.
+        // Portal-only results are always clearly labeled in the option text
+        // itself (never silently blended with a real Coverage Desk record).
+        if(searching){
+          hint = list.length ? 'Search results (Coverage Desk, plus Portal-synced history where marked):' : (portalSearched ? 'No calls on file — Coverage Desk or Portal — match that search. Try a different spelling.' : 'No calls on file match that search. Portal history hasn\'t been synced this session yet — run 📡 Team Sync → Full Sync to also search Portal records, then search again.');
+        }
         else if(allFallback) hint = 'No obvious match by name or company — pick from the most recent calls on file, or search below:';
         else hint = 'Pick the call this closure actually belongs to, or search below:';
         pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
