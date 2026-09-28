@@ -1069,6 +1069,7 @@ let state = {
   finalRoundNudgeLoading: false,
   candidateProfileClosureForm: null,
   candidateProfileClosureSaving: false,
+  closureMatchRefreshing: false,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -7726,7 +7727,18 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
       </div>` : '';
     let pickerHtml = '';
     if(isOpen){
-      if(!hasAnyRecords){
+      // FIX (2026-09-28): "that particular name and record is not coming" /
+      // "still it is not loading" — the whole point of opening this picker
+      // is to find a record against the CURRENT state of the board, so it
+      // force-refreshes on open (see [data-open-closure-match] below) rather
+      // than searching whatever snapshot happened to be sitting around from
+      // earlier in the session — a call added, edited, or a closure pasted
+      // in since the last scan used to be silently invisible here.
+      if(state.closureMatchRefreshing){
+        pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
+          <div class="hint"><span class="spinner"></span> Pulling the latest calls and closures before searching…</div>
+        </div>`;
+      } else if(!hasAnyRecords){
         pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px">
           <div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>
         </div>`;
@@ -9712,7 +9724,32 @@ function attachHandlers(conflictIds){
   // unmatched closures in the By Handler view — see
   // renderUnmatchedClosuresHtml()/findClosureMatchSuggestions()).
   document.querySelectorAll('[data-open-closure-match]').forEach(btn=>{
-    btn.onclick = ()=>{ state.closureManualMatchPickerId = Number(btn.dataset.openClosureMatch); state.closureMatchError = null; state.closureMatchSearch = ''; render(); };
+    btn.onclick = async ()=>{
+      state.closureManualMatchPickerId = Number(btn.dataset.openClosureMatch);
+      state.closureMatchError = null;
+      state.closureMatchSearch = '';
+      // FIX (2026-09-28): "closure matching manually that particular name
+      // and record is not coming" / "...still it is not loading" — real
+      // root cause found: state.closuresPerformance (which the search box
+      // reads via allRowsSnapshot, and which unmatchedDetails itself comes
+      // from) is computed once per session — on first opening the By
+      // Handler tab, or a Data Health scan — and NOTHING refreshes it
+      // automatically after that. A call imported to today's board, an
+      // assignee filled in, or a new closure pasted in later the same
+      // session all left it silently stale — the exact "record I can
+      // clearly see on the board isn't showing up in the picker" shape
+      // being reported. Opening a "Match manually" picker is precisely the
+      // moment freshness matters most, so it now force-refreshes the whole
+      // thing right here (fresh cross-date fetch, not the cached one)
+      // before the person even starts typing.
+      state.closureMatchRefreshing = true;
+      render();
+      try{
+        state.closuresPerformance = await computeClosuresPerformance(true);
+      }catch(e){ /* keep whatever was already there — search still works, just as fresh as the last successful scan */ }
+      state.closureMatchRefreshing = false;
+      render();
+    };
   });
   document.querySelectorAll('[data-cancel-closure-match]').forEach(btn=>{
     btn.onclick = ()=>{ state.closureManualMatchPickerId = null; state.closureMatchError = null; state.closureMatchSearch = ''; render(); };
@@ -10036,6 +10073,11 @@ function attachHandlers(conflictIds){
       // Re-pull the timeline so the newly saved closure shows up in the
       // merged event list immediately, same as any other cross-date refresh.
       state.candidateProfileData = await computeCandidateProfile(state.candidateProfileName, true);
+      // Same staleness fix as the paste-in import and the manual-match
+      // picker (2026-09-28) — otherwise a closure saved from here would be
+      // invisible in the Closures panel's By Handler view until something
+      // else happened to trigger a re-scan.
+      if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
       state.candidateProfileClosureForm = null;
       state.candidateProfileClosureSaving = false;
       render();
@@ -11124,6 +11166,13 @@ function attachHandlers(conflictIds){
     render();
     try{
       await saveNewClosures(items);
+      // FIX (2026-09-28): a newly-pasted closure used to be invisible in
+      // the By Handler view (matched or unmatched) until the person
+      // happened to trigger a re-scan some other way — see the
+      // [data-open-closure-match] fix above for the full root-cause
+      // writeup. Refreshing here too means the closure just saved shows up
+      // right away, whether it auto-matches or needs a manual match.
+      if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
       state.closureApplying = false;
       state.closureReview = null;
       render();
