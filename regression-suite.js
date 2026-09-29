@@ -756,7 +756,9 @@ async function main() {
     out.reportsHasSummary = reportsItems.includes('toggleSummary');
     out.reportsHasAllDates = reportsItems.includes('toggleAllDates');
     out.reportsHasStudentsMaster = reportsItems.includes('toggleStudentsMaster');
-    out.reportsHasClientSearch = reportsItems.includes('toggleClientSearch');
+    // Client History Search was merged into Search Everywhere (2026-09-24) as
+    // a company-only fuzzy mode, rather than kept as a separate menu item.
+    out.reportsHasUniversalSearch = reportsItems.includes('toggleUniversalSearch');
     out.reportsHasTeamSync = reportsItems.includes('togglePortalSync');
     out.reportsHasLogout = reportsItems.includes('headerLogoutBtn');
     // Admin-only items must NOT have leaked into Reports.
@@ -790,8 +792,8 @@ async function main() {
     render();
     return out;
   });
-  check('Menu regroup', 'Reports menu (formerly "More") is relabeled and has Summary/All Dates/Students Master/Client Search',
-    menuRegroupTests.reportsButtonLabel.includes('Reports') && menuRegroupTests.reportsHasSummary && menuRegroupTests.reportsHasAllDates && menuRegroupTests.reportsHasStudentsMaster && menuRegroupTests.reportsHasClientSearch,
+  check('Menu regroup', 'Reports menu (formerly "More") is relabeled and has Summary/All Dates/Students Master/Search Everywhere',
+    menuRegroupTests.reportsButtonLabel.includes('Reports') && menuRegroupTests.reportsHasSummary && menuRegroupTests.reportsHasAllDates && menuRegroupTests.reportsHasStudentsMaster && menuRegroupTests.reportsHasUniversalSearch,
     JSON.stringify(menuRegroupTests));
   check('Menu regroup', 'Team Sync moved into the Reports menu',
     menuRegroupTests.reportsHasTeamSync, JSON.stringify(menuRegroupTests));
@@ -1131,8 +1133,19 @@ async function main() {
   if (navMoreBtn) await navMoreBtn.click();
   await mPage.waitForTimeout(300);
   const menuCheck = await mPage.evaluate(() => {
+    // The dropdown itself scrolls internally on mobile (max-height:60vh;
+    // overflow-y:auto — see .more-menu-dropdown), and it grew by 3 items
+    // on 2026-09-29 (Notifications/Data Health/DB status moved in here).
+    // The real bug this test guards against was items being cut off with
+    // NO way to reach them at all (the dropdown rendering off the visible
+    // page entirely) — not "the list is long enough to need its own
+    // internal scroll," which is ordinary, expected bottom-sheet behavior.
+    // So each item is scrolled into view WITHIN the dropdown (exactly what
+    // a real person does — scroll the sheet, then tap) before checking
+    // it's actually reachable and unobstructed.
     const items = Array.from(document.querySelectorAll('.more-menu-item'));
     return items.length > 0 && items.every(item => {
+      item.scrollIntoView({ block: 'nearest' });
       const r = item.getBoundingClientRect();
       const onScreen = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
       const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
@@ -1187,6 +1200,11 @@ async function main() {
     render();
   });
   async function click(id, ms) { try { await sPage.click('#' + id, { timeout: 2000 }); await sPage.waitForTimeout(ms || 150); return true; } catch (e) { return false; } }
+  // Notifications, Data Health, and DB status moved from the top-level
+  // toolbar into the 📊 Reports dropdown (2026-09-29 header cleanup) — the
+  // dropdown has to be opened first now, same pattern already used below
+  // for every other dropdown-only item.
+  await click('toggleMoreMenu');
   await click('toggleNotifications');
   const notifTabs = await sPage.locator('.notif-tab-btn').count();
   for (let i = 0; i < notifTabs; i++) { await sPage.locator('.notif-tab-btn').nth(i).click().catch(() => {}); await sPage.waitForTimeout(80); }
@@ -1205,7 +1223,7 @@ async function main() {
   }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleMoreMenu');
-  for (const id of ['toggleStudentsMaster', 'toggleClientSearch', 'toggleSummary', 'toggleAllDates', 'toggleUniversalSearch', 'toggleMissedCheck']) {
+  for (const id of ['toggleStudentsMaster', 'toggleSummary', 'toggleAllDates', 'toggleUniversalSearch', 'toggleCalendarView', 'toggleHelp', 'toggleMissedCheck', 'toggleCompanyScorecard']) {
     await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
     await click('toggleMoreMenu', 80);
     await click(id, 200);
@@ -1213,9 +1231,10 @@ async function main() {
   // WOI Aging / Workload Heatmap / Weekly Recap now live as tabs inside the
   // Notifications panel (clubbed with the other cross-date reports) rather
   // than as separate top-level panels.
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
+  await click('toggleMoreMenu', 80);
   await click('toggleNotifications', 150);
-  for (const tab of ['woiAging', 'workloadHeatmap', 'weeklyRecap']) {
+  for (const tab of ['woiAging', 'workloadHeatmap', 'weeklyRecap', 'conversionFunnel', 'stuckPipeline', 'timeToClose']) {
     await sPage.evaluate((t) => { state.notifTab = t; render(); }, tab);
     await sPage.waitForTimeout(120);
   }
