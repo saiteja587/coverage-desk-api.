@@ -171,7 +171,15 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
 .header .sub{color:var(--text-muted);font-size:13px;}
 .date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .more-menu-wrap{position:relative;}
-.more-menu-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:220px;}
+.more-menu-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:220px;max-height:min(70vh,520px);overflow-y:auto;}
+/* FIX (2026-09-29): "smooth UI" report — capped + scrollable on desktop
+   too now (previously only inside the mobile media query below), so a
+   long dropdown scrolls its OWN content instead of relying on the page
+   scrolling underneath it. Paired with updateBodyScrollLock() (see
+   attachHandlers()), which stops the page itself from scrolling at all
+   while this — or the Quick Search modal, or the swipe-assign picker —
+   is open. */
+html.scroll-locked, html.scroll-locked body{overflow:hidden!important;}
 .more-menu-divider{height:1px;background:var(--border);margin:5px 6px;flex:none;}
 .more-menu-backdrop{display:none;}
 .more-menu-item{background:none;border:none;color:var(--text);font-family:var(--body);font-size:13px;text-align:left;padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;}
@@ -5996,6 +6004,7 @@ function render(){
   `;
 
   attachHandlers(conflictIds);
+  updateBodyScrollLock();
 
   if(activeId){
     const el = document.getElementById(activeId);
@@ -12244,6 +12253,41 @@ function attachHandlers(conflictIds){
   document.querySelectorAll('select[data-field="assignee"]').forEach(sel=>{
     sel.value = sel.dataset.assigneeValue || '';
   });
+  // FIX (2026-09-29): "smooth UI" report — open the 📊 Reports (or 🔧
+  // Admin) dropdown, then scroll, and the whole page scrolls out from
+  // under the (absolutely-positioned, not viewport-anchored) dropdown
+  // instead of the dropdown itself, which reads as broken/disconnected.
+  // Two real, related gaps caused this: clicking anywhere outside either
+  // dropdown never closed it on desktop (only clicking an item inside it
+  // did — the `.more-menu-backdrop` element exists in the markup but is
+  // `display:none` outside the mobile media query, so it was already
+  // dead on desktop), and nothing ever stopped the page underneath from
+  // scrolling while any of these floating surfaces was open. Set up once
+  // (guarded, same pattern as the row-field delegation above) rather than
+  // re-attached every render, since #app is never replaced wholesale.
+  if(!window.__outsideMenuCloseSetup){
+    window.__outsideMenuCloseSetup = true;
+    document.addEventListener('click', (e)=>{
+      if(!state.showMoreMenu && !state.showToolsMenu) return;
+      if(e.target.closest('.more-menu-wrap')) return; // click was on the toggle button or inside the dropdown itself
+      state.showMoreMenu = false;
+      state.showToolsMenu = false;
+      render();
+    }, true); // capture phase: fires before the item's own click handler closes it, so this never double-closes-then-reopens
+  }
+}
+// See the FIX note above attachHandlers()'s outside-click listener — same
+// underlying "nothing stops the page scrolling underneath a floating
+// surface" gap. Locks html/body scroll whenever the Reports/Admin
+// dropdown, the Quick Search modal, or the swipe-assign picker overlay is
+// open, so scrolling (wheel, trackpad, touch) while one of these is open
+// moves that surface's own content if it has any to scroll, never the
+// page underneath. Called at the end of every render() — cheap (one
+// classList check) and idempotent, so it's safe to call unconditionally
+// rather than tracking a separate "did this change" flag.
+function updateBodyScrollLock(){
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker);
+  document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
 // ---------- seed today's real data (one-time convenience) ----------
@@ -13831,6 +13875,22 @@ window.addEventListener('keydown', (e)=>{
     e.preventDefault();
     if(state.dirty && !state.saving && CURRENT_ROLE==='admin') saveAllChanges();
     return;
+  }
+  // FIX (2026-09-29): "smooth UI" report — Escape closes whichever
+  // floating surface is open (Reports/Admin dropdown, Quick Search modal,
+  // swipe-assign picker), same as it would in any well-behaved menu/modal.
+  // Deliberately NOT gated by isTyping — Escape never inserts a character,
+  // so it should work even with focus inside, say, the Quick Search box.
+  if(e.key === 'Escape'){
+    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker){
+      state.showMoreMenu = false;
+      state.showToolsMenu = false;
+      state.showQuickSearchModal = false;
+      state.showSwipeAssignPicker = false;
+      state.pendingSwipeAssignRowId = null;
+      render();
+      return;
+    }
   }
   // Spreadsheet-style row navigation: ArrowUp/ArrowDown while focused in a
   // plain text cell (Time/Candidate/Company/Round/Duration) jumps to the
