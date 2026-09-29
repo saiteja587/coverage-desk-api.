@@ -979,6 +979,12 @@ let state = {
   calendarData: null,
   calendarLoading: false,
   calendarError: '',
+  // Team/person week-over-week + month-over-month comparison, added to the
+  // Calendar view 2026-09-29 at Saiteja's request — see
+  // computeCalendarComparisons() for the shape.
+  calendarComparison: null,
+  calendarCompareView: 'teams', // 'teams' | 'people'
+  calendarCompareSearch: '',
   showRoster: false,
   showNotifications: false,
   showDbSettings: false,
@@ -1548,11 +1554,86 @@ async function fetchCalendarMonth(monthKey){
       counts[r._date] = (counts[r._date]||0) + 1;
     });
     state.calendarData = counts;
+    // Team/person comparison — reuses this same allRows fetch, no second
+    // round trip. See computeCalendarComparisons() below for what it builds.
+    state.calendarComparison = computeCalendarComparisons(allRows, monthKey);
   }catch(e){
     state.calendarError = e && e.message ? e.message : 'Could not load call history for this month.';
   }
   state.calendarLoading = false;
   render();
+}
+// Team & person call-volume comparison for the Calendar view (added
+// 2026-09-29, at Saiteja's request: "compare to last month how many calls
+// assigned to a particular team weekly, and the difference — also for a
+// single person, this month vs last month, this week vs last week").
+//
+// Two independent comparisons, both computed from the one `allRows` fetch
+// fetchCalendarMonth() already does:
+//   - WEEK: real "this week" vs "last week" (Monday-anchored, via the same
+//     weekStartDateKey() bucketing scanCallTrends()/Weekly Recap already
+//     use), anchored on today — independent of which month the calendar
+//     grid happens to be showing, so navigating Prev/Next month doesn't
+//     change what "this week" means.
+//   - MONTH: the month currently shown in the calendar grid (`monthKey`)
+//     vs the month immediately before it — DOES follow Prev/Next
+//     navigation, since that's the month actually on screen.
+// Team assignment excluded (a call assigned to the team itself, not a
+// named person) counts toward the team total but never toward any
+// individual's total — same "team name isn't a person" exclusion used
+// throughout (see computeAssigneeWorkloadToday, scanCallTrends).
+function computeCalendarComparisons(allRows, monthKey){
+  const teamNames = new Set(state.roster.map(p=>p.team));
+  function teamOf(assignee){
+    if(!assignee) return null;
+    if(teamNames.has(assignee)) return assignee;
+    const p = state.roster.find(p=>p.name===assignee);
+    return p ? p.team : null;
+  }
+  const prevMonthKey = shiftMonthKey(monthKey, -1);
+  const thisWeekKey = weekStartDateKey(todayStr());
+  const lastWeekDate = new Date(thisWeekKey + 'T00:00:00Z');
+  lastWeekDate.setUTCDate(lastWeekDate.getUTCDate() - 7);
+  const lastWeekKey = lastWeekDate.toISOString().slice(0,10);
+
+  const teamAgg = {};   // team -> {thisWeek,lastWeek,thisMonth,lastMonth}
+  const personAgg = {}; // name -> {team, thisWeek,lastWeek,thisMonth,lastMonth}
+  function bump(map, key, field, extra){
+    if(!map[key]) map[key] = Object.assign({thisWeek:0,lastWeek:0,thisMonth:0,lastMonth:0}, extra||{});
+    map[key][field]++;
+  }
+
+  allRows.forEach(row=>{
+    if(!row._date || row.woi) return; // WOI has no real scheduled date yet — same exclusion scanCallTrends() uses
+    const team = teamOf(row.assignee);
+    const wk = weekStartDateKey(row._date);
+    const isIndividual = !!row.assignee && !teamNames.has(row.assignee);
+
+    if(team){
+      if(wk === thisWeekKey) bump(teamAgg, team, 'thisWeek');
+      else if(wk === lastWeekKey) bump(teamAgg, team, 'lastWeek');
+      if(row._date.startsWith(monthKey)) bump(teamAgg, team, 'thisMonth');
+      else if(row._date.startsWith(prevMonthKey)) bump(teamAgg, team, 'lastMonth');
+    }
+    if(isIndividual){
+      if(wk === thisWeekKey) bump(personAgg, row.assignee, 'thisWeek', {team: team||''});
+      else if(wk === lastWeekKey) bump(personAgg, row.assignee, 'lastWeek', {team: team||''});
+      if(row._date.startsWith(monthKey)) bump(personAgg, row.assignee, 'thisMonth', {team: team||''});
+      else if(row._date.startsWith(prevMonthKey)) bump(personAgg, row.assignee, 'lastMonth', {team: team||''});
+    }
+  });
+
+  const teams = Object.keys(teamAgg).map(team=>{
+    const a = teamAgg[team];
+    return { team, thisWeek:a.thisWeek, lastWeek:a.lastWeek, weekDiff:a.thisWeek-a.lastWeek, thisMonth:a.thisMonth, lastMonth:a.lastMonth, monthDiff:a.thisMonth-a.lastMonth };
+  }).sort((a,b)=> b.thisMonth - a.thisMonth || a.team.localeCompare(b.team));
+
+  const people = Object.keys(personAgg).map(name=>{
+    const a = personAgg[name];
+    return { name, team:a.team, thisWeek:a.thisWeek, lastWeek:a.lastWeek, weekDiff:a.thisWeek-a.lastWeek, thisMonth:a.thisMonth, lastMonth:a.lastMonth, monthDiff:a.thisMonth-a.lastMonth };
+  }).sort((a,b)=> b.thisMonth - a.thisMonth || a.name.localeCompare(b.name));
+
+  return { teams, people, monthKey, prevMonthKey, thisWeekKey, lastWeekKey };
 }
 async function refreshRole(){
   if(!API_BASE_URL){ CURRENT_ROLE = 'admin'; return; }
@@ -8338,6 +8419,73 @@ function renderCalendarViewPanel(){
     </div>
     <div class="cal-grid">${cells.join('')}</div>
     <div class="hint" style="margin-top:12px">Tap a day to open it. Shading shows call volume relative to this month's busiest day.</div>
+    ${renderCalendarComparisonHtml()}
+  </div>`;
+}
+// A ▲/▼ chip in the same visual language as the Weekly Recap tab's
+// changePct chip (amber = up, teal = down, neutral dash for no change) —
+// reused for both the week and month diffs below so the two read the same.
+function calendarDiffChip(diff, suffix){
+  if(diff === 0) return `<span class="notif-chip">— no change${suffix?(' '+escapeHtml(suffix)):''}</span>`;
+  const up = diff > 0;
+  return `<span class="notif-chip" style="${up?'color:var(--amber);border-color:var(--amber)':'color:var(--teal);border-color:var(--teal)'}">${up?'▲':'▼'} ${Math.abs(diff)}${suffix?(' '+escapeHtml(suffix)):''}</span>`;
+}
+// Team/person week-over-week + month-over-month comparison block, appended
+// under the Calendar month grid (added 2026-09-29 — see
+// computeCalendarComparisons() for how the numbers are built). Two tabs
+// (Teams / People) over the same underlying comparison object, since
+// Saiteja asked for both breakdowns; People also gets a name/team filter
+// since a full roster table can run long.
+function renderCalendarComparisonHtml(){
+  const cmp = state.calendarComparison;
+  if(!cmp) return '';
+  const view = state.calendarCompareView === 'people' ? 'people' : 'teams';
+  const tabsHtml = `
+    <div class="notif-tabs" style="margin:0 0 10px">
+      <button class="notif-tab-btn ${view==='teams'?'active':''}" data-calcompare-view="teams">👥 Teams</button>
+      <button class="notif-tab-btn ${view==='people'?'active':''}" data-calcompare-view="people">🙋 People</button>
+    </div>`;
+  const thisMonthLabel = monthKeyLabel(cmp.monthKey);
+  const lastMonthLabel = monthKeyLabel(cmp.prevMonthKey);
+
+  let rows, searchHtml = '';
+  if(view === 'teams'){
+    rows = cmp.teams;
+  } else {
+    const q = (state.calendarCompareSearch||'').trim().toLowerCase();
+    rows = cmp.people.filter(p=> !q || p.name.toLowerCase().includes(q) || (p.team||'').toLowerCase().includes(q));
+    searchHtml = `<input type="text" id="calendarCompareSearch" placeholder="Filter by name or team…" value="${escapeHtml(state.calendarCompareSearch||'')}" style="margin-bottom:10px;width:100%;max-width:280px">`;
+  }
+
+  const header = `<div style="font-weight:700;font-size:13px;margin-bottom:2px">📊 Week &amp; month comparison</div>
+    <div class="hint" style="margin-bottom:10px">This week = week of ${escapeHtml(cmp.thisWeekKey)} onward, vs. the week before. Month comparison follows the month shown above — ${escapeHtml(thisMonthLabel)} vs ${escapeHtml(lastMonthLabel)} — so ‹ › also moves this comparison.</div>`;
+
+  if(!rows.length){
+    return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+      ${header}${tabsHtml}${searchHtml}
+      <div class="hint">No ${view==='teams'?'team':'individual'} call activity found${view==='people' && state.calendarCompareSearch ? ' for that search' : ' across this week/month or the one before it'}.</div>
+    </div>`;
+  }
+
+  const rowsHtml = rows.map(r=>{
+    const label = view==='teams' ? escapeHtml(r.team) : `${escapeHtml(r.name)}${r.team?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(r.team)}</span>`:''}`;
+    return `<div class="notif-row">
+      <div class="notif-name">${label}</div>
+      <div class="notif-detail">
+        <span class="notif-chip">${r.thisWeek} this week</span>
+        <span class="notif-chip" style="color:var(--text-faint)">${r.lastWeek} last week</span>
+        ${calendarDiffChip(r.weekDiff, 'vs last week')}
+      </div>
+      <div class="notif-detail">
+        <span class="notif-chip">${r.thisMonth} in ${escapeHtml(thisMonthLabel)}</span>
+        <span class="notif-chip" style="color:var(--text-faint)">${r.lastMonth} in ${escapeHtml(lastMonthLabel)}</span>
+        ${calendarDiffChip(r.monthDiff, 'vs last month')}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+    ${header}${tabsHtml}${searchHtml}${rowsHtml}
   </div>`;
 }
 
@@ -10714,6 +10862,14 @@ function attachHandlers(conflictIds){
       scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
     };
   });
+  document.querySelectorAll('[data-calcompare-view]').forEach(btn=>{
+    btn.onclick = ()=>{ state.calendarCompareView = btn.getAttribute('data-calcompare-view'); render(); };
+  });
+  const calendarCompareSearchInput = document.getElementById('calendarCompareSearch');
+  if(calendarCompareSearchInput) calendarCompareSearchInput.oninput = ()=>{
+    state.calendarCompareSearch = calendarCompareSearchInput.value;
+    render();
+  };
   const toggleMissedCheckBtn = document.getElementById('toggleMissedCheck');
   if(toggleMissedCheckBtn) toggleMissedCheckBtn.onclick = ()=>{ openOnlyPanel('showMissedCheck'); render(); };
   const runWoiAgingBtn = document.getElementById('runWoiAgingScan');
