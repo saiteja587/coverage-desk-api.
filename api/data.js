@@ -983,3 +983,4 @@ async function handleAppSettings(req, res, db) {
 // default export (the actual ?resource= router) is untouched — this is
 // purely an additional named export alongside it.
 module.exports.handlePortalSyncFetch = handlePortalSyncFetch;
+module.exports.getConnection = getConnection;
