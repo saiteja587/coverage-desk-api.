@@ -1062,10 +1062,6 @@ let state = {
   showDailyDigest: false,
   showDailyDigestBanner: false,
   showQuickSearchModal: false,
-  showActivePipeline: false,
-  activePipelineData: null,
-  activePipelineLoading: false,
-  activePipelineGeneratedAt: null,
   finalRoundNudgeData: null,
   finalRoundNudgeLoading: false,
   candidateProfileClosureForm: null,
@@ -4678,9 +4674,26 @@ function closuresPeriodKeyFor(dateVal, periodType){
 function computeClosuresPeriodSummary(perf, periodType){
   if(!perf || !perf.rows) return [];
   const periods = {};
+  // FIX (2026-09-29): a closure with no `createdAt` at all (older records
+  // imported before that field existed, same case the List tab's own
+  // "Undated" group already handles) used to just vanish from this bucket
+  // function entirely — `bucket()` returned null and the closure was
+  // silently skipped, which meant a real database full of closures could
+  // legitimately show the Summary tab's empty state ("Nothing recorded
+  // yet") if enough of them predated createdAt being recorded. Every
+  // closure now lands somewhere: a genuinely missing/unparseable date goes
+  // into its own "Undated" period instead of disappearing.
   function bucket(dateVal){
-    if(!dateVal) return null;
-    const info = closuresPeriodKeyFor(dateVal, periodType);
+    if(!dateVal){
+      if(!periods['undated']) periods['undated'] = { key: 'undated', label: 'Undated', sortKey: -Infinity, total: 0, byHandler: {}, stuckCount: 0 };
+      return periods['undated'];
+    }
+    const parsed = new Date(dateVal);
+    if(isNaN(parsed.getTime())){
+      if(!periods['undated']) periods['undated'] = { key: 'undated', label: 'Undated', sortKey: -Infinity, total: 0, byHandler: {}, stuckCount: 0 };
+      return periods['undated'];
+    }
+    const info = closuresPeriodKeyFor(parsed, periodType);
     if(!periods[info.key]) periods[info.key] = { key: info.key, label: info.label, sortKey: info.sortKey, total: 0, byHandler: {}, stuckCount: 0 };
     return periods[info.key];
   }
@@ -5263,56 +5276,13 @@ async function computeFinalRoundNudges(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
-// ---------- Active Pipeline view (2026-09-28) ---------- Right now "who's
-// actually in flight and where do they stand" only exists split across
-// several places: WOI Aging, Stuck Pipeline, the daily board, Closures.
-// Piecing together the whole book of business means opening all of them.
-// This is one view: every candidate who has a real touchpoint on file and
-// is NOT yet closed, grouped by their CURRENT stage (based on their single
-// most recent touchpoint, same "latest row per candidate" approach
-// computeStuckPipeline() already established) — Waiting for Invite, 1st
-// Round, 2nd Round & Above, or Rescheduled (needs rebooking). Cancelled and
-// Not Responded are deliberately excluded — those are terminal outcomes,
-// not "active." Sorted oldest-first within each stage, same convention as
-// WOI Aging/Stuck Pipeline, so whatever's gone longest without movement is
-// what you see first.
-const ACTIVE_PIPELINE_EXCLUDE_STATUSES = ['cancelled','not_responded'];
-async function computeActivePipeline(forceRefresh){
-  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
-  const todayKey = todayStr();
-  const byCandidate = {};
-  allRows.forEach(row=>{
-    const key = (row.candidate||'').trim().toLowerCase();
-    if(!key) return;
-    const existing = byCandidate[key];
-    if(!existing || (row._date && row._date >= (existing._date||''))){
-      byCandidate[key] = row;
-    }
-  });
-  const closedCandidates = new Set((state.closures||[]).map(c=>(c.candidate||'').trim().toLowerCase()));
-  const daysBetween = (a,b)=>{
-    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(b+'T00:00:00Z').getTime();
-    return Math.max(0, Math.round((db-da)/86400000));
-  };
-  const stages = { woi: [], firstRound: [], advanced: [], rescheduled: [] };
-  Object.values(byCandidate).forEach(row=>{
-    const key = (row.candidate||'').trim().toLowerCase();
-    if(closedCandidates.has(key)) return;
-    if(row.status && ACTIVE_PIPELINE_EXCLUDE_STATUSES.includes(row.status)) return;
-    if(!row._date) return;
-    const entry = {
-      candidate: row.candidate, company: row.company||'', round: row.round||'',
-      lastDate: row._date, daysSince: daysBetween(row._date, todayKey),
-      assignee: row.assignee||'', status: row.status||'',
-    };
-    if(row.woi) stages.woi.push(entry);
-    else if(row.status === 'rescheduled') stages.rescheduled.push(entry);
-    else if(isAdvancedRound(row.round)) stages.advanced.push(entry);
-    else stages.firstRound.push(entry);
-  });
-  Object.values(stages).forEach(list => list.sort((a,b)=> b.daysSince - a.daysSince));
-  return stages;
-}
+// NOTE (2026-09-29): the "Active Pipeline" view that used to live here
+// (computeActivePipeline() + renderActivePipelinePanel(), added 2026-09-28)
+// was removed at Saiteja's request — real overlap with Data Health/WOI
+// Aging/Stuck Pipeline, which already flag the same "needs attention"
+// candidates; this was mostly a separate browsing view he confirmed he
+// didn't use. See "Header/menu cleanup + feature trim" in the architecture
+// doc for the full removal writeup.
 const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 // Absences are stored as a per-date note entry (see absentIdsNoteId) holding
 // a JSON array of roster person IDs — this reads that same entry back for
@@ -5528,7 +5498,6 @@ function closeAllPanels(){
   state.showCompanyScorecard = false;
   state.showDataHealth = false;
   state.showDailyDigest = false;
-  state.showActivePipeline = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
   stopPortalSyncPolling();
@@ -5560,7 +5529,6 @@ function getActivePanelName(){
   if(state.showCompanyScorecard) return 'companyScorecard';
   if(state.showDataHealth) return 'dataHealth';
   if(state.showDailyDigest) return 'dailyDigest';
-  if(state.showActivePipeline) return 'activePipeline';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -5598,7 +5566,6 @@ function renderActivePanel(name){
   if(name === 'companyScorecard') return renderCompanyScorecardPanel();
   if(name === 'dataHealth') return renderDataHealthPanel();
   if(name === 'dailyDigest') return renderDailyDigestPanel();
-  if(name === 'activePipeline') return renderActivePipelinePanel();
   return '';
 }
 function panelTitle(name){
@@ -5613,8 +5580,7 @@ function panelTitle(name){
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
     companyScorecard: 'Company Scorecard',
     dataHealth: 'Data Health',
-    dailyDigest: "Today's Briefing",
-    activePipeline: 'Active Pipeline'
+    dailyDigest: "Today's Briefing"
   };
   return titles[name] || '';
 }
@@ -5749,57 +5715,6 @@ function renderDailyDigestPanel(){
     ${dataReady ? `<div class="hint" style="margin-top:10px">Last scanned ${state.dataHealthGeneratedAt ? new Date(state.dataHealthGeneratedAt).toLocaleTimeString() : 'just now'}. <button class="btn ghost" id="runDataHealthScan" style="margin-left:6px">↻ Re-scan</button></div>` : ''}
   `;
 }
-function renderActivePipelineStageHtml(label, list, emptyNote){
-  if(!list.length) return `<div class="strip-title" style="margin-bottom:6px"><span>${label} <span class="n" style="background:var(--teal)">0</span></span></div><div class="hint" style="margin-bottom:14px">${emptyNote}</div>`;
-  const rowsHtml = list.map(e=>`
-    <div class="notif-row">
-      <div class="notif-name" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <span>${escapeHtml(e.candidate)}</span>
-        <span class="notif-warn">${e.daysSince}d since last touch</span>
-      </div>
-      <div class="notif-detail">
-        <span class="notif-chip">${escapeHtml(e.company||'no company')}</span>
-        <span class="notif-chip">${escapeHtml(e.round||'round n/a')}</span>
-        <span class="notif-chip">${escapeHtml(e.lastDate)}</span>
-        ${e.assignee?`<span class="notif-chip">${escapeHtml(e.assignee)}</span>`:''}
-      </div>
-    </div>
-  `).join('');
-  return `<div class="strip-title" style="margin-bottom:6px"><span>${label} <span class="n" style="background:var(--coral)">${list.length}</span></span></div>${rowsHtml}<div style="margin-bottom:14px"></div>`;
-}
-// ---------- Active Pipeline panel (2026-09-28) — see computeActivePipeline()
-// for why this exists: one screen for the whole in-flight book of business,
-// grouped by current stage, instead of piecing it together from WOI Aging,
-// Stuck Pipeline, and the daily board separately.
-function renderActivePipelinePanel(){
-  if(state.activePipelineLoading){
-    return `<div class="hint">🔍 Scanning every saved date…</div>`;
-  }
-  if(state.activePipelineData === null){
-    return `
-      <div class="hint" style="margin-bottom:10px">Every candidate who has a real touchpoint on file and isn't closed yet, grouped by their current stage — Waiting for Invite, 1st Round, 2nd Round &amp; Above, or Rescheduled (needs rebooking). Oldest-since-last-touch first in each group.</div>
-      <button class="btn primary" id="runActivePipelineScan">📈 Scan active pipeline</button>
-    `;
-  }
-  const d = state.activePipelineData;
-  const total = d.woi.length + d.firstRound.length + d.advanced.length + d.rescheduled.length;
-  return `
-    <div class="hint" style="margin-bottom:12px">${total} candidate(s) currently in flight.</div>
-    ${renderActivePipelineStageHtml('⏳ Waiting for Invite', d.woi, 'Nobody waiting on an invite right now.')}
-    ${renderActivePipelineStageHtml('1️⃣ 1st Round', d.firstRound, 'Nobody sitting at 1st round right now.')}
-    ${renderActivePipelineStageHtml('2️⃣ 2nd Round & Above', d.advanced, 'Nobody in an advanced round right now.')}
-    ${renderActivePipelineStageHtml('↻ Rescheduled — needs rebooking', d.rescheduled, 'Nothing sitting rescheduled without a new time.')}
-    <div class="hint" style="margin-top:4px">Last scanned ${state.activePipelineGeneratedAt ? new Date(state.activePipelineGeneratedAt).toLocaleTimeString() : 'just now'}. <button class="btn ghost" id="runActivePipelineScan" style="margin-left:6px">↻ Re-scan</button></div>
-  `;
-}
-async function runActivePipelineScan(){
-  state.activePipelineLoading = true;
-  render();
-  state.activePipelineData = await computeActivePipeline(true);
-  state.activePipelineLoading = false;
-  state.activePipelineGeneratedAt = new Date().toISOString();
-  render();
-}
 
 function render(){
   const app = document.getElementById('app');
@@ -5889,17 +5804,23 @@ function render(){
         <button class="arrow-btn" id="prevDay">‹</button>
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
-        <button class="btn ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="n">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
-        ${CURRENT_ROLE==='admin' ? `<button class="btn ${API_BASE_URL?'':'notif-alert'}" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}</button>` : ''}
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
-        ${(()=>{ const c = dataHealthIssueCount(); return `<button class="btn ${state.showDataHealth?'active':''} ${c>0?'notif-alert':''}" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="n">${c}</span>` : ''}</button>`; })()}
         <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
         <div class="more-menu-wrap">
-          <button class="btn ${state.showMoreMenu?'active':''}" id="toggleMoreMenu" title="Summaries, lookups, and portal sync">📊 Reports</button>
+          <!-- FIX (2026-09-29): header cleanup — "so many options" complaint.
+               Notifications, Data Health, and DB status moved in here from
+               the top-level toolbar (they're all getElementById-wired, not
+               position-wired, so moving their markup doesn't touch any
+               handler). Quick Search stays top-level by explicit request.
+               Active Pipeline removed entirely (real overlap with Data
+               Health/WOI Aging/Stuck Pipeline — Saiteja confirmed removal). -->
+          <button class="btn ${state.showMoreMenu?'active':''} ${(state.absentIds.length || (CURRENT_ROLE==='admin' && !API_BASE_URL) || dataHealthIssueCount()>0) ? 'notif-alert' : ''}" id="toggleMoreMenu" title="Notifications, Data Health, DB status, and other summaries/lookups">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
+            <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
+            ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
-            <button class="more-menu-item" id="toggleActivePipeline" title="Every in-flight candidate, grouped by current stage — the whole book of business in one screen">📈 Active Pipeline</button>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
@@ -7204,30 +7125,58 @@ function renderClearAllReviewPanel(){
   </div>`;
 }
 
+// FIX (2026-09-29): "so many options in the menu" — 17 top-level tabs in
+// one panel was the worst offender. Three tabs asking essentially "have I
+// seen this person/client before" (sameday/candidatesAcross/clientsAcross)
+// and three asking "how busy has the team been" (trends/workloadHeatmap/
+// weeklyRecap) are grouped under one tab button each here. Deliberately
+// NOT a rewrite of any of the six leaf views below — every one of them
+// keeps its own exact `else if(active === '<key>')` branch, state, scan
+// trigger, and search box, completely unchanged. Grouping only changes
+// which button gets clicked to reach a given leaf: the group's own button
+// is "active" (highlighted) whenever any of its leaves is showing, jumps
+// to whichever leaf was last open in that group (or the first one), and a
+// slim secondary row of the real leaf tabs appears right above the content
+// so switching between them stays one click, not a trip back to the outer
+// tab bar.
+const NOTIF_REPEATS_GROUP = ['sameday','candidatesAcross','clientsAcross'];
+const NOTIF_REPEATS_LABELS = { sameday:'Same Day', candidatesAcross:'📅 All Dates', clientsAcross:'🎯 2nd Round+ (All Dates)' };
+const NOTIF_TRENDS_GROUP = ['trends','workloadHeatmap','weeklyRecap'];
+const NOTIF_TRENDS_LABELS = { trends:'📈 Trends Over Time', workloadHeatmap:'📶 Workload Heatmap', weeklyRecap:'📈 Weekly Recap' };
 function renderNotificationsPanel(){
   const tabs = [
     { key:'absent', label:'🚫 Absent', count: state.absentIds.length },
     { key:'long', label:'⏱ Long Calls' },
-    { key:'sameday', label:'Same Candidate Today' },
+    { key:'sameday', label:'🔁 Repeats', group: NOTIF_REPEATS_GROUP },
     { key:'clientsToday', label:'🏢 Repeat Clients Today' },
-    { key:'candidatesAcross', label:'📅 Repeat Candidates (All Dates)' },
-    { key:'clientsAcross', label:'🎯 Same Client, 2nd Round+ (All Dates)' },
     { key:'allResched', label:'↻ All Rescheduled/Cancelled' },
     { key:'absencePatterns', label:'🔁 Recurring Absences' },
     { key:'clientReliability', label:'📊 Client Reliability' },
-    { key:'trends', label:'📈 Trends Over Time' },
+    { key:'trends', label:'📈 Team Trends', group: NOTIF_TRENDS_GROUP },
     { key:'woiAging', label:'⏳ WOI Aging' },
-    { key:'workloadHeatmap', label:'📶 Workload Heatmap' },
-    { key:'weeklyRecap', label:'📈 Weekly Team Recap' },
     { key:'conversionFunnel', label:'🎯 Conversion Funnel' },
     { key:'stuckPipeline', label:'🧊 Stuck in Pipeline' },
     { key:'finalRoundNudge', label:'🎯 Final Round, No Closure' },
     { key:'timeToClose', label:'⏱ Time to Close' }
   ];
   const active = state.notifTab || 'absent';
-  const tabsHtml = tabs.map(t=>`
-    <button class="notif-tab-btn ${active===t.key?'active':''}" data-notiftab="${t.key}">${t.label}${t.count?` <span class="n">${t.count}</span>`:''}</button>
-  `).join('');
+  const tabsHtml = tabs.map(t=>{
+    const isGroupActive = t.group ? t.group.includes(active) : active===t.key;
+    // Clicking a group's own button goes to whichever leaf is already
+    // showing (if any), otherwise the group's first/default leaf.
+    const clickKey = t.group ? (t.group.includes(active) ? active : t.group[0]) : t.key;
+    return `<button class="notif-tab-btn ${isGroupActive?'active':''}" data-notiftab="${clickKey}">${t.label}${t.count?` <span class="n">${t.count}</span>`:''}</button>`;
+  }).join('');
+  let subTabsHtml = '';
+  if(NOTIF_REPEATS_GROUP.includes(active)){
+    subTabsHtml = `<div class="notif-tabs" style="margin:0 0 10px;opacity:.85">${NOTIF_REPEATS_GROUP.map(k=>
+      `<button class="notif-tab-btn ${active===k?'active':''}" data-notiftab="${k}" style="font-size:11.5px;padding:4px 9px">${escapeHtml(NOTIF_REPEATS_LABELS[k])}</button>`
+    ).join('')}</div>`;
+  } else if(NOTIF_TRENDS_GROUP.includes(active)){
+    subTabsHtml = `<div class="notif-tabs" style="margin:0 0 10px;opacity:.85">${NOTIF_TRENDS_GROUP.map(k=>
+      `<button class="notif-tab-btn ${active===k?'active':''}" data-notiftab="${k}" style="font-size:11.5px;padding:4px 9px">${escapeHtml(NOTIF_TRENDS_LABELS[k])}</button>`
+    ).join('')}</div>`;
+  }
 
   let content = '';
   if(active === 'absent'){
@@ -7666,7 +7615,7 @@ function renderNotificationsPanel(){
 
   return `<div class="import-panel">
     <div class="notif-tabs">${tabsHtml}</div>
-    <div class="notif-tab-content">${content}</div>
+    <div class="notif-tab-content">${subTabsHtml}${content}</div>
   </div>`;
 }
 
@@ -11833,17 +11782,6 @@ function attachHandlers(conflictIds){
     state.showDailyDigestBanner = false;
     render();
   };
-  const toggleActivePipelineBtn = document.getElementById('toggleActivePipeline');
-  if(toggleActivePipelineBtn) toggleActivePipelineBtn.onclick = ()=>{
-    const wasOpen = state.showActivePipeline;
-    openOnlyPanel('showActivePipeline');
-    render();
-    if(!wasOpen && state.activePipelineData===null){
-      runActivePipelineScan();
-    }
-  };
-  const runActivePipelineScanBtn = document.getElementById('runActivePipelineScan');
-  if(runActivePipelineScanBtn) runActivePipelineScanBtn.onclick = runActivePipelineScan;
   const runDataHealthScanBtn = document.getElementById('runDataHealthScan');
   if(runDataHealthScanBtn) runDataHealthScanBtn.onclick = runDataHealthScan;
   document.querySelectorAll('[data-datahealth-open]').forEach(btn=>{
