@@ -1014,6 +1014,7 @@ let state = {
   predictiveCapacityWarnings: null,
   closuresView: 'list',
   closuresPerformance: null,
+  closuresSummaryPeriod: 'month',
   showSummary: false,
   backingUp: false,
   showUsers: false,
@@ -4638,6 +4639,101 @@ async function computeClosuresPerformance(forceRefresh){
   // suggestion shortlist is still just a search away instead of unreachable.
   return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, teamOnlyDetails, allRowsSnapshot: allRows };
 }
+// ---------- Weekly/monthly Closures summary (added 2026-09-29) ----------
+// One consolidated view of who closed what and total credit per period,
+// instead of assembling it by hand from By Handler (all-time only) +
+// Incentives (this month only, $ not counts) + Data Health (issues, no
+// period breakdown) separately — the last item from the "so much process
+// going on... what do you suggest" shortlist. Deliberately reuses the
+// exact same computeClosuresPerformance() result the By Handler tab
+// already computed (records-per-handler plus the three "still needs
+// fixing" buckets) rather than re-scanning or re-matching anything — this
+// is purely a different grouping of that same result, so it can never
+// disagree with what By Handler shows for the same data.
+function startOfWeekMonday(d){
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = date.getDay(); // 0=Sun..6=Sat
+  const diff = (day === 0 ? -6 : 1) - day; // shift back to Monday
+  date.setDate(date.getDate() + diff);
+  return date;
+}
+function closuresPeriodKeyFor(dateVal, periodType){
+  const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+  if(periodType === 'week'){
+    const start = startOfWeekMonday(d);
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    const key = start.getFullYear() + '-' + String(start.getMonth()).padStart(2,'0') + '-' + String(start.getDate()).padStart(2,'0');
+    const label = `${start.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${end.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+    return { key, label, sortKey: start.getTime() };
+  }
+  const key = d.getFullYear() + '-' + String(d.getMonth()).padStart(2,'0');
+  const label = d.toLocaleString('en-US',{month:'long',year:'numeric'});
+  return { key, label, sortKey: d.getFullYear()*12 + d.getMonth() };
+}
+// Buckets `perf` (a computeClosuresPerformance() result) into periods.
+// Each period tracks: total closures recorded, a per-handler count map
+// (from the already-credited records), and stuckCount — closures that
+// landed in perf's unmatched/no-assignee/team-only buckets for that same
+// period, i.e. still need attention rather than being real, done credit.
+function computeClosuresPeriodSummary(perf, periodType){
+  if(!perf || !perf.rows) return [];
+  const periods = {};
+  function bucket(dateVal){
+    if(!dateVal) return null;
+    const info = closuresPeriodKeyFor(dateVal, periodType);
+    if(!periods[info.key]) periods[info.key] = { key: info.key, label: info.label, sortKey: info.sortKey, total: 0, byHandler: {}, stuckCount: 0 };
+    return periods[info.key];
+  }
+  (perf.rows || []).forEach(r=>{
+    (r.records || []).forEach(rec=>{
+      const p = bucket(rec.createdAt);
+      if(!p) return;
+      p.total++;
+      p.byHandler[r.handler] = (p.byHandler[r.handler] || 0) + 1;
+    });
+  });
+  [...(perf.unmatchedDetails||[]), ...(perf.noAssigneeDetails||[]), ...(perf.teamOnlyDetails||[])].forEach(d=>{
+    const p = bucket(d.closure && d.closure.createdAt);
+    if(!p) return;
+    p.total++;
+    p.stuckCount++;
+  });
+  return Object.values(periods).sort((a,b)=> b.sortKey - a.sortKey);
+}
+function renderClosuresSummaryHtml(){
+  const perf = state.closuresPerformance;
+  if(!perf || perf.loading){
+    return `<div class="hint">${perf && perf.loading ? '<span class="spinner"></span>Cross-referencing closures against call records…' : 'Loading…'}</div>`;
+  }
+  if(perf.error) return `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(perf.error)}</div>`;
+  const periodType = state.closuresSummaryPeriod || 'month';
+  const periods = computeClosuresPeriodSummary(perf, periodType);
+  const toggle = `<div class="notif-tabs" style="margin-bottom:10px">
+    <button class="notif-tab-btn ${periodType==='month'?'active':''}" data-closuressummaryperiod="month">Monthly</button>
+    <button class="notif-tab-btn ${periodType==='week'?'active':''}" data-closuressummaryperiod="week">Weekly</button>
+  </div>`;
+  if(!periods.length){
+    return toggle + `<div class="hint">Nothing recorded yet — paste a message in 📋 All Closures to add one.</div>`;
+  }
+  const MAX_HANDLERS = 6;
+  const cardsHtml = periods.map(p=>{
+    const handlerEntries = Object.entries(p.byHandler).sort((a,b)=> b[1]-a[1]);
+    const shown = handlerEntries.slice(0, MAX_HANDLERS);
+    const extra = handlerEntries.length - shown.length;
+    const handlersHtml = shown.length
+      ? shown.map(([name,count])=> `<span class="notif-chip">${escapeHtml(name)}: ${count}</span>`).join(' ') + (extra > 0 ? ` <span class="hint" style="font-size:11px">+${extra} more</span>` : '')
+      : `<span class="hint" style="font-size:11px">No credited closures yet</span>`;
+    return `<div style="margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+        <div style="font-weight:700;font-size:13px">${escapeHtml(p.label)}</div>
+        <div class="mini-badge">${p.total} total</div>
+      </div>
+      <div style="margin-bottom:${p.stuckCount?'6px':'0'}">${handlersHtml}</div>
+      ${p.stuckCount ? `<div class="hint" style="color:var(--amber);font-size:11px">⚠ ${p.stuckCount} not yet credited to anyone (unmatched, team-only, or no handler) — see 🏆 By Handler for the fix-it list.</div>` : ''}
+    </div>`;
+  }).join('');
+  return toggle + cardsHtml;
+}
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
 // allowlist is guaranteed to actually load, see the Incentives-export XLSX
@@ -7811,7 +7907,14 @@ function renderClosureConfirmPanel(){
       checking: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'⏳'},
       match: {bg:'var(--green-dim)', color:'var(--green)', icon:'✓'},
       mismatch: {bg:'var(--amber-dim)', color:'var(--amber)', icon:'⚠'},
-      no_match: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'ℹ'},
+      // FIX (2026-09-29): no_match used to share the same neutral gray as
+      // the transient "checking…" state, even though it's the single
+      // strongest predictor of this exact row ending up stuck in Unmatched
+      // closures right after saving — task-list item from "so much process
+      // going on... what do you suggest": surface that risk BEFORE saving,
+      // not just after. Same amber weight as mismatch now, since both
+      // predict the identical downstream problem.
+      no_match: {bg:'var(--amber-dim)', color:'var(--amber)', icon:'❓'},
       error: {bg:'var(--surface-2)', color:'var(--text-muted)', icon:'ℹ'},
     };
     const s = styles[cr.status] || styles.no_match;
@@ -8161,11 +8264,12 @@ function renderClosuresPanel(){
     <div class="notif-tabs" style="margin-bottom:10px">
       <button class="notif-tab-btn ${view==='list'?'active':''}" data-closuresview="list">📋 All Closures</button>
       <button class="notif-tab-btn ${view==='byHandler'?'active':''}" data-closuresview="byHandler">🏆 By Handler</button>
+      <button class="notif-tab-btn ${view==='summary'?'active':''}" data-closuresview="summary">📅 Summary</button>
       ${(view==='byHandler' && CURRENT_ROLE==='admin') ? `<button class="btn ghost" id="runDrivingPersonBackfillBtn" title="Fill Driving Person from the last Portal sync for EVERY date on file, not just whatever's open — fixes closures stuck as 'no handler credited' because the call happened on a past date." ${state.drivingPersonBackfillRunning?'disabled':''}>${state.drivingPersonBackfillRunning?'<span class="spinner"></span>Backfilling…':'🔄 Backfill Driving Person'}</button>` : ''}
       ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:${(view==='byHandler' && CURRENT_ROLE==='admin')?'0':'auto'}">📊 Export to Excel</button>` : ''}
     </div>
     ${view === 'byHandler' ? renderDrivingPersonBackfillResultHtml() : ''}
-    ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
+    ${view === 'byHandler' ? perfHtml : view === 'summary' ? renderClosuresSummaryHtml() : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
     <div class="hint" style="margin-top:4px">Want to search any candidate/company and see their full call-by-call timeline? Use ⋯ More → 🔎 Search Everywhere, then tap 📋 Timeline on any result.</div>
     <div class="hint" style="margin-top:4px">Tip: recording a closure from a candidate's own 📋 Timeline (via 🔎 Search Everywhere → 🏆 Closure) links it straight to that exact call — it can never end up "unmatched" the way a pasted-in message sometimes can.</div>
@@ -10196,7 +10300,11 @@ function attachHandlers(conflictIds){
       }
       if(btn.dataset.closuresview){
         state.closuresView = btn.dataset.closuresview;
-        if(btn.dataset.closuresview === 'byHandler' && !state.closuresPerformance){
+        // Summary (added 2026-09-29) is built entirely from the same
+        // by-handler cross-reference data as the By Handler tab — no
+        // separate scan needed, just a different grouping of the same
+        // result — so it triggers the identical on-demand load.
+        if((btn.dataset.closuresview === 'byHandler' || btn.dataset.closuresview === 'summary') && !state.closuresPerformance){
           state.closuresPerformance = { loading: true, rows: [] };
           render();
           try{
@@ -10207,6 +10315,12 @@ function attachHandlers(conflictIds){
         }
         render();
       }
+    };
+  });
+  document.querySelectorAll('[data-closuressummaryperiod]').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.closuresSummaryPeriod = btn.dataset.closuressummaryperiod;
+      render();
     };
   });
 
