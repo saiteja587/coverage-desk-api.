@@ -10172,8 +10172,22 @@ function attachHandlers(conflictIds){
 
   const toggleNotif = document.getElementById('toggleNotifications');
   if(toggleNotif) toggleNotif.onclick = ()=>{ openOnlyPanel('showNotifications'); render(); };
+  // FIX (2026-09-29, part 3): "more smoothness issues" sweep — these six
+  // Notifications scan buttons changed their own label to "Scanning…" while
+  // their fetch was in flight, but never actually disabled themselves, so a
+  // fast double-click (or an impatient second click after nothing visibly
+  // happened for a moment) fired the same scan twice concurrently. Not a
+  // correctness bug (both calls resolve to the same result and the second
+  // render just overwrites the first), but a real wasted round-trip and a
+  // pattern the app already gets right elsewhere (see `state.closureApplying`
+  // driving `disabled` on the Closures confirm button) — just not applied
+  // here. `btn.disabled = true` on the live DOM node is enough: the next
+  // render() rebuilds this button fresh (without `disabled`) once the scan
+  // resolves, so nothing needs to reset it back.
   const runScanBtn = document.getElementById('runNotifScan');
   if(runScanBtn) runScanBtn.onclick = async ()=>{
+    if(runScanBtn.disabled) return;
+    runScanBtn.disabled = true;
     runScanBtn.textContent = 'Scanning…';
     state.notifications = await scanForRepeatCandidates(true);
     state.hideAllNotifCandidates = false;
@@ -10181,6 +10195,8 @@ function attachHandlers(conflictIds){
   };
   const runScanClientsBtn = document.getElementById('runNotifScanClients');
   if(runScanClientsBtn) runScanClientsBtn.onclick = async ()=>{
+    if(runScanClientsBtn.disabled) return;
+    runScanClientsBtn.disabled = true;
     runScanClientsBtn.textContent = 'Scanning…';
     state.repeatClientsAdvanced = await scanRepeatClientsAdvancedRounds(true);
     state.hideAllNotifClients = false;
@@ -10206,6 +10222,8 @@ function attachHandlers(conflictIds){
   });
   const runAllReschedBtn = document.getElementById('runAllReschedScan');
   if(runAllReschedBtn) runAllReschedBtn.onclick = async ()=>{
+    if(runAllReschedBtn.disabled) return;
+    runAllReschedBtn.disabled = true;
     runAllReschedBtn.textContent = 'Scanning…';
     state.allReschedulesData = await scanAllReschedules(true);
     state.hideAllNotifAllResched = false;
@@ -10213,12 +10231,16 @@ function attachHandlers(conflictIds){
   };
   const runAbsencePatternBtn = document.getElementById('runAbsencePatternScan');
   if(runAbsencePatternBtn) runAbsencePatternBtn.onclick = async ()=>{
+    if(runAbsencePatternBtn.disabled) return;
+    runAbsencePatternBtn.disabled = true;
     runAbsencePatternBtn.textContent = 'Scanning…';
     state.absencePatterns = await scanAbsencePatterns();
     render();
   };
   const runReliabilityBtn = document.getElementById('runReliabilityScan');
   if(runReliabilityBtn) runReliabilityBtn.onclick = async ()=>{
+    if(runReliabilityBtn.disabled) return;
+    runReliabilityBtn.disabled = true;
     runReliabilityBtn.textContent = 'Scanning…';
     state.clientReliabilityData = await scanClientReliability(true);
     state.hideAllNotifReliability = false;
@@ -10235,6 +10257,8 @@ function attachHandlers(conflictIds){
   });
   const runTrendsBtn = document.getElementById('runTrendsScan');
   if(runTrendsBtn) runTrendsBtn.onclick = async ()=>{
+    if(runTrendsBtn.disabled) return;
+    runTrendsBtn.disabled = true;
     runTrendsBtn.textContent = 'Scanning…';
     state.trendsData = await scanCallTrends(true);
     state.predictiveCapacityWarnings = computePredictiveCapacityWarnings(state.trendsData);
@@ -12286,7 +12310,13 @@ function attachHandlers(conflictIds){
 // classList check) and idempotent, so it's safe to call unconditionally
 // rather than tracking a separate "did this change" flag.
 function updateBodyScrollLock(){
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker);
+  // FIX (2026-09-29, part 2): showClipboardPicker uses the exact same
+  // fixed-fullscreen ".my-name-picker-overlay" pattern as the swipe-assign
+  // picker and Quick Search (same backdrop-click-to-close behavior already
+  // wired for it too — see the clipboardPickerOverlay handler), but was
+  // missed from this list when it was first written, so opening it left the
+  // page scrollable underneath it same as the original reported bug.
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -13882,12 +13912,15 @@ window.addEventListener('keydown', (e)=>{
   // Deliberately NOT gated by isTyping — Escape never inserts a character,
   // so it should work even with focus inside, say, the Quick Search box.
   if(e.key === 'Escape'){
-    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker){
+    // (2026-09-29, part 2) showClipboardPicker added here too — same
+    // fixed-overlay pattern as the others, just missed on the first pass.
+    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showQuickSearchModal = false;
       state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
+      state.showClipboardPicker = false;
       render();
       return;
     }
