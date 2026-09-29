@@ -1076,6 +1076,10 @@ let state = {
   closureDeleteError: null,
   noAssigneeApplyingId: null,
   noAssigneeApplyError: null,
+  drivingPersonBackfillRunning: false,
+  drivingPersonBackfillResult: null,
+  drivingPersonBackfillError: null,
+  drivingPersonBackfillApplyingKey: null,
   micListening: false,
   micTargetId: null,
   allDatesData: null,
@@ -2092,6 +2096,82 @@ async function saveDrivingPersons(){
   if(!API_BASE_URL) return; // local-storage mode: drivingPerson already lives on the row like every other field
   const payload = state.rows.map(r=>({ callId: r.id, drivingPerson: r.drivingPerson || '' }));
   await apiCall('driving_person', {method:'POST', body:{date: state.date, rows: payload}});
+}
+// Saves a batch of {row, handler} Driving Person updates that can span MANY
+// different dates at once — added 2026-09-29 for the cross-date backfill
+// (see computeDrivingPersonBackfillPlan() below). Groups by date and, for
+// each one, always sends that date's COMPLETE row set (fetching it first
+// when it isn't already today's loaded board) with only the touched rows'
+// values changed — the driving_person endpoint is a full replace-for-the-
+// date write, so sending anything less would silently wipe out every other
+// Driving Person already saved for that date (the same data-loss risk
+// caught and fixed for the single-closure "📡 Apply" button).
+async function saveDrivingPersonBatchAcrossDates(entries){
+  const byDate = {};
+  entries.forEach(e=>{
+    const d = (e.row && e.row._date) || state.date;
+    (byDate[d] = byDate[d] || []).push(e);
+  });
+  const dates = Object.keys(byDate);
+  await Promise.all(dates.map(async date=>{
+    let dateRows;
+    if(date === state.date){
+      dateRows = state.rows || [];
+    } else {
+      const data = await apiCall('calls', {qs:'date='+encodeURIComponent(date)});
+      dateRows = data.rows || [];
+    }
+    const updates = {};
+    byDate[date].forEach(e=>{ updates[String(e.row.id)] = e.handler; });
+    const payload = dateRows.map(r=>({
+      callId: r.id,
+      drivingPerson: Object.prototype.hasOwnProperty.call(updates, String(r.id)) ? updates[String(r.id)] : (r.drivingPerson || ''),
+    }));
+    await apiCall('driving_person', {method:'POST', body:{date, rows: payload}});
+    if(date === state.date){
+      byDate[date].forEach(e=>{
+        const localRow = (state.rows||[]).find(r=>String(r.id)===String(e.row.id));
+        if(localRow) localRow.drivingPerson = e.handler;
+      });
+    }
+  }));
+}
+// Cross-date Driving Person backfill (added 2026-09-29) — "some calls gets
+// after first round only" plus "there is so much process going on from
+// importing calls to closures" together pointed at the real structural
+// gap: fillDrivingPersonFromPortal() (used on every sync) only ever fills
+// whichever date is currently open on the board, so a call on ANY other
+// date never gets the benefit of a sync that happened while you were
+// looking at today. This scans every date's calls against the last Team
+// Sync's Portal data and splits what it finds into two buckets:
+//   - autoFill: 1st Round, empty Driving Person, a clean Portal match —
+//     the exact same safety rule fillDrivingPersonFromPortal() already
+//     uses, just applied across every date instead of one.
+//   - needsConfirm: 2nd Round and up — deliberately NEVER auto-applied
+//     (every auto-assignment in this app leaves advanced rounds for a
+//     human, since they're more often run by someone the Portal doesn't
+//     reliably reflect) — returned as suggestions for a one-click Apply,
+//     not applied here.
+// Requires a Team Sync (state.portalAssignments) to already exist —
+// returns {needsSync:true} rather than silently finding nothing if not.
+async function computeDrivingPersonBackfillPlan(forceRefresh){
+  if(!state.portalAssignments || !state.portalAssignments.length){
+    return { needsSync: true, autoFill: [], needsConfirm: [] };
+  }
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const autoFill = [];
+  const needsConfirm = [];
+  allRows.forEach(row=>{
+    if(row.woi || row.drivingPerson || !row.candidate) return;
+    const match = findPortalMatchForRow(row, row._date);
+    if(!match) return;
+    const handler = match.handler || match.assignee;
+    if(!handler) return;
+    const entry = { row, handler };
+    if(isAdvancedRound(row.round)) needsConfirm.push(entry);
+    else autoFill.push(entry);
+  });
+  return { needsSync: false, autoFill, needsConfirm };
 }
 // The "note for next shift" box reuses the existing notes table/resource —
 // stored as one special entry per date rather than a whole new backend
@@ -4479,6 +4559,7 @@ async function computeClosuresPerformance(forceRefresh){
   let noAssigneeCount = 0;
   const unmatchedDetails = [];
   const noAssigneeDetails = [];
+  const teamOnlyDetails = [];
   (state.closures || []).forEach(c=>{
     if(!c.candidate || !c.company){ unmatchedCount++; return; }
     const found = findClosureMatchWithOverride(c, allRows);
@@ -4529,7 +4610,19 @@ async function computeClosuresPerformance(forceRefresh){
       noAssigneeDetails.push({ closure: c, match });
       return;
     }
-    if(teamNames.has(handler)){ teamOnlyCount++; return; }
+    if(teamNames.has(handler)){
+      teamOnlyCount++;
+      // FIX (2026-09-29): same situation as noAssigneeDetails above, just
+      // one step further along — this call already has a Driving
+      // Person/Assignee, it's just a TEAM name rather than a person, so
+      // still no individual to credit. Recorded the same way so the "📡
+      // Apply" action (see renderNoAssigneeClosuresHtml/the shared
+      // [data-apply-portal-driving] handler) can offer to fill in the real
+      // person's name from Portal here too — it overrides the team-level
+      // value the same way it fills a blank one.
+      teamOnlyDetails.push({ closure: c, match, team: handler });
+      return;
+    }
     if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0, records: [] };
     byHandler[handler].closures++;
     // Kept alongside the count so the "By Handler" list can show exactly
@@ -4543,7 +4636,7 @@ async function computeClosuresPerformance(forceRefresh){
   // filter across every call record on file, not just the up-to-8
   // pre-computed suggestions — a real record that didn't make the
   // suggestion shortlist is still just a search away instead of unreachable.
-  return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, allRowsSnapshot: allRows };
+  return { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, teamOnlyDetails, allRowsSnapshot: allRows };
 }
 // ---------- Small self-contained SVG chart helpers (2026-09-24, pipeline-
 // visibility batch) — no external chart library (nothing on the CDN
@@ -7879,9 +7972,15 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
 // (from the last 📡 Team Sync) for the same candidate+company and, when
 // found, offers a one-click way to push that name into Driving Person on
 // the call's own date — without needing to navigate there by hand.
-function renderNoAssigneeClosuresHtml(noAssigneeDetails){
-  if(!noAssigneeDetails.length) return '';
-  const rowsHtml = noAssigneeDetails.map(({closure, match})=>{
+// Shared by renderNoAssigneeClosuresHtml() and renderTeamOnlyClosuresHtml()
+// below — both buckets are "matched to a call, but no individual to credit
+// yet" and both are fixed the same way (apply the Portal's driving person,
+// if one's on file for that exact call). `noteFn(match)` supplies the one
+// line of explanation that differs between the two ("no one set at all" vs
+// "only a team").
+function renderCreditGapClosuresHtml(title, details, noteFn){
+  if(!details.length) return '';
+  const rowsHtml = details.map(({closure, match})=>{
     const portalRow = (state.portalAssignments||[]).find(p =>
       (p.candidate||'').trim().toLowerCase() === (match.candidate||'').trim().toLowerCase() &&
       normalizeCompanyKey(p.client) === normalizeCompanyKey(match.company)
@@ -7901,13 +8000,29 @@ function renderNoAssigneeClosuresHtml(noAssigneeDetails){
         <div class="notif-name">${escapeHtml(closure.candidate)} <span class="notif-chip">${escapeHtml(closure.company)}</span></div>
         ${actionHtml}
       </div>
-      <div class="hint" style="margin-top:2px">Matched to a call on ${escapeHtml(match._date||'—')}${match.round?` (${escapeHtml(match.round)})`:''} — that record has no Driving Person or Assigned To set, so no one gets credit for this closure yet.</div>
+      <div class="hint" style="margin-top:2px">${noteFn(match)}</div>
     </div>`;
   }).join('');
   return `<div style="margin-top:14px">
-    <div style="font-weight:700;font-size:13px;margin-bottom:6px">No handler credited</div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">${escapeHtml(title)}</div>
     ${rowsHtml}
   </div>`;
+}
+function renderNoAssigneeClosuresHtml(noAssigneeDetails){
+  return renderCreditGapClosuresHtml('No handler credited', noAssigneeDetails, match =>
+    `Matched to a call on ${escapeHtml(match._date||'—')}${match.round?` (${escapeHtml(match.round)})`:''} — that record has no Driving Person or Assigned To set, so no one gets credit for this closure yet.`
+  );
+}
+// "Team-only" closures itemized (added 2026-09-29, "so much process going
+// on... what other things do you suggest") — previously just a bare count
+// in the summary sentence, same visibility gap that made the "no handler
+// credited" bucket hard to actually act on before its own itemized list
+// was added. Reuses the exact same 📡 Apply action: a team-level Assignee
+// with a real Portal-sourced Driving Person is fixed the identical way.
+function renderTeamOnlyClosuresHtml(teamOnlyDetails){
+  return renderCreditGapClosuresHtml('Matched to a team, not a person', teamOnlyDetails, match =>
+    `Matched to a call on ${escapeHtml(match._date||'—')}${match.round?` (${escapeHtml(match.round)})`:''} — assigned to a team (${escapeHtml((match.drivingPerson||match.assignee)||'')}), not an individual, so no one specific gets credit yet.`
+  );
 }
 function renderClosuresPanel(){
   const list = state.closures || [];
@@ -8031,6 +8146,7 @@ function renderClosuresPanel(){
       perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
       perfHtml += renderUnmatchedClosuresHtml(perf.unmatchedDetails || []);
       perfHtml += renderNoAssigneeClosuresHtml(perf.noAssigneeDetails || []);
+      perfHtml += renderTeamOnlyClosuresHtml(perf.teamOnlyDetails || []);
     }
   }
   return `<div class="import-panel">
@@ -8045,12 +8161,48 @@ function renderClosuresPanel(){
     <div class="notif-tabs" style="margin-bottom:10px">
       <button class="notif-tab-btn ${view==='list'?'active':''}" data-closuresview="list">📋 All Closures</button>
       <button class="notif-tab-btn ${view==='byHandler'?'active':''}" data-closuresview="byHandler">🏆 By Handler</button>
-      ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:auto">📊 Export to Excel</button>` : ''}
+      ${(view==='byHandler' && CURRENT_ROLE==='admin') ? `<button class="btn ghost" id="runDrivingPersonBackfillBtn" title="Fill Driving Person from the last Portal sync for EVERY date on file, not just whatever's open — fixes closures stuck as 'no handler credited' because the call happened on a past date." ${state.drivingPersonBackfillRunning?'disabled':''}>${state.drivingPersonBackfillRunning?'<span class="spinner"></span>Backfilling…':'🔄 Backfill Driving Person'}</button>` : ''}
+      ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:${(view==='byHandler' && CURRENT_ROLE==='admin')?'0':'auto'}">📊 Export to Excel</button>` : ''}
     </div>
+    ${view === 'byHandler' ? renderDrivingPersonBackfillResultHtml() : ''}
     ${view === 'byHandler' ? perfHtml : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
     <div class="hint" style="margin-top:4px">Want to search any candidate/company and see their full call-by-call timeline? Use ⋯ More → 🔎 Search Everywhere, then tap 📋 Timeline on any result.</div>
+    <div class="hint" style="margin-top:4px">Tip: recording a closure from a candidate's own 📋 Timeline (via 🔎 Search Everywhere → 🏆 Closure) links it straight to that exact call — it can never end up "unmatched" the way a pasted-in message sometimes can.</div>
     ${CURRENT_ROLE === 'admin' ? renderCompanyAliasesHtml() : ''}
+  </div>`;
+}
+// Result area for the "🔄 Backfill Driving Person" button above —
+// separate render function so it can sit above perfHtml regardless of
+// whether perf itself is still loading.
+function renderDrivingPersonBackfillResultHtml(){
+  if(state.drivingPersonBackfillError){
+    return `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.drivingPersonBackfillError)}</div>`;
+  }
+  const result = state.drivingPersonBackfillResult;
+  if(!result) return '';
+  if(result.needsSync){
+    return `<div class="hint" style="margin-bottom:10px">Run 📡 Team Sync → Full Sync first — the backfill works off whatever that last sync found.</div>`;
+  }
+  const needsConfirm = result.needsConfirm || [];
+  const confirmHtml = needsConfirm.length ? `<div style="margin-top:8px">
+    <div class="hint" style="margin-bottom:6px">${needsConfirm.length} advanced-round call${needsConfirm.length===1?'':'s'} also has a Portal match — left for you to confirm rather than applied automatically, same as every other auto-assignment in this app skips advanced rounds:</div>
+    ${needsConfirm.map(({row, handler})=>{
+      const key = row._date + '|' + row.id;
+      const applying = state.drivingPersonBackfillApplyingKey === key;
+      return `<div class="notif-row">
+        <div class="notif-name">${escapeHtml(row.candidate)} <span class="notif-chip">${escapeHtml(row.company||'')}</span></div>
+        <div class="notif-detail">
+          <span class="notif-chip">${escapeHtml(row._date||'')}</span>
+          <span class="notif-chip">${escapeHtml(row.round||'')}</span>
+          <button class="btn ghost" data-backfill-confirm-date="${escapeHtml(row._date||'')}" data-backfill-confirm-callid="${escapeHtml(String(row.id))}" data-backfill-confirm-name="${escapeHtml(handler)}" ${applying?'disabled':''} style="font-size:11px;padding:3px 8px">${applying?'<span class="spinner"></span>':`📡 Apply "${escapeHtml(handler)}"`}</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>` : '';
+  return `<div style="margin-bottom:10px">
+    <div class="hint" style="color:var(--teal)">✅ Filled ${result.appliedCount} Driving Person value${result.appliedCount===1?'':'s'} from Portal across every date on file.</div>
+    ${confirmHtml}
   </div>`;
 }
 // Admin-only "these two company spellings are the same client" list —
@@ -9746,6 +9898,56 @@ function attachHandlers(conflictIds){
         state.noAssigneeApplyError = (e && e.message) ? `Could not apply this: ${e.message}` : 'Could not apply this — try again.';
       }
       state.noAssigneeApplyingId = null;
+      render();
+    };
+  });
+
+  // "🔄 Backfill Driving Person" (added 2026-09-29) — see
+  // computeDrivingPersonBackfillPlan() for the full reasoning. Auto-applies
+  // every safe (1st Round) match immediately, in one batched save across
+  // however many dates are involved, then leaves any advanced-round matches
+  // as individually-confirmable suggestions rather than applying those too.
+  const runDrivingPersonBackfillBtn = document.getElementById('runDrivingPersonBackfillBtn');
+  if(runDrivingPersonBackfillBtn) runDrivingPersonBackfillBtn.onclick = async ()=>{
+    state.drivingPersonBackfillRunning = true;
+    state.drivingPersonBackfillError = null;
+    state.drivingPersonBackfillResult = null;
+    render();
+    try{
+      const plan = await computeDrivingPersonBackfillPlan(true);
+      if(plan.needsSync){
+        state.drivingPersonBackfillResult = { needsSync: true };
+      } else {
+        if(plan.autoFill.length) await saveDrivingPersonBatchAcrossDates(plan.autoFill);
+        state.drivingPersonBackfillResult = { needsSync: false, appliedCount: plan.autoFill.length, needsConfirm: plan.needsConfirm };
+        if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
+      }
+    }catch(e){
+      state.drivingPersonBackfillError = (e && e.message) ? `Backfill failed: ${e.message}` : 'Backfill failed — try again.';
+    }
+    state.drivingPersonBackfillRunning = false;
+    render();
+  };
+  // Confirming one advanced-round suggestion from the backfill result list.
+  document.querySelectorAll('[data-backfill-confirm-date]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const date = btn.dataset.backfillConfirmDate;
+      const callId = btn.dataset.backfillConfirmCallid;
+      const name = btn.dataset.backfillConfirmName;
+      if(!date || !callId || !name) return;
+      const key = date + '|' + callId;
+      state.drivingPersonBackfillApplyingKey = key;
+      render();
+      try{
+        await saveDrivingPersonBatchAcrossDates([{ row: { id: callId, _date: date }, handler: name }]);
+        if(state.drivingPersonBackfillResult && state.drivingPersonBackfillResult.needsConfirm){
+          state.drivingPersonBackfillResult.needsConfirm = state.drivingPersonBackfillResult.needsConfirm.filter(e => !(e.row._date===date && String(e.row.id)===String(callId)));
+        }
+        if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
+      }catch(e){
+        state.drivingPersonBackfillError = (e && e.message) ? `Could not apply this: ${e.message}` : 'Could not apply this — try again.';
+      }
+      state.drivingPersonBackfillApplyingKey = null;
       render();
     };
   });
@@ -13007,6 +13209,32 @@ function findPortalMatch(row){
   if(matches.length > 1){
     // ...then by client/company, since that's what actually distinguishes
     // two same-named, same-time candidates across different teams.
+    const companyKey = normalizeCompanyKey(row.company);
+    const companyMatches = matches.filter(p => normalizeCompanyKey(p.client) === companyKey);
+    if(companyMatches.length) matches = companyMatches;
+  }
+  return matches[0];
+}
+// Same tie-breaking as findPortalMatch() above, but usable on a row from
+// ANY date, not just whatever's currently open on the board — for the
+// cross-date Driving Person backfill (added 2026-09-29). findPortalMatch()
+// itself hardcodes state.date for its same-date preference, which is
+// exactly right for the per-row 📡 badge (always about the row you're
+// looking at right now) but wrong here, where `row._date` (set by
+// fetchAllRowsAcrossDates) is what actually identifies which date this
+// row's own call happened on.
+function findPortalMatchForRow(row, rowDate){
+  let matches = findPortalCandidatesRaw_(row);
+  if(!matches) return null;
+  const d = rowDate || row._date || state.date;
+  const dateMatches = matches.filter(p => p.dateKey && p.dateKey === d);
+  if(dateMatches.length) matches = dateMatches;
+  else matches = matches.filter(p => !p.dateKey);
+  if(!matches.length) return null;
+  if(matches.length === 1) return matches[0];
+  const timeMatches = matches.filter(p => p.time === row.time);
+  if(timeMatches.length) matches = timeMatches;
+  if(matches.length > 1){
     const companyKey = normalizeCompanyKey(row.company);
     const companyMatches = matches.filter(p => normalizeCompanyKey(p.client) === companyKey);
     if(companyMatches.length) matches = companyMatches;
