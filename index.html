@@ -1675,6 +1675,21 @@ function currentMonthKey(){
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
+// Home-toolbar "🏆 Closures (N)" badge (added 2026-10-01): previously showed
+// the flat all-time total, which meant it never changed month to month and
+// didn't tell you anything about how the CURRENT month is going. Now shows
+// how many closures were recorded in the real current calendar month —
+// deliberately always "now", not whatever month is being browsed inside the
+// Closures panel's List tab (that's a separate, already-open-panel concern;
+// this badge is meant to be glanceable from the home screen at any time).
+function closuresThisMonthCount(){
+  const mk = currentMonthKey();
+  return (state.closures||[]).filter(c=>{
+    if(!c.createdAt) return false;
+    const d = new Date(c.createdAt);
+    return (d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')) === mk;
+  }).length;
+}
 function shiftMonthKey(monthKey, delta){
   const [y,m] = monthKey.split('-').map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -6361,7 +6376,7 @@ function render(){
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
-        <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${state.closures.length})` : ''}</button>
+        <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
         <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
         <div class="more-menu-wrap">
           <!-- FIX (2026-09-29): header cleanup — "so many options" complaint.
@@ -8815,12 +8830,19 @@ function renderTeamOnlyClosuresHtml(teamOnlyDetails){
 }
 function renderClosuresPanel(){
   const list = state.closures || [];
-  const now = new Date();
-  const monthLabel = now.toLocaleString('en-US', { month: 'long' });
+  // FIX (2026-10-01): the "Closures in <Month>" stat card used to always be
+  // pinned to the real calendar month regardless of which month you'd
+  // navigated the List tab to below it — so browsing to September still
+  // showed "Closures in October" at the top. Now follows the same month
+  // the List tab is currently showing (computed here, ahead of the groups
+  // block below, so both the stat card and the list agree on one value).
+  const closuresListMonthKey = state.closuresListMonth || currentMonthKey();
+  const monthLabel = monthKeyLabel(closuresListMonthKey);
   const thisMonthCount = list.filter(c=>{
     if(!c.createdAt) return false;
     const d = new Date(c.createdAt);
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    return key === closuresListMonthKey;
   }).length;
 
   // Grouped month-by-month (newest month first) instead of one long flat
@@ -8853,7 +8875,7 @@ function renderClosuresPanel(){
   });
   groups.sort((a,b)=>b.sortKey - a.sortKey);
 
-  // Month-at-a-time view for the List tab (requested 2026-10-01): previously
+  // Month-at-a-time view for the List tab (added 2026-10-01): previously
   // every month's group rendered stacked on one page, so opening Closures
   // always showed the full all-time history at once. Defaults to the
   // current month, with ◀/▶ nav (same shiftMonthKey()/monthKeyLabel()
@@ -8861,7 +8883,7 @@ function renderClosuresPanel(){
   // other month — e.g. stepping back once from October shows September's
   // closures on their own. "Show all months" reverts to the old stacked
   // view for anyone who wants the full history in one scroll.
-  const closuresListMonthKey = state.closuresListMonth || currentMonthKey();
+  // (closuresListMonthKey itself is computed above, ahead of the stat card.)
   const closuresListShowAll = !!state.closuresListShowAll;
   const groupsToRender = closuresListShowAll ? groups : groups.filter(g=>g.key === closuresListMonthKey);
 
