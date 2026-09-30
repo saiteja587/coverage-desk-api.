@@ -1281,6 +1281,7 @@ let state = {
   eodWrapupData: null, // { handledCount, slippedRows, tomorrowPreview } — see computeEodWrapup()
   offlineQueue: {}, // dateKey -> {rows, notes, finalized, queuedAt} — see queueOfflineSave()
   offlineQueueRetrying: false,
+  offlineRosterPending: false, // roster isn't date-scoped, so it gets its own flag instead of a queue entry — see queueOfflineSave()
   alertsEnabled: false, // "Time-sensitive alerts" — persisted to localStorage, see setupTimeSensitiveAlerts()
   alertedRowIds: new Set(), // rows already notified about this session, so the same call doesn't re-alert every check
 };
@@ -2603,27 +2604,51 @@ function queueOfflineSave(){
     finalized: state.finalized,
     queuedAt: Date.now(),
   };
+  // FIX (2026-09-30, found on review): saveAllChanges() also saves the team
+  // roster in the same Promise.all — a failed save could just as easily be
+  // a roster edit (Team Roster panel) as a calls/notes edit. The first cut
+  // of this feature only ever queued calls/notes/finalized, so a roster
+  // change made while offline was silently dropped the moment ANY later
+  // retry succeeded and cleared state.dirty — never resent, never flagged
+  // again. Roster isn't date-scoped, so there's nothing to snapshot here;
+  // retryOfflineQueue() below always resends the CURRENT state.roster.
+  state.offlineRosterPending = true;
   try{ localStorage.setItem('cd_offline_queue', JSON.stringify(state.offlineQueue)); }catch(e){ /* best-effort */ }
+  try{ localStorage.setItem('cd_offline_roster_pending', '1'); }catch(e){ /* best-effort */ }
 }
 function loadOfflineQueueFromStorage(){
   try{
     const raw = localStorage.getItem('cd_offline_queue');
     state.offlineQueue = raw ? (JSON.parse(raw) || {}) : {};
   }catch(e){ state.offlineQueue = {}; }
+  try{ state.offlineRosterPending = localStorage.getItem('cd_offline_roster_pending') === '1'; }catch(e){ state.offlineRosterPending = false; }
 }
 async function retryOfflineQueue(){
   const dates = Object.keys(state.offlineQueue || {});
-  if(!dates.length || state.offlineQueueRetrying || !API_BASE_URL) return;
+  if((!dates.length && !state.offlineRosterPending) || state.offlineQueueRetrying || !API_BASE_URL) return;
   state.offlineQueueRetrying = true;
   render();
   for(const d of dates){
     const entry = state.offlineQueue[d];
     if(!entry) continue;
+    // FIX (2026-09-30, found on review): if this queued date is the one
+    // currently open, state.rows may have moved on since the entry was
+    // queued — more edits made while STILL offline, before this retry ran.
+    // The original version always resent the stale queued snapshot and
+    // then marked dirty=false on success, which would silently mark those
+    // newer edits as "saved" when they were never actually sent — a real,
+    // silent data-loss risk. Always prefer the LIVE in-memory rows/notes/
+    // finalized for the currently-open date (a superset of whatever was
+    // queued); only fall back to the queued snapshot for a date that isn't
+    // open right now, since that's the only copy of it this session has.
+    const rows = (d === state.date) ? state.rows : entry.rows;
+    const notes = (d === state.date) ? state.notes : entry.notes;
+    const finalized = (d === state.date) ? state.finalized : entry.finalized;
     try{
       await Promise.all([
-        apiCall('calls', {method:'POST', body:{date: d, rows: entry.rows}}),
-        apiCall('notes', {method:'POST', body:{date: d, rows: entry.notes}}),
-        apiCall('finalized', {method:'POST', body:{date: d, finalized: entry.finalized}})
+        apiCall('calls', {method:'POST', body:{date: d, rows}}),
+        apiCall('notes', {method:'POST', body:{date: d, rows: notes}}),
+        apiCall('finalized', {method:'POST', body:{date: d, finalized}})
       ]);
       delete state.offlineQueue[d];
       if(d === state.date) state.dirty = false;
@@ -2635,13 +2660,22 @@ async function retryOfflineQueue(){
       // message, so silently staying queued is safer than guessing.
     }
   }
+  if(state.offlineRosterPending){
+    try{
+      await apiCall('roster', {method:'POST', body:{rows: state.roster}}); // always the CURRENT roster — never date-scoped, so no staleness risk the way calls/notes have
+      state.offlineRosterPending = false;
+      try{ localStorage.removeItem('cd_offline_roster_pending'); }catch(e){}
+    }catch(e){
+      // still queued — same reasoning as above
+    }
+  }
   try{ localStorage.setItem('cd_offline_queue', JSON.stringify(state.offlineQueue)); }catch(e){ /* best-effort */ }
   state.offlineQueueRetrying = false;
   render();
 }
 function setupOfflineQueue(){
   loadOfflineQueueFromStorage();
-  if(Object.keys(state.offlineQueue).length) retryOfflineQueue();
+  if(Object.keys(state.offlineQueue).length || state.offlineRosterPending) retryOfflineQueue();
   window.addEventListener('online', retryOfflineQueue);
   // Fallback for browsers/situations where the 'online' event doesn't fire
   // reliably (some mobile PWA contexts) — harmless no-op whenever the
@@ -6387,8 +6421,8 @@ function render(){
       <button class="btn ghost" id="retryLoadBtn">↻ Retry</button>
     </div>` : ''}
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
-    ${Object.keys(state.offlineQueue||{}).length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>📡 Offline — ${Object.keys(state.offlineQueue).length} day(s) of changes saved locally, will sync automatically once you're back online.</span>
+    ${(Object.keys(state.offlineQueue||{}).length || state.offlineRosterPending) ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>📡 Offline — ${[Object.keys(state.offlineQueue).length ? `${Object.keys(state.offlineQueue).length} day(s) of call changes` : '', state.offlineRosterPending ? 'roster changes' : ''].filter(Boolean).join(' and ')} saved locally, will sync automatically once you're back online.</span>
       <button class="btn ghost" id="retryOfflineQueueBtn" ${state.offlineQueueRetrying?'disabled':''}>${state.offlineQueueRetrying ? '<span class="spinner"></span>Retrying…' : '🔄 Retry now'}</button>
     </div>` : ''}
     ${state.lastImportedIds && state.lastImportedIds.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
@@ -14707,10 +14741,30 @@ function portalMatchSuppressedInfo(row){
     }
     const dateBtn = e.target.closest('[data-qj-date]');
     if(dateBtn){
+      // FIX (2026-09-30, found on review): every OTHER way of switching
+      // dates in this app (the date picker, ‹/› buttons) guards against
+      // discarding unsaved work first — this one didn't, so jumping to a
+      // date via Quick Jump while state.dirty was true would silently
+      // throw away whatever hadn't been saved yet. Matches the exact same
+      // guard/reset/dateSwitching-skeleton/re-scan sequence those other
+      // three already use, rather than a shortcut that skips it.
+      if(state.dirty && !confirm('You have unsaved changes that will be lost if you switch dates without saving. Switch anyway?')){
+        return;
+      }
       const d = dateBtn.dataset.qjDate;
       closeQuickJump();
       state.date = d;
-      loadDay(d).then(render);
+      state.dirty = false;
+      state.lastImportedIds = null;
+      state.showImport = false; state.showRoster = false;
+      state.dateSwitching = true;
+      render();
+      loadDay(d).then(()=>{
+        state.dateSwitching = false;
+        render();
+        scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
+        scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
+      });
       return;
     }
     const cmdBtn = e.target.closest('[data-qj-cmd]');
