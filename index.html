@@ -1155,6 +1155,8 @@ let state = {
   closuresView: 'list',
   closuresPerformance: null,
   closuresSummaryPeriod: 'month',
+  closuresListMonth: null,
+  closuresListShowAll: false,
   showSummary: false,
   backingUp: false,
   showUsers: false,
@@ -8832,7 +8834,12 @@ function renderClosuresPanel(){
     let key, label, sortKey;
     if(c.createdAt){
       const d = new Date(c.createdAt);
-      key = d.getFullYear() + '-' + String(d.getMonth()).padStart(2,'0');
+      // FIX (2026-10-01): must match currentMonthKey()/shiftMonthKey()'s
+      // 1-indexed "YYYY-MM" convention (getMonth()+1) — this previously used
+      // the raw 0-indexed getMonth(), which never mattered when groups were
+      // just displayed, but silently mismatched the new month-nav filter
+      // below (e.g. an October closure keyed as "2026-09").
+      key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
       label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
       sortKey = d.getFullYear() * 12 + d.getMonth();
     } else {
@@ -8846,7 +8853,19 @@ function renderClosuresPanel(){
   });
   groups.sort((a,b)=>b.sortKey - a.sortKey);
 
-  const groupsHtml = groups.map(g=>{
+  // Month-at-a-time view for the List tab (requested 2026-10-01): previously
+  // every month's group rendered stacked on one page, so opening Closures
+  // always showed the full all-time history at once. Defaults to the
+  // current month, with ◀/▶ nav (same shiftMonthKey()/monthKeyLabel()
+  // pattern the Incentives/Calendar panels already use) to step to any
+  // other month — e.g. stepping back once from October shows September's
+  // closures on their own. "Show all months" reverts to the old stacked
+  // view for anyone who wants the full history in one scroll.
+  const closuresListMonthKey = state.closuresListMonth || currentMonthKey();
+  const closuresListShowAll = !!state.closuresListShowAll;
+  const groupsToRender = closuresListShowAll ? groups : groups.filter(g=>g.key === closuresListMonthKey);
+
+  const groupsHtml = groupsToRender.map(g=>{
     const rowsHtml = g.rows.map(c=>{
       // Round-by-round timeline (requested 2026-09-27): a native tooltip on
       // the round count, same lightweight pattern as the By Handler
@@ -8895,6 +8914,18 @@ function renderClosuresPanel(){
       </table></div>
     </div>`;
   }).join('');
+
+  const closuresListNavHtml = list.length ? `<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px;align-items:center">
+    <button class="btn ghost" id="closuresListPrevMonth" title="Previous month" ${closuresListShowAll?'disabled':''}>◀</button>
+    <div style="font-weight:700;font-size:14px;min-width:150px;text-align:center">${closuresListShowAll ? 'All months' : escapeHtml(monthKeyLabel(closuresListMonthKey))}</div>
+    <button class="btn ghost" id="closuresListNextMonth" title="Next month" ${closuresListShowAll?'disabled':''}>▶</button>
+    <button class="btn ghost" id="closuresListToggleAll" style="margin-left:auto">${closuresListShowAll ? '📅 Show one month at a time' : '📋 Show all months'}</button>
+  </div>` : '';
+  const closuresListBodyHtml = !list.length
+    ? '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>'
+    : closuresListNavHtml + (groupsToRender.length
+        ? groupsHtml
+        : `<div class="hint">No closures recorded for ${escapeHtml(monthKeyLabel(closuresListMonthKey))}.</div>`);
 
   const view = state.closuresView || 'list';
   const perf = state.closuresPerformance;
@@ -8953,7 +8984,7 @@ function renderClosuresPanel(){
       ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:${(view==='byHandler' && CURRENT_ROLE==='admin')?'0':'auto'}">📊 Export to Excel</button>` : ''}
     </div>
     ${view === 'byHandler' ? renderDrivingPersonBackfillResultHtml() : ''}
-    ${view === 'byHandler' ? perfHtml : view === 'summary' ? renderClosuresSummaryHtml() : (list.length ? groupsHtml : '<div class="hint">Nothing recorded yet — paste a message above to add one.</div>')}
+    ${view === 'byHandler' ? perfHtml : view === 'summary' ? renderClosuresSummaryHtml() : closuresListBodyHtml}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
     <div class="hint" style="margin-top:4px">Want to search any candidate/company and see their full call-by-call timeline? Use ⋯ More → 🔎 Search Everywhere, then tap 📋 Timeline on any result.</div>
     <div class="hint" style="margin-top:4px">Tip: recording a closure from a candidate's own 📋 Timeline (via 🔎 Search Everywhere → 🏆 Closure) links it straight to that exact call — it can never end up "unmatched" the way a pasted-in message sometimes can.</div>
@@ -11109,6 +11140,14 @@ function attachHandlers(conflictIds){
       render();
     };
   });
+  // Closures → All Closures list, month-at-a-time nav (2026-10-01): defaults
+  // to the current month instead of stacking every month on one page.
+  const closuresListPrevBtn = document.getElementById('closuresListPrevMonth');
+  if(closuresListPrevBtn) closuresListPrevBtn.onclick = ()=>{ state.closuresListMonth = shiftMonthKey(state.closuresListMonth || currentMonthKey(), -1); render(); };
+  const closuresListNextBtn = document.getElementById('closuresListNextMonth');
+  if(closuresListNextBtn) closuresListNextBtn.onclick = ()=>{ state.closuresListMonth = shiftMonthKey(state.closuresListMonth || currentMonthKey(), 1); render(); };
+  const closuresListToggleAllBtn = document.getElementById('closuresListToggleAll');
+  if(closuresListToggleAllBtn) closuresListToggleAllBtn.onclick = ()=>{ state.closuresListShowAll = !state.closuresListShowAll; render(); };
 
   // Manual closure↔call matching (the "🔗 Match manually" picker on
   // unmatched closures in the By Handler view — see
