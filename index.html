@@ -865,6 +865,27 @@ tbody tr[data-id]{touch-action:pan-y;}
   0%, 100%{ opacity:.35; }
   50%{ opacity:1; }
 }
+
+/* Pull-to-refresh indicator (mobile home screen only) — a small floating
+   circle that tracks a downward drag from the very top of the page, the
+   same visual language as Instagram/Facebook's own pull-to-refresh, so
+   reloading today's board doesn't require finding a button. Lives outside
+   #app (same reasoning as .global-busy-bar) so a render() mid-drag never
+   resets it. Positioned/animated via direct style writes from
+   setupPullToRefresh() below, not CSS custom properties, since it needs to
+   track a finger 1:1 during the drag itself — the .visible/.refreshing
+   classes only handle the settled (not currently dragging) states. */
+.pull-refresh-indicator{
+  position:fixed; top:0; left:50%; z-index:9998;
+  width:38px; height:38px; border-radius:50%;
+  background:var(--surface); border:1px solid var(--border);
+  box-shadow:0 4px 14px rgba(0,0,0,.28);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transform:translate(-50%,-60px);
+}
+.pull-refresh-indicator.settling{ transition:transform .28s cubic-bezier(.34,1.4,.64,1), opacity .2s ease; }
+.pull-refresh-icon{ font-size:16px; line-height:1; color:var(--teal); display:inline-block; }
 </style>
 </head>
 <body>
@@ -877,6 +898,7 @@ tbody tr[data-id]{touch-action:pan-y;}
      missing: without it, a click that triggers a slow server round-trip
      just sits there looking frozen with no feedback at all. -->
 <div id="globalBusyBar" class="global-busy-bar" aria-hidden="true"></div>
+<div id="pullRefreshIndicator" class="pull-refresh-indicator" aria-hidden="true"><span class="pull-refresh-icon" id="pullRefreshIcon">↓</span></div>
 <div class="app" id="app"><div class="loading-block"><span class="spinner spinner-lg"></span><div>Loading Coverage Desk…</div></div></div>
 <button id="scrollToTopBtn" class="scroll-to-top-btn" title="Scroll to top" aria-label="Scroll to top">↑</button>
 <div id="installBanner" class="install-banner" style="display:none">
@@ -13915,17 +13937,25 @@ function portalMatchSuppressedInfo(row){
   function endSwipe(){
     if(!swipe || !swipe.dragging){ swipe = null; removeHint(); return; }
     const tr = swipe.tr, dx = swipe.dx, id = tr.dataset.id;
-    tr.style.transition = 'transform .18s ease';
     removeHint();
     if(dx > THRESHOLD){
+      tr.style.transition = 'transform .18s ease';
       tr.style.transform = `translateX(${MAX_DRAG}px)`;
       hapticTap(20);
       setTimeout(()=>{ swipeShowAssignPicker(id); }, 120);
     } else if(dx < -THRESHOLD){
+      tr.style.transition = 'transform .18s ease';
       tr.style.transform = `translateX(-${MAX_DRAG}px)`;
       hapticTap(20);
       setTimeout(()=>{ deleteCallRow(id); }, 120);
     } else {
+      // Below the commit threshold — this card is springing back to rest,
+      // not moving toward an action, so it gets a slight overshoot-and-
+      // settle instead of the plain ease used above. Small, but this is
+      // the single most common outcome of touching a card (most swipes
+      // that start don't cross the threshold), so it's the one place a
+      // "native app" feel actually shows up the most.
+      tr.style.transition = 'transform .28s cubic-bezier(.34,1.4,.64,1)';
       tr.style.transform = 'translateX(0)';
     }
     swipe = null;
@@ -13960,6 +13990,107 @@ function portalMatchSuppressedInfo(row){
       else render();
     }
   });
+})();
+// Pull-to-refresh (mobile home screen only) — dragging down from the very
+// top of the page re-pulls today's saved data from the backend, the same
+// gesture Instagram/Facebook use for "check for anything new" instead of
+// hunting for a refresh button. Touch-only (same 'ontouchstart' guard as
+// setupSwipeGestures above), wired once at load, listening on `document`
+// rather than #app since the thing being measured — how far the whole
+// PAGE has been dragged down from scrollTop 0 — isn't specific to any one
+// row or panel the way the swipe gestures are.
+//
+// Deliberately narrow about when it's allowed to trigger, to avoid ever
+// fighting the gestures that already exist:
+//   - only while the home screen itself is showing (no panel/modal open) —
+//     reusing getActivePanelName(), the same check every panel already
+//     goes through, so this never activates over Closures/Notifications/
+//     the Quick Search modal/etc., where a downward drag inside a
+//     scrollable list means something else entirely.
+//   - only starts tracking when the page is already scrolled to the very
+//     top (scrollY === 0) — the standard rule for this gesture everywhere
+//     it exists, so an ordinary scroll never gets hijacked partway down.
+//   - ignores a drag that starts on a row/card at all (closest('tr[data-id]')
+//     is null-checked) so it can never compete with the swipe-assign/
+//     swipe-delete gesture on an individual call card — only a drag
+//     starting on genuinely empty space (the stat cards, the toolbar, the
+//     gap above the list) can pull-to-refresh.
+(function setupPullToRefresh(){
+  if(!('ontouchstart' in window)) return;
+  const indicator = document.getElementById('pullRefreshIndicator');
+  const icon = document.getElementById('pullRefreshIcon');
+  if(!indicator || !icon) return;
+
+  const THRESHOLD = 64; // px of actual (resisted) travel before a release triggers a refresh
+  const MAX_PULL = 90;
+  let startY = null;
+  let pulling = false;
+  let refreshing = false;
+
+  function setIndicatorY(px){
+    indicator.style.transform = `translate(-50%, ${px}px)`;
+  }
+
+  document.addEventListener('touchstart', (e)=>{
+    if(refreshing) return;
+    if(getActivePanelName()) return; // only the home screen
+    if((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
+    if(e.target.closest('tr[data-id]')) return; // leave call-card swipes alone
+    startY = e.touches[0].clientY;
+    pulling = false;
+  }, {passive:true});
+
+  document.addEventListener('touchmove', (e)=>{
+    if(startY === null || refreshing) return;
+    const dy = e.touches[0].clientY - startY;
+    if(dy <= 0){ return; } // only care about pulling DOWN
+    if((window.scrollY || document.documentElement.scrollTop || 0) > 0){ startY = null; return; } // scrolled away mid-gesture
+    pulling = true;
+    // Resistance curve so it doesn't feel like a 1:1 drag forever — same
+    // "gets harder the further you pull" feel as the native app version.
+    const pull = Math.min(MAX_PULL, dy * 0.45);
+    indicator.classList.remove('settling');
+    indicator.classList.add('visible');
+    indicator.style.opacity = String(Math.min(1, pull / (THRESHOLD*0.7)));
+    setIndicatorY(10 + pull);
+    icon.style.transform = pull >= THRESHOLD ? 'rotate(180deg)' : 'rotate(0deg)';
+    icon.style.transition = 'transform .15s ease';
+  }, {passive:true});
+
+  document.addEventListener('touchend', async ()=>{
+    if(startY === null) return;
+    const wasPulling = pulling;
+    startY = null; pulling = false;
+    if(!wasPulling) return;
+    const pulledFar = indicator.style.opacity === '1' && icon.style.transform === 'rotate(180deg)';
+    if(!pulledFar){
+      indicator.classList.add('settling');
+      indicator.style.opacity = '0';
+      setIndicatorY(-60);
+      return;
+    }
+    // Triggered — hold the indicator in place with a spinner while the
+    // real refresh (the same loadDay() every date-switch/date-nav button
+    // already uses) runs, exactly like the app's other loading states.
+    refreshing = true;
+    hapticTap(15);
+    indicator.classList.add('settling');
+    setIndicatorY(46);
+    icon.outerHTML = '<span class="spinner spinner-lg" id="pullRefreshIcon" style="margin:0"></span>';
+    try{
+      await loadDay(state.date);
+    }catch(e){ /* loadDay already handles its own error states (AUTH_FAILED etc.) */ }
+    render();
+    indicator.classList.add('settling');
+    indicator.style.opacity = '0';
+    setIndicatorY(-60);
+    setTimeout(()=>{
+      // Restore the plain arrow for the next pull, now that the spin is done.
+      const spinnerEl = document.getElementById('pullRefreshIcon');
+      if(spinnerEl) spinnerEl.outerHTML = '<span class="pull-refresh-icon" id="pullRefreshIcon">↓</span>';
+      refreshing = false;
+    }, 280);
+  }, {passive:true});
 })();
 function swipeShowAssignPicker(rowId){
   state.pendingSwipeAssignRowId = rowId;
