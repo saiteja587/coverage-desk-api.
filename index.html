@@ -847,18 +847,23 @@ tbody tr[data-id]{touch-action:pan-y;}
 
 .global-busy-bar{
   position:fixed; top:0; left:0; right:0; height:3px; z-index:9999;
-  background:var(--teal); transform-origin:left; transform:scaleX(0);
+  background:var(--teal); transform:none;
   opacity:0; pointer-events:none;
-  transition:transform .2s ease, opacity .15s ease;
+  transition:opacity .15s ease;
 }
+/* FIX (2026-09-30): the old version grew the bar left-to-right on a loop
+   (scaleX 0.08 -> 0.6 -> 0.95, repeat) — a sweeping motion that's genuinely
+   tiring to track with your eyes when it's sitting there for 20-30+ seconds
+   during a slow/cold-start sync. Swapped for a full-width bar that just
+   breathes (opacity up and down) in place — same "something's happening"
+   signal, nothing crossing the screen. */
 .global-busy-bar.active{
   opacity:1;
-  animation:globalBusyPulse 1.1s ease-in-out infinite;
+  animation:globalBusyPulse 1.4s ease-in-out infinite;
 }
 @keyframes globalBusyPulse{
-  0%{ transform:scaleX(0.08); }
-  50%{ transform:scaleX(0.6); }
-  100%{ transform:scaleX(0.95); }
+  0%, 100%{ opacity:.35; }
+  50%{ opacity:1; }
 }
 </style>
 </head>
@@ -6043,10 +6048,25 @@ function render(){
         ${state.lastDedupeInfo.removed.map(r=>`<div>✕ <b>${escapeHtml(r.candidate)}</b>${r.time?' — '+escapeHtml(r.time):''}${r.company?' — '+escapeHtml(r.company):''}</div>`).join('')}
       </div>
     </div>` : ''}
-    ${state.portalSyncError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>📡 Portal sync error: ${escapeHtml(state.portalSyncError)}</span>
+    ${state.portalSyncError ? (()=>{
+      // FIX (2026-09-30): a plain timeout ("server's slow to wake up, try
+      // again") isn't a real error — it used to get the same loud red
+      // coral banner as an actual failure (bad credentials, connection
+      // refused), which reads as alarming for something that just needs a
+      // retry. Timeouts now get the calmer amber "taking a while" styling
+      // (same language already used for the cache-warning banner below)
+      // and softer copy; a genuine error keeps the red banner so it still
+      // stands out.
+      const isTimeout = /took too long to respond/i.test(state.portalSyncError);
+      const label = isTimeout ? '⏳ Sync is taking longer than usual' : '📡 Portal sync error';
+      const color = isTimeout ? 'var(--amber)' : 'var(--coral)';
+      const bg = isTimeout ? 'var(--amber-dim)' : 'var(--coral-dim)';
+      const border = isTimeout ? '#5A4A24' : '#5A2A24';
+      return `<div class="hint" style="color:${color};background:${bg};border:1px solid ${border};padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>${label}: ${escapeHtml(state.portalSyncError)}</span>
       <button class="btn ghost" id="portalSyncErrorRetryBtn" style="flex-shrink:0">↻ Retry</button>
-    </div>` : ''}
+    </div>`;
+    })() : ''}
     ${(state.portalSyncCacheWarning && !state.portalSyncError) ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>⚠ ${escapeHtml(state.portalSyncCacheWarning)}</span>
       <button class="btn ghost" id="dismissPortalCacheWarningBtn" style="flex-shrink:0">Dismiss</button>
@@ -8840,7 +8860,9 @@ function renderPortalSyncPanel(){
     : '—';
   let body = '';
   if(state.portalSyncError){
-    body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.portalSyncError)}</div>`;
+    // Same timeout-vs-real-error softening as the banner above renderCalls().
+    const isTimeout = /took too long to respond/i.test(state.portalSyncError);
+    body = `<div class="hint" style="color:${isTimeout?'var(--amber)':'var(--coral)'}">${isTimeout?'⏳':'⚠'} ${escapeHtml(state.portalSyncError)}</div>`;
   } else if(!d){
     body = `<div class="hint">${state.portalSyncLoading ? '<span class="spinner"></span>Loading…' : 'No data yet — click one of the sync buttons above.'}</div>`;
   } else {
