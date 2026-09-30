@@ -454,6 +454,7 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .status-note-row.status-note-rescheduled td{background:var(--violet-dim);color:var(--violet);}
 .status-note-row.status-note-cancelled td{background:var(--coral-dim);color:var(--coral);}
 .status-note-row.status-note-not_responded td{background:var(--amber-dim);color:var(--amber);}
+.status-note-row.status-note-no_invite td{background:var(--sky-dim);color:var(--sky);}
 .status-note-icon{margin-right:5px;}
 
 .note-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 6px;flex-shrink:0;}
@@ -577,6 +578,7 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   tbody tr.row-status-rescheduled{box-shadow:inset 4px 0 0 var(--violet), 0 2px 8px rgba(0,0,0,.22);}
   tbody tr.row-status-cancelled{box-shadow:inset 4px 0 0 var(--coral), 0 2px 8px rgba(0,0,0,.22);}
   tbody tr.row-status-not_responded{box-shadow:inset 4px 0 0 var(--amber), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-no_invite{box-shadow:inset 4px 0 0 var(--sky), 0 2px 8px rgba(0,0,0,.22);}
   /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
      full-width blocks, not the flex meta-grid the main data row uses. */
   tbody tr.doubt-note-row,
@@ -1516,6 +1518,15 @@ function isViewingToday(){
 function statusBadgeInfo(status){
   if(status === 'cancelled') return { icon:'✕', label:'Cancelled', shortLabel:'CANCELLED', colorVar:'var(--coral)' };
   if(status === 'not_responded') return { icon:'☎', label:'Not Responded', shortLabel:'NOT RESPONDED', colorVar:'var(--amber)' };
+  // Added 2026-09-30: "call didn't happen because the invite/link never
+  // reached the candidate" — a coordination/technical failure, distinct
+  // from the candidate not responding or either side asking to reschedule.
+  // Deliberately its own status (not folded into 'cancelled') so it's
+  // visually distinguishable at a glance and, more importantly, NOT
+  // counted as a "bad outcome" in client-reliability/repeat-no-show
+  // tracking (RESCHED_STATUSES deliberately does not include it) — this
+  // isn't the candidate or client being unreliable.
+  if(status === 'no_invite') return { icon:'📨', label:'Didn’t Receive Invite', shortLabel:'NO INVITE', colorVar:'var(--sky)' };
   return { icon:'↻', label:'Rescheduled', shortLabel:'RESCHED.', colorVar:'var(--violet)' };
 }
 // Clears a "just happened" confirmation banner (state[stateKey]) on its own
@@ -3167,7 +3178,7 @@ function exportDayToExcel(){
     return;
   }
   const teamNames = new Set(state.roster.map(p=>p.team));
-  const statusLabels = { rescheduled: 'Rescheduled', cancelled: 'Cancelled', not_responded: 'Not Responded' };
+  const statusLabels = { rescheduled: 'Rescheduled', cancelled: 'Cancelled', not_responded: 'Not Responded', no_invite: 'Didn’t Receive Invite' };
 
   const callRows = state.rows.slice().sort((a,b)=>{
     const teamA = teamOfAssignee(a.assignee, teamNames) || 'Zzz Unassigned';
@@ -3446,8 +3457,22 @@ function looksLikeRescheduleLine(line){
   // pattern for a candidate who wants to handle the interview on their
   // own, unassisted — not a reschedule/cancel/no-response in the literal
   // sense, but tracked the same way (folded into 'rescheduled').
+  // Added 2026-09-30: "call didn't happen... he didn't receive the
+  // invitation link" — a real reported message that this parser was
+  // silently dropping entirely (no "reschedule"/"cancel"/"not responding"
+  // word anywhere in it). Catches the common phrasings for an invite/link
+  // that never reached the candidate: "didn't receive/get the invite(link)",
+  // "invite/link wasn't received/sent", "no invite received", plus a bare
+  // "didn't happen" when the same line also mentions "invit\w*" or "link"
+  // somewhere, so it's still scoped to an invite-related no-show, not any
+  // arbitrary "didn't happen" text.
+  const hasNoInviteWord = /didn.t\s+(?:receive|get)\s+(?:the\s+)?(?:invit\w*|link)/i.test(line)
+    || /(?:invit\w*|link)\s+(?:wasn.t|was\s+not|never)\s+(?:received|sent|shared)/i.test(line)
+    || /no\s+invit\w*\s+(?:received|sent)/i.test(line)
+    || (/didn.t\s+happen/i.test(line) && /invit\w*|link/i.test(line));
   const hasStatusWord = /\b(reschedul\w*|cancel\w*|(?:not|no)\s+(?:\w+\s+){0,2}respon\w*)\b/i.test(line)
-    || /candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(line);
+    || /candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(line)
+    || hasNoInviteWord;
   return hasStatusWord;
 }
 function parseRescheduleText(text){
@@ -3499,9 +3524,18 @@ function parseRescheduleText(text){
     const companyMatch = full.match(/Interview\s*[–\-]\s*([^–\-]+?)\s*[–\-]/i);
     if(companyMatch) company = companyMatch[1].trim();
 
+    // Same phrasing set as hasNoInviteWord in looksLikeRescheduleLine()
+    // above — checked before cancel/reschedule so a message mentioning
+    // both ("didn't receive the invite, need to reschedule") is tagged by
+    // its actual cause rather than the generic word that happens to also
+    // appear.
+    const noInviteMatch = /didn.t\s+(?:receive|get)\s+(?:the\s+)?(?:invit\w*|link)/i.test(full)
+      || /(?:invit\w*|link)\s+(?:wasn.t|was\s+not|never)\s+(?:received|sent|shared)/i.test(full)
+      || /no\s+invit\w*\s+(?:received|sent)/i.test(full);
     let status = null;
     if(/(?:not|no)\s+(?:\w+\s+){0,2}respon\w*/i.test(full)) status = 'not_responded';
     else if(/candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(full)) status = 'rescheduled'; // candidate handling it independently — tracked as a reschedule variant, see reason text below
+    else if(noInviteMatch) status = 'no_invite';
     else if(/cancel/i.test(full)) status = 'cancelled';
     else if(/reschedul/i.test(full)) status = 'rescheduled';
 
@@ -3515,6 +3549,7 @@ function parseRescheduleText(text){
     const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
     if(reasonMatch) reason = reasonMatch[1].trim();
     else if(/candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(full)) reason = 'Candidate handling interview independently';
+    else if(status === 'no_invite') reason = 'Didn’t receive the invitation link'; // real messages for this case rarely use "due to..." phrasing, so default it directly rather than leaving it blank
     else {
       const toMatch = full.match(/reschedul\w*\s+to\s+([^.@]+?)(?:\s+sir\.?)?(?:\s*@|$)/i);
       if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
@@ -4068,7 +4103,7 @@ function getTabRows(view){
   if(view==='all') return all;
   if(view==='2nd') return all.filter(r=>isAdvancedRound(r.round));
   if(view==='doubts') return all.filter(r=>r.doubts && r.doubts.length>0);
-  if(view==='rescheduled') return all.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded');
+  if(view==='rescheduled') return all.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded' || r.status==='no_invite');
   return all.filter(r=>!isAdvancedRound(r.round));
 }
 
@@ -4422,11 +4457,19 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
 async function scanAllReschedules(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
   const results = allRows
-    .filter(r => r.status && ['rescheduled','cancelled','not_responded'].includes(r.status))
+    .filter(r => r.status && ['rescheduled','cancelled','not_responded','no_invite'].includes(r.status))
     .map(r => ({ date: r._date, time: r.time, candidate: r.candidate, company: r.company, status: r.status, assignee: r.assignee, statusFields: r.statusFields }));
   results.sort((a,b)=> b.date.localeCompare(a.date) || String(b.time||'').localeCompare(String(a.time||'')));
   return results;
 }
+// Deliberately does NOT include 'no_invite' (added 2026-09-30, "call didn't
+// happen because the invite/link never reached the candidate") — everything
+// here is used to score client reliability (scanClientReliability) and flag
+// a candidate's own repeat no-shows (findPriorRescheduleWarning), and an
+// invite that never arrived is a coordination/technical failure, not the
+// candidate or client being unreliable. It still shows up in the plain
+// Rescheduled/Cancelled list views and the cross-date reschedule log above
+// (scanAllReschedules) — just not counted as a "bad outcome" here.
 const RESCHED_STATUSES = ['rescheduled','cancelled','not_responded'];
 // One rollup per client, across every saved date: how many of their calls
 // ended up Rescheduled/Cancelled/Not-Responded, as a rate rather than a flat
@@ -5852,7 +5895,7 @@ function render(){
   const advancedRows = sortedAll.filter(r=>isAdvancedRound(r.round));
   const doubtRows = sortedAll.filter(r=>r.doubts && r.doubts.length>0);
   const statusRows = sortedAll.filter(r=>r.status);
-  const rescheduledRows = sortedAll.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded');
+  const rescheduledRows = sortedAll.filter(r=>r.status==='rescheduled' || r.status==='cancelled' || r.status==='not_responded' || r.status==='no_invite');
   const sortedRows = getTabRows(state.view);
   const sum = summarize(sortedRows, conflictIds);
 
@@ -6060,7 +6103,7 @@ function render(){
         <button class="tab-btn ${state.view==='1st'?'active':''}" data-view="1st" title="Shortcut: 2">1st Round <span class="n">${firstRoundRows.length}</span></button>
         <button class="tab-btn ${state.view==='2nd'?'active':''}" data-view="2nd" title="Shortcut: 3">2nd Round &amp; Above <span class="n">${advancedRows.length}</span></button>
         <button class="tab-btn ${state.view==='doubts'?'active':''}" data-view="doubts" style="${doubtRows.length?'color:var(--amber)':''}" title="Shortcut: 4">Doubts <span class="n">${doubtRows.length}</span></button>
-        <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5">↻ Rescheduled/Cancelled/No Response <span class="n">${rescheduledRows.length}</span></button>
+        <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5 — also includes 📨 Didn't Receive Invite">↻ Rescheduled/Cancelled/No Response <span class="n">${rescheduledRows.length}</span></button>
       </div>
     </div>
     <div class="hint keyboard-hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
@@ -7358,10 +7401,10 @@ function renderNotificationsPanel(){
   } else if(active === 'allResched'){
     if(state.allReschedulesData === null){
       content = `
-        <div class="hint" style="margin-bottom:10px">Scans every date you've saved calls for and lists every call ever marked Rescheduled, Cancelled, or Not Responded — candidate, date, time, and client, all in one place.</div>
+        <div class="hint" style="margin-bottom:10px">Scans every date you've saved calls for and lists every call ever marked Rescheduled, Cancelled, Not Responded, or Didn't Receive Invite — candidate, date, time, and client, all in one place.</div>
         <button class="btn primary" id="runAllReschedScan">🔍 Scan for all rescheduled/cancelled calls</button>`;
     } else if(state.allReschedulesData.length===0){
-      content = `<div class="hint">No rescheduled/cancelled/no-response calls found across your saved dates yet. <button class="btn ghost" id="runAllReschedScan" style="margin-left:8px">Re-scan</button></div>`;
+      content = `<div class="hint">No rescheduled/cancelled/no-response/no-invite calls found across your saved dates yet. <button class="btn ghost" id="runAllReschedScan" style="margin-left:8px">Re-scan</button></div>`;
     } else if(state.hideAllNotifAllResched){
       content = `<div class="hint">Hidden. <button class="btn ghost" id="unhideAllResched">Show ${state.allReschedulesData.length} result(s) again</button></div>`;
     } else {
@@ -7380,7 +7423,7 @@ function renderNotificationsPanel(){
       `).join('');
       content = `
         <div class="row" style="margin-bottom:8px">
-          <div class="hint">${state.allReschedulesData.length} rescheduled/cancelled/no-response call(s) across your saved dates, most recent first.</div>
+          <div class="hint">${state.allReschedulesData.length} rescheduled/cancelled/no-response/no-invite call(s) across your saved dates, most recent first.</div>
           <span style="display:flex;gap:6px"><button class="btn ghost" id="hideAllResched">Hide all</button><button class="btn ghost" id="runAllReschedScan">Re-scan</button></span>
         </div>
         <input type="text" class="notif-search" id="notifSearchAllResched" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchAllResched||'')}">
@@ -7877,9 +7920,9 @@ function renderRescheduleImportPanel(){
   return `<div class="import-panel" style="border:none;padding:0;margin-bottom:0;box-shadow:none">
     <div class="hint" style="margin-bottom:10px">Paste WhatsApp-style reschedule/cancel messages for calls that are <b>already saved</b> in this day's list — this only updates the status/tag on matching calls, it does not create new calls. Existing calls in the DB will be scanned for a match by candidate name and time.</div>
     ${pasteButtonHtml('rescheduleImportText')}
-    <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir"></textarea>
+    <textarea id="rescheduleImportText" placeholder="Paste reschedule/cancel messages, e.g.:&#10;Vamsi Rokkam – 2:30 PM IST – rescheduled from candidate side, reschedule to tomorrow sir&#10;Lakshmi Prasanna Potla – 10:00 PM IST – cancelled due to client side sir&#10;Rohit Garjakuntla (UK) – 4:30 PM call didn't happen as he didn't receive the invitation link"></textarea>
     <div class="row">
-      <div class="hint">Each message must include a name, a time (e.g. 2:30 PM, or a bare "7:00"), and the word "reschedule", "cancel", or "not responding"/"no response".</div>
+      <div class="hint">Each message must include a name, a time (e.g. 2:30 PM, or a bare "7:00"), and the word "reschedule", "cancel", "not responding"/"no response", or a mention of not receiving the invite/link.</div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="cancelRescheduleImport">Cancel</button>
         <button class="btn primary" id="parseRescheduleBtn">Parse messages</button>
@@ -7898,6 +7941,7 @@ function renderRescheduleImportPanel(){
             <option value="rescheduled">↻ Rescheduled</option>
             <option value="cancelled">✕ Cancelled</option>
             <option value="not_responded">☎ Not Responded</option>
+            <option value="no_invite">📨 Didn't Receive Invite</option>
           </select>
         </div>
         <div style="flex:2;min-width:200px">
@@ -9747,8 +9791,8 @@ function renderEmpty(){
   if(state.view==='rescheduled'){
     return `<div class="empty-state">
       <div class="empty-state-icon">↻</div>
-      <h3>No rescheduled, cancelled, or no-response calls</h3>
-      <p>Calls tagged ↻ Rescheduled, ✕ Cancelled, or ☎ Not Responded — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
+      <h3>No rescheduled, cancelled, no-response, or no-invite calls</h3>
+      <p>Calls tagged ↻ Rescheduled, ✕ Cancelled, ☎ Not Responded, or 📨 Didn't Receive Invite — via "Import Reschedule/Cancel" or the auto-detected messages in a normal import — will show up here.</p>
     </div>`;
   }
   const isReadOnly = CURRENT_ROLE === 'user' || CURRENT_ROLE === 'team_lead';
