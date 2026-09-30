@@ -697,6 +697,23 @@ tbody tr[data-id]{touch-action:pan-y;}
 .my-name-picker-list{display:flex;flex-direction:column;gap:2px;}
 .my-name-picker-item{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
 .my-name-picker-team{color:var(--text-faint);font-size:11px;}
+
+/* "..." quick-action sheet (mobile card view) — deliberately its OWN class
+   names (.quick-action-item, not .my-name-picker-item) even though the
+   visual style is identical, so its clicks can never be accidentally
+   caught by the swipe-assign picker's own delegated click listener, which
+   matches on .my-name-picker-item globally regardless of which overlay is
+   actually open. */
+.quick-action-item{width:100%;background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.quick-action-status-label{color:var(--text-muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin:10px 2px 6px;}
+.quick-action-status-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.quick-action-status-chip{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:12.5px;padding:8px 12px;border-radius:20px;cursor:pointer;}
+.quick-action-status-chip:active{background:var(--teal-dim);color:var(--teal);border-color:var(--teal);}
+.row-quickaction-btn{display:none;}
+@media (max-width:700px){
+  .row-quickaction-btn{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:19px;font-weight:700;line-height:1;padding:3px 9px;letter-spacing:1px;}
+  .row-quickaction-btn:active{color:var(--teal);}
+}
 .swipe-assign-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);font-weight:600;margin:12px 2px 6px;}
 .swipe-assign-group-label:first-child{margin-top:0;}
 
@@ -1177,6 +1194,14 @@ let state = {
   confirmedStudentMatches: new Set(),
   showSwipeAssignPicker: false,
   pendingSwipeAssignRowId: null,
+  // "..." quick-action sheet — Instagram-style bottom sheet for a single
+  // call card, opened via its own visible button (mobile card view) so a
+  // person doesn't need to remember a swipe direction to reassign, mark a
+  // status, jump to that candidate's Timeline, or delete — the four things
+  // that otherwise each need their own separate navigation. Holds just the
+  // row id; the sheet itself always reads the live row from state.rows so
+  // it can never show stale data.
+  quickActionRowId: null,
   rejectedStudentMatches: new Set(),
   showClipboardPicker: false,
   clipboardPickerMessages: [],
@@ -6193,6 +6218,7 @@ function render(){
     </div>`;
     })() : ''}
     ${state.showQuickSearchModal ? renderQuickSearchModal() : ''}
+    ${state.quickActionRowId ? renderQuickActionSheet() : ''}
   `;
 
   attachHandlers(conflictIds);
@@ -6908,6 +6934,48 @@ function renderQuickSearchModal(){
         <button class="btn primary" id="runQuickSearchBtn">Search</button>
       </div>
       <div class="my-name-picker-list">${body}</div>
+    </div>
+  </div>`;
+}
+// "..." quick-action sheet for a single call card (mobile) — the fewer-
+// taps alternative to the swipe gesture: reassign, mark a status, jump to
+// that candidate's Timeline, or delete, all from one tap on the ⋯ button
+// instead of remembering which direction to swipe for which action (and
+// swipe only ever covered assign/delete — there was never a swipe-based
+// way to mark a status or open the Timeline at all). Reuses the same
+// .my-name-picker-overlay/-card bottom-sheet chrome the swipe-assign
+// picker and Quick Search already use, but its own .quick-action-item
+// class for the buttons themselves — see the CSS comment above for why
+// that has to be a distinct class, not a shared one.
+//
+// Always reads the row live from state.rows (never a snapshot), so if
+// something else changes or removes the row while this happens to still
+// be open, the sheet reflects that rather than acting on stale data.
+function renderQuickActionSheet(){
+  const row = state.rows.find(r=>r.id===state.quickActionRowId);
+  if(!row) return '';
+  const canEdit = CURRENT_ROLE !== 'user';
+  const statusOptions = [
+    { v:'rescheduled', icon:'↻', label:'Rescheduled' },
+    { v:'cancelled', icon:'✕', label:'Cancelled' },
+    { v:'not_responded', icon:'☎', label:'Not Responded' },
+    { v:'no_invite', icon:'📨', label:'No Invite' },
+  ];
+  return `<div class="my-name-picker-overlay" id="quickActionSheetOverlay">
+    <div class="my-name-picker-card">
+      <div class="my-name-picker-title">${escapeHtml(row.candidate||'(no name)')}</div>
+      <div class="my-name-picker-sub">${escapeHtml(row.time||'')}${row.company?' — '+escapeHtml(row.company):''}${row.status?` · currently ${escapeHtml(statusBadgeInfo(row.status).icon+' '+statusBadgeInfo(row.status).label)}`:''}</div>
+      <div class="my-name-picker-list">
+        ${canEdit ? `<button class="quick-action-item" data-qa="assign" data-id="${row.id}"><span>🔁 Assign / Reassign</span><span>›</span></button>` : ''}
+        <button class="quick-action-item" data-qa="timeline" data-id="${row.id}"><span>📋 View Timeline</span><span>›</span></button>
+        ${canEdit ? `<div class="quick-action-status-label">Mark status</div>
+        <div class="quick-action-status-row">
+          ${statusOptions.map(s=>`<button class="quick-action-status-chip" data-qa="status" data-status="${s.v}" data-id="${row.id}">${s.icon} ${escapeHtml(s.label)}</button>`).join('')}
+        </div>` : ''}
+        ${(canEdit && row.status) ? `<button class="quick-action-item" data-qa="clearstatus" data-id="${row.id}"><span>Clear current status</span></button>` : ''}
+        ${canEdit ? `<button class="quick-action-item" data-qa="delete" data-id="${row.id}" style="color:var(--coral)"><span>🗑 Delete call</span></button>` : ''}
+        <button class="quick-action-item" data-qa="cancel"><span>Cancel</span></button>
+      </div>
     </div>
   </div>`;
 }
@@ -9770,7 +9838,7 @@ function renderTable(rows, conflictIds, clientConflicts){
         const suppressed = portalSuppressed;
         if(suppressed) return `<button class="portal-check-btn" data-id="${r.id}" style="color:var(--amber)" title="Interview Portal has a record for this candidate under this team, but only for ${escapeHtml(suppressed.mostRecent)} — not for today. Not shown as a match to avoid guessing wrong. Click Sync Today to check for a current record.">⚠</button>`;
         return '';
-      })()}${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button></td>
+      })()}${(state.view==='1st' || (state.view==='all' && !isAdvancedRound(r.round)))?`<button class="move-2nd" data-move="${r.id}" title="Move to 2nd Round & Above">→2nd</button>`:''}${(state.view==='2nd' || (state.view==='all' && isAdvancedRound(r.round)))?`<button class="move-1st" data-move1st="${r.id}" title="Move to 1st Round — for a call that landed in 2nd Round & Above by mistake">→1st</button>`:''}<button class="row-del" data-del="${r.id}" title="Remove">✕</button><button class="row-quickaction-btn" data-quickaction="${r.id}" title="More actions">⋯</button></td>
     </tr>
     ${hasDoubts?`<tr class="doubt-note-row"><td colspan="${colCount}"><span class="doubt-note-icon">❔</span> ${escapeHtml(r.doubts.join(' '))}</td></tr>`:''}
     ${r.status?`<tr class="status-note-row status-note-${r.status}"><td colspan="${colCount}"><span class="status-note-icon">${statusBadgeInfo(r.status).icon}</span> ${escapeHtml((r.statusFields||[]).filter(f=>(f.value||'').trim()).map(f=>f.label+': '+f.value).join('  •  ') || (statusBadgeInfo(r.status).label + ' — no reason given'))}</td></tr>`:''}
@@ -12491,6 +12559,12 @@ function attachHandlers(conflictIds){
         deleteCallRow(id);
         return;
       }
+      const quickActionBtn = e.target.closest('[data-quickaction]');
+      if(quickActionBtn){
+        state.quickActionRowId = id;
+        render();
+        return;
+      }
       const resolveBtn = e.target.closest('.resolve-doubt');
       if(resolveBtn){
         const row = state.rows.find(r=>r.id===id);
@@ -12586,7 +12660,7 @@ function updateBodyScrollLock(){
   // wired for it too — see the clipboardPickerOverlay handler), but was
   // missed from this list when it was first written, so opening it left the
   // page scrollable underneath it same as the original reported bug.
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker);
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -13991,6 +14065,82 @@ function portalMatchSuppressedInfo(row){
     }
   });
 })();
+// "..." quick-action sheet — its own independent delegated click listener
+// on #app (same reasoning as the swipe-assign picker's listener just
+// above: fine to have more than one listener for the same event type on
+// one node). Not touch-gated like the swipe/pull-to-refresh setups above —
+// this sheet is opened by a real, visible button (not a gesture), so it
+// should work identically on a mouse too, not just touch.
+(function setupQuickActionSheet(){
+  const appEl = document.getElementById('app');
+  if(!appEl) return;
+  appEl.addEventListener('click', (e)=>{
+    if(!state.quickActionRowId) return;
+    if(e.target.id === 'quickActionSheetOverlay' || e.target.closest('[data-qa="cancel"]')){
+      state.quickActionRowId = null;
+      render();
+      return;
+    }
+    const btn = e.target.closest('[data-qa]');
+    if(!btn) return;
+    const action = btn.dataset.qa;
+    const rowId = state.quickActionRowId;
+    const row = state.rows.find(r=>r.id===rowId);
+    if(!row) return; // row vanished from under the sheet — nothing safe to act on
+
+    if(action === 'assign'){
+      state.quickActionRowId = null;
+      swipeShowAssignPicker(rowId);
+      return;
+    }
+    if(action === 'timeline'){
+      state.quickActionRowId = null;
+      render();
+      openCandidateProfile(row.candidate);
+      return;
+    }
+    if(action === 'delete'){
+      state.quickActionRowId = null;
+      deleteCallRow(rowId);
+      return;
+    }
+    if(action === 'clearstatus'){
+      const label = statusBadgeInfo(row.status).label.toLowerCase();
+      if(!confirm(`Clear the "${label}" tag from "${row.candidate||'this call'}"? The call itself stays exactly where it is — only the ${label} status is removed.`)){
+        return;
+      }
+      row.status = '';
+      row.statusFields = [];
+      state.quickActionRowId = null;
+      render();
+      return;
+    }
+    if(action === 'status'){
+      const status = btn.dataset.status;
+      // Same review-before-commit screen every other status change already
+      // goes through (paste-box parse, or the manual "Can't find the
+      // message" fallback in the Reschedule/Cancel import) — this is just
+      // a faster way to REACH that screen for a call already right in
+      // front of you, with the row pre-selected instead of needing to
+      // find it again in a dropdown of every call on the day.
+      state.quickActionRowId = null;
+      state.rescheduleReview = [{
+        raw: `Marked from the call card: ${row.candidate||'(no name)'} — ${row.time||''}${row.company?' — '+row.company:''}`,
+        candidate: row.candidate || '',
+        time: row.time || '',
+        company: row.company || '',
+        status: status,
+        side: '',
+        reason: '',
+        selectedRowId: row.id,
+        autoMatched: false,
+        skip: false,
+      }];
+      render();
+      return;
+    }
+  });
+})();
 // Pull-to-refresh (mobile home screen only) — dragging down from the very
 // top of the page re-pulls today's saved data from the backend, the same
 // gesture Instagram/Facebook use for "check for anything new" instead of
@@ -14034,6 +14184,7 @@ function portalMatchSuppressedInfo(row){
   document.addEventListener('touchstart', (e)=>{
     if(refreshing) return;
     if(getActivePanelName()) return; // only the home screen
+    if(state.quickActionRowId || state.showSwipeAssignPicker) return; // a floating sheet/picker is open
     if((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
     if(e.target.closest('tr[data-id]')) return; // leave call-card swipes alone
     startY = e.touches[0].clientY;
@@ -14293,13 +14444,14 @@ window.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape'){
     // (2026-09-29, part 2) showClipboardPicker added here too — same
     // fixed-overlay pattern as the others, just missed on the first pass.
-    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker){
+    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showQuickSearchModal = false;
       state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
       state.showClipboardPicker = false;
+      state.quickActionRowId = null;
       render();
       return;
     }
