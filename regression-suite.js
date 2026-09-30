@@ -418,6 +418,10 @@ async function main() {
     backToCombinedCheck.activePanelName === 'closures' && backToCombinedCheck.showClosures && backToCombinedCheck.hasTextarea,
     JSON.stringify(backToCombinedCheck));
 
+  // NOTE (2026-10-01): the List tab now defaults to showing only the
+  // CURRENT month (see "Closures month-nav" checks further down) — so this
+  // multi-month grouping check explicitly switches on "Show all months"
+  // first, which is the view that still stacks every month on one page.
   const monthGroupingCheck = await page.evaluate(() => {
     state.closures = [
       { id: 1, candidate: 'A', company: 'X', salary: '$1', createdAt: new Date(2026, 8, 15).toISOString() },
@@ -425,6 +429,7 @@ async function main() {
       { id: 3, candidate: 'C', company: 'Z', salary: '$3', createdAt: new Date(2026, 7, 20).toISOString() },
     ];
     state.closuresLoaded = true;
+    state.closuresListShowAll = true;
     render();
     const text = document.querySelector('.import-panel').textContent;
     return {
@@ -436,6 +441,41 @@ async function main() {
   check('Closures UI', 'Records are grouped month by month, most recent month first',
     monthGroupingCheck.hasSeptember && monthGroupingCheck.hasAugust && monthGroupingCheck.septemberBeforeAugust,
     JSON.stringify(monthGroupingCheck));
+  // Reset so later checks in this suite see the new default (current-month) view.
+  await page.evaluate(() => { state.closuresListShowAll = false; render(); });
+
+  // Closures month-nav (added 2026-10-01): opening the List tab shows only
+  // the current month by default, with ◀/▶ to step to any other month and
+  // a "Show all months" toggle back to the old stacked view. Full dedicated
+  // coverage lives in test_closures_month_nav.js — this is a lightweight
+  // smoke check that the feature is wired up in the shipped build.
+  const monthNavCheck = await page.evaluate(() => {
+    const now = new Date();
+    state.closures = [
+      { id: 101, candidate: 'This Month Candidate', company: 'X', salary: '$1', createdAt: now.toISOString() },
+      { id: 102, candidate: 'Last Month Candidate', company: 'Y', salary: '$2', createdAt: new Date(now.getFullYear(), now.getMonth() - 1, 10).toISOString() },
+    ];
+    state.closuresListMonth = null;
+    state.closuresListShowAll = false;
+    render();
+    const before = document.querySelector('.import-panel').textContent;
+    return {
+      navButtonsExist: !!document.getElementById('closuresListPrevMonth') && !!document.getElementById('closuresListNextMonth'),
+      showsThisMonthOnly: before.includes('This Month Candidate') && !before.includes('Last Month Candidate'),
+    };
+  });
+  await page.click('#closuresListPrevMonth');
+  await page.waitForTimeout(100);
+  const monthNavAfterPrev = await page.evaluate(() => document.querySelector('.import-panel').textContent);
+  check('Closures UI', 'List tab shows only the current month by default, with month-nav buttons present',
+    monthNavCheck.navButtonsExist && monthNavCheck.showsThisMonthOnly,
+    JSON.stringify(monthNavCheck));
+  check('Closures UI', 'Stepping to the previous month via ◀ shows last month\'s closure instead',
+    monthNavAfterPrev.includes('Last Month Candidate') && !monthNavAfterPrev.includes('This Month Candidate'),
+    monthNavAfterPrev.slice(0, 300));
+  // Leave the panel state clean (still open — later checks in this suite
+  // expect Closures to already be open) for whatever runs next.
+  await page.evaluate(() => { state.closuresListMonth = null; state.closuresListShowAll = false; render(); });
 
   // Real request: pasting WhatsApp messages in by hand, every time, was
   // the actual friction — a one-tap "Paste from clipboard" button next
