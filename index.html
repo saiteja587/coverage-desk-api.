@@ -297,6 +297,21 @@ html.scroll-locked, html.scroll-locked body{overflow:hidden!important;}
 .summary .cell.unassigned .num{color:var(--coral);}
 .summary .cell.woi .num{color:var(--amber);}
 .summary .cell.conflict .num{color:var(--violet);}
+/* (2026-09-30) These stat cards used to be purely decorative — a second,
+   separate row of tappable "filter-chip" buttons further down the toolbar
+   already did the exact same "jump to just this subset" job with its own
+   counts, so this makes the numbers themselves tappable too (only the
+   four cells that map to a real, existing filter value get `data-f` and
+   this treatment — "Assigned" has no single-purpose filter to jump to, so
+   it stays display-only) instead of adding a second, redundant strip of
+   "highlight" chips elsewhere on the screen for the same four numbers. */
+.summary .cell[data-f]{cursor:pointer;transition:background-color .15s ease,transform .1s ease;}
+.summary .cell[data-f]:active{transform:scale(.96);}
+.summary .cell.cell-active{box-shadow:inset 0 0 0 2px var(--text-faint);}
+.summary .cell.total.cell-active{box-shadow:inset 0 0 0 2px var(--text-muted);}
+.summary .cell.unassigned.cell-active{box-shadow:inset 0 0 0 2px var(--coral);}
+.summary .cell.woi.cell-active{box-shadow:inset 0 0 0 2px var(--amber);}
+.summary .cell.conflict.cell-active{box-shadow:inset 0 0 0 2px var(--violet);}
 
 /* COVERAGE STRIP (signature element) */
 .strip-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 12px;margin-bottom:20px;}
@@ -341,6 +356,7 @@ html.scroll-locked, html.scroll-locked body{overflow:hidden!important;}
 .import-panel{animation:panel-fade-in .15s ease;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes row-jump-flash{0%,100%{background:transparent;}30%,70%{background:var(--teal-dim);}}
+@keyframes cardRowFadeIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:translateY(0);}}
 tr.row-jump-highlight{animation:row-jump-flash 1.4s ease-in-out 2;}
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:currentColor;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:-2px;margin-right:6px;}
 .spinner-lg{width:28px;height:28px;border-width:3px;margin:0 auto;display:block;}
@@ -583,6 +599,17 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
   thead{display:none;}
   tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
   tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px 9px 14px;box-shadow:0 2px 8px rgba(0,0,0,.22);position:relative;transition:transform .1s ease;}
+  /* (2026-09-30) A light press-down while a finger is actually on the
+     card — pure CSS, so it works for every kind of touch (a plain tap, the
+     start of a long-press, the start of a double-tap) without needing to
+     know in JS yet which one it'll turn out to be. Once a real swipe drag
+     takes over, the JS-driven inline `transform` on this same element
+     always wins over this rule (inline style beats stylesheet regardless
+     of specificity), so the two never fight. */
+  tbody tr:active{transform:scale(.985);}
+  tbody tr.doubt-note-row,
+  tbody tr.status-note-row,
+  tbody tr.pin-detail-row{animation:cardRowFadeIn .22s ease;}
   tbody tr.row-unassigned{background:var(--coral-dim);}
   /* A rescheduled/cancelled/not-responded call is exactly the kind of
      thing that's easy to miss while scanning a stack of cards — this
@@ -702,6 +729,19 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .swipe-hint.right{background:var(--teal-dim);color:var(--teal);justify-content:flex-start;}
 .swipe-hint.left{background:var(--coral-dim);color:var(--coral);justify-content:flex-end;}
 tbody tr[data-id]{touch-action:pan-y;}
+
+/* Double-tap-to-select burst (2026-09-30) — same "appears centered over
+   what you tapped, scales up, fades out" shape as Instagram's double-tap
+   heart. Positioned via fixed left/top set from the row's own
+   getBoundingClientRect() in JS, not CSS, since it has to land wherever
+   that specific card actually was on screen. */
+.dtap-burst{position:fixed;z-index:9997;pointer-events:none;transform:translate(-50%,-50%);font-size:52px;color:var(--teal);text-shadow:0 2px 14px rgba(0,0,0,.45);animation:dtapBurst .55s cubic-bezier(.2,.9,.3,1) forwards;}
+@keyframes dtapBurst{
+  0%{ opacity:0; transform:translate(-50%,-50%) scale(.4); }
+  25%{ opacity:1; transform:translate(-50%,-50%) scale(1.15); }
+  45%{ transform:translate(-50%,-50%) scale(1); }
+  100%{ opacity:0; transform:translate(-50%,-50%) scale(1.05); }
+}
 
 .my-name-picker-overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;}
 .my-name-picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:18px 16px 22px;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;box-shadow:var(--shadow-md);}
@@ -6322,11 +6362,11 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
     </div>
 
     <div class="summary">
-      <div class="cell total"><div class="num">${sum.total}</div><div class="lbl">Total calls</div></div>
+      <div class="cell total ${state.filter==='all'?'cell-active':''}" data-f="all"><div class="num">${sum.total}</div><div class="lbl">Total calls</div></div>
       <div class="cell assigned"><div class="num">${sum.assigned}</div><div class="lbl">Assigned</div></div>
-      <div class="cell unassigned"><div class="num">${sum.unassigned}</div><div class="lbl">Unassigned</div></div>
-      <div class="cell woi"><div class="num">${sum.woi}</div><div class="lbl">WOI</div></div>
-      <div class="cell conflict"><div class="num">${sum.conflicts}</div><div class="lbl">Conflicts</div></div>
+      <div class="cell unassigned ${state.filter==='unassigned'?'cell-active':''}" data-f="unassigned"><div class="num">${sum.unassigned}</div><div class="lbl">Unassigned</div></div>
+      <div class="cell woi ${state.filter==='woi'?'cell-active':''}" data-f="woi"><div class="num">${sum.woi}</div><div class="lbl">WOI</div></div>
+      <div class="cell conflict ${state.filter==='conflict'?'cell-active':''}" data-f="conflict"><div class="num">${sum.conflicts}</div><div class="lbl">Conflicts</div></div>
     </div>
 
     <div class="team-load-strip">
@@ -10505,6 +10545,13 @@ function attachHandlers(conflictIds){
   document.querySelectorAll('.filter-chip').forEach(btn=>{
     btn.onclick = ()=>{ state.filter = btn.dataset.f; render(); };
   });
+  // The stat cards above (.summary .cell[data-f]) now do the same thing as
+  // the filter-chip buttons — deliberately the SAME handler shape, not a
+  // second copy of the filtering logic, so tapping either one behaves
+  // identically.
+  document.querySelectorAll('.summary .cell[data-f]').forEach(cell=>{
+    cell.onclick = ()=>{ state.filter = cell.dataset.f; hapticTap(12); render(); };
+  });
   document.querySelectorAll('.team-load-cell').forEach(cell=>{
     cell.onclick = ()=>{
       const team = cell.dataset.team;
@@ -13954,6 +14001,55 @@ function portalMatchSuppressedInfo(row){
   const THRESHOLD = 90;
   const MAX_DRAG = 140;
 
+  // Long-press (opens the same "..." quick-action sheet as the ⋯ button —
+  // a faster path once it's muscle memory, without replacing the button
+  // itself, which stays the discoverable way to find these actions the
+  // first time) and double-tap (a fast "select this call" shortcut into
+  // the existing bulk-select/bulk-action system, same spirit as
+  // Instagram's double-tap-to-like: always ADDS to the selection, never
+  // removes — the visible checkbox is still how you deselect). Both share
+  // this one gesture tracker rather than adding second/third touch
+  // listeners, so there's only ever one place deciding what a touch on a
+  // card means.
+  let longPressTimer = null;
+  let longPressFired = false;
+  const LONG_PRESS_MS = 480;
+  let lastTapInfo = null; // { id, time } — for double-tap detection
+
+  function clearLongPressTimer(){
+    if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
+  }
+
+  function showDoubleTapBurst(tr, added){
+    // A quick, non-blocking visual confirmation over the card — same
+    // "burst and fade" idea as Instagram's double-tap heart. Appended to
+    // <body> (not the row itself) since the row's own content is about to
+    // re-render out from under it via the render() call right after.
+    const rect = tr.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'dtap-burst';
+    el.textContent = added ? '✓' : '';
+    el.style.left = (rect.left + rect.width/2) + 'px';
+    el.style.top = (rect.top + rect.height/2) + 'px';
+    document.body.appendChild(el);
+    setTimeout(()=>{ el.remove(); }, 550);
+  }
+
+  function handlePlainTap(tr){
+    const id = tr.dataset.id;
+    const now = Date.now();
+    if(lastTapInfo && lastTapInfo.id === id && (now - lastTapInfo.time) < 320){
+      lastTapInfo = null;
+      const wasSelected = state.selectedIds.has(id);
+      state.selectedIds.add(id); // double-tap only ever selects, never toggles off
+      if(!wasSelected){ hapticTap(18); }
+      showDoubleTapBurst(tr, true);
+      render();
+    } else {
+      lastTapInfo = { id, time: now };
+    }
+  }
+
   function ensureHint(){
     if(!hintEl){
       hintEl = document.createElement('div');
@@ -13984,9 +14080,22 @@ function portalMatchSuppressedInfo(row){
     if(e.target.closest('button, select, input, textarea, a, .cell-input, .driving-person-select')) return;
     const t = e.touches[0];
     swipe = { tr, startX: t.clientX, startY: t.clientY, dx: 0, dragging: false };
+    longPressFired = false;
+    clearLongPressTimer();
+    longPressTimer = setTimeout(()=>{
+      // Only fires if the touch is still down, hasn't moved (touchmove
+      // clears this timer on any movement at all — see below), and never
+      // turned into a real swipe drag.
+      longPressTimer = null;
+      longPressFired = true;
+      hapticTap(25);
+      state.quickActionRowId = tr.dataset.id;
+      render();
+    }, LONG_PRESS_MS);
   }, { passive: true });
 
   appEl.addEventListener('touchmove', (e)=>{
+    clearLongPressTimer(); // any movement at all cancels a pending long-press
     if(!swipe) return;
     const t = e.touches[0];
     const dx = t.clientX - swipe.startX;
@@ -14027,7 +14136,22 @@ function portalMatchSuppressedInfo(row){
   }, { passive: false });
 
   function endSwipe(){
-    if(!swipe || !swipe.dragging){ swipe = null; removeHint(); return; }
+    clearLongPressTimer();
+    if(longPressFired){
+      // The long press already opened the quick-action sheet — this
+      // touchend is just that same finger lifting off, not a separate tap.
+      longPressFired = false;
+      swipe = null; removeHint(); return;
+    }
+    if(!swipe){ removeHint(); return; }
+    if(!swipe.dragging){
+      // A genuine plain tap on the open card surface (never reaches here
+      // for a tap on a button/input/select — touchstart never created
+      // `swipe` for those in the first place) — check it against the
+      // double-tap window.
+      handlePlainTap(swipe.tr);
+      swipe = null; removeHint(); return;
+    }
     const tr = swipe.tr, dx = swipe.dx, id = tr.dataset.id;
     removeHint();
     if(dx > THRESHOLD){
@@ -14054,6 +14178,8 @@ function portalMatchSuppressedInfo(row){
   }
   appEl.addEventListener('touchend', endSwipe);
   appEl.addEventListener('touchcancel', ()=>{
+    clearLongPressTimer();
+    longPressFired = false;
     if(swipe && swipe.tr){
       swipe.tr.style.transition = 'transform .18s ease';
       swipe.tr.style.transform = 'translateX(0)';
@@ -14107,17 +14233,20 @@ function portalMatchSuppressedInfo(row){
     if(!row) return; // row vanished from under the sheet — nothing safe to act on
 
     if(action === 'assign'){
+      hapticTap(10);
       state.quickActionRowId = null;
       swipeShowAssignPicker(rowId);
       return;
     }
     if(action === 'timeline'){
+      hapticTap(12);
       state.quickActionRowId = null;
       render();
       openCandidateProfile(row.candidate);
       return;
     }
     if(action === 'delete'){
+      hapticTap(20);
       state.quickActionRowId = null;
       deleteCallRow(rowId);
       return;
@@ -14127,6 +14256,7 @@ function portalMatchSuppressedInfo(row){
       if(!confirm(`Clear the "${label}" tag from "${row.candidate||'this call'}"? The call itself stays exactly where it is — only the ${label} status is removed.`)){
         return;
       }
+      hapticTap(15);
       row.status = '';
       row.statusFields = [];
       state.quickActionRowId = null;
@@ -14141,6 +14271,7 @@ function portalMatchSuppressedInfo(row){
       // a faster way to REACH that screen for a call already right in
       // front of you, with the row pre-selected instead of needing to
       // find it again in a dropdown of every call on the day.
+      hapticTap(15);
       state.quickActionRowId = null;
       state.rescheduleReview = [{
         raw: `Marked from the call card: ${row.candidate||'(no name)'} — ${row.time||''}${row.company?' — '+row.company:''}`,
