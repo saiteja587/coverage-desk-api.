@@ -181,6 +181,14 @@ body.has-install-banner .scroll-to-top-btn{bottom:74px;}
    is open. */
 html.scroll-locked, html.scroll-locked body{overflow:hidden!important;}
 .more-menu-divider{height:1px;background:var(--border);margin:5px 6px;flex:none;}
+/* Small uppercase group headers inside the Reports dropdown (added
+   2026-09-29/30 — the dropdown grew to 16 items as features were added
+   over time, all in one flat list with nothing to scan by; these group it
+   into "today at a glance", lookups, day-to-day tools, admin/export/backup,
+   and reference, without touching any item's id/behavior). Doubles as the
+   visual separator between groups, so no extra divider line is needed. */
+.more-menu-section-label{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);padding:9px 12px 4px;margin-top:2px;}
+.more-menu-section-label:first-child{margin-top:0;padding-top:4px;}
 .more-menu-backdrop{display:none;}
 .more-menu-item{background:none;border:none;color:var(--text);font-family:var(--body);font-size:13px;text-align:left;padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;}
 .more-menu-item:hover{background:var(--surface-2);}
@@ -5906,19 +5914,21 @@ function render(){
                Health/WOI Aging/Stuck Pipeline — Saiteja confirmed removal). -->
           <button class="btn ${state.showMoreMenu?'active':''} ${(state.absentIds.length || (CURRENT_ROLE==='admin' && !API_BASE_URL) || dataHealthIssueCount()>0) ? 'notif-alert' : ''}" id="toggleMoreMenu" title="Notifications, Data Health, DB status, and other summaries/lookups">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
+            <div class="more-menu-section-label">Today</div>
             <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
             ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
+            <div class="more-menu-section-label">Look up</div>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
-            <button class="more-menu-item" id="toggleHelp" title="Keyboard shortcuts and a quick reference for where things live">❔ Help &amp; Shortcuts</button>
-            <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
-            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
-            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
+            <div class="more-menu-section-label">Tools</div>
+            <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
+            ${CURRENT_ROLE==='admin' ? `<div class="more-menu-section-label">Admin</div><button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
             ${CURRENT_ROLE==='admin' ? (()=>{
               const lastBackupAt = getLastBackupAt();
@@ -5930,6 +5940,8 @@ function render(){
                 : "Downloads every date you've ever saved — calls, roster, notes — as one JSON file, for safekeeping outside this app";
               return `<button class="more-menu-item" id="quickBackupBtn" ${state.backingUp?'disabled':''} title="${escapeHtml(title)}">${state.backingUp?'⬇ Preparing backup…':'🗄️ Backup All Data'}${overdue ? ` <span class="notif-info-badge" title="${escapeHtml(title)}">${escapeHtml(overdueLabel)}</span>` : ''}</button>`;
             })() : ''}
+            <div class="more-menu-section-label">Reference</div>
+            <button class="more-menu-item" id="toggleHelp" title="Keyboard shortcuts and a quick reference for where things live">❔ Help &amp; Shortcuts</button>
             ${(ADMIN_PASSWORD || CURRENT_USERNAME) ? `<div class="more-menu-divider"></div><button class="more-menu-item" id="headerLogoutBtn" style="color:var(--coral)">🚪 Log out${CURRENT_USERNAME ? ' ('+escapeHtml(CURRENT_USERNAME)+')' : ''}</button>` : ''}
           </div>` : ''}
         </div>
@@ -9690,7 +9702,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:34px"><input type="checkbox" id="selectAllRows" ${allSelected?'checked':''}></th>
       <th style="width:100px">Time</th>
       <th style="width:175px">Candidate</th>
-      <th style="width:70px">Country</th>
+      <th style="width:98px">Country</th>
       <th style="width:190px">Company</th>
       <th style="width:104px">Round</th>
       <th style="width:82px">Duration</th>
