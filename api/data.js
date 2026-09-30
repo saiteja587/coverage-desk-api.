@@ -867,8 +867,18 @@ async function handleDrivingPerson(req, res, db) {
 // meant to be silently replaced by a later save the way a day's calls are.
 async function handleClosures(req, res, db) {
   if (req.method === 'GET') {
+    // FIX (2026-10-01): `created_at` was never aliased to the `createdAt`
+    // the frontend actually reads (loadClosures() does `createdAt:
+    // r.createdAt`) — mysql2 returns raw column names, so every closure's
+    // createdAt has silently been `undefined` since this endpoint was
+    // written. That made every single closure fall into the "Undated"
+    // bucket in the All Closures month-grouped list (not just September —
+    // ALL of them), and made the "Closures in <Month>" stat card always
+    // show 0, since both of those read c.createdAt. Confirmed against the
+    // live database: 28 real closures exist for September 2026 alone, none
+    // of which were showing up grouped under their real month in the app.
     const [rows] = await db.query(
-      'SELECT id, candidate, company, salary, raw_text, recorded_by, created_at FROM closures ORDER BY created_at DESC LIMIT 500'
+      'SELECT id, candidate, company, salary, raw_text, recorded_by, created_at AS createdAt FROM closures ORDER BY created_at DESC LIMIT 500'
     );
     return res.status(200).json({ rows });
   }
