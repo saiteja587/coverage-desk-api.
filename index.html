@@ -385,6 +385,20 @@ tr.row-jump-highlight{animation:row-jump-flash 1.4s ease-in-out 2;}
 
 /* TABLE */
 table{width:100%;min-width:1050px;table-layout:fixed;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);}
+/* FIX (2026-09-30): the sticky-right actions column below (📌 →2nd ✕) was
+   silently broken by the `overflow:hidden` above — with `position:sticky`,
+   an ancestor's own `overflow:hidden` becomes ITS containing/clipping
+   context too, and since the <table> itself sits between the sticky <td>
+   and the real scrollable ancestor (.table-scroll, which already clips to
+   the same rounded corners via its own overflow-x:auto), the cell was
+   sticking to the table's full (unscrolled) width instead of the visible
+   viewport — reported as "move to 2nd round is totally gone out": on any
+   wide row (extra columns like Country, Driving Person, Onsite all showing
+   at once), the button needed manual horizontal scrolling to ever reach,
+   with no visual hint that was necessary. Scoped to just the main calls
+   table (not every table in the app) so nothing else's corner-clipping
+   changes.  */
+#tableScrollMain table{overflow:visible;}
 @media (min-width:701px){
   /* Keep the action buttons (📌 →2nd ✕) reachable without scrolling all
      the way right, no matter how many columns exist — this is what was
