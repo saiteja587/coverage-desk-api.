@@ -1266,6 +1266,23 @@ let state = {
   clipboardPickerSelected: null,
   clipboardPickerTargetId: null,
   clipboardPickerExistingValue: '',
+
+  // ---- 2026-09-30 batch: priority sort, tomorrow preview, quick-jump,
+  // end-of-day wrap-up, offline queue, time-sensitive alerts ----
+  prioritySort: false, // unassigned-and-soonest first, instead of pure chronological
+  tomorrowPreview: null, // { date, total, woi } — see loadTomorrowPreview()
+  tomorrowPreviewLoading: false,
+  showQuickJump: false,
+  quickJumpQuery: '',
+  quickJumpResults: null,
+  quickJumpLoading: false,
+  showEodWrapup: false,
+  eodWrapupLoading: false,
+  eodWrapupData: null, // { handledCount, slippedRows, tomorrowPreview } — see computeEodWrapup()
+  offlineQueue: {}, // dateKey -> {rows, notes, finalized, queuedAt} — see queueOfflineSave()
+  offlineQueueRetrying: false,
+  alertsEnabled: false, // "Time-sensitive alerts" — persisted to localStorage, see setupTimeSensitiveAlerts()
+  alertedRowIds: new Set(), // rows already notified about this session, so the same call doesn't re-alert every check
 };
 let saveTimer = null;
 let portalSyncTimer = null;
@@ -2229,6 +2246,32 @@ function todayDateString(){
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
+function addDaysToDateStr(dateStr, days){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  dt.setDate(dt.getDate()+days);
+  return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+}
+// "Tomorrow preview" (added 2026-09-30) — a lightweight peek at tomorrow's
+// scheduled/WOI count from today's own screen, so a fresh WOI pile isn't a
+// surprise first thing. Fire-and-forget from loadDay() when today's date
+// loads; never blocks the real load, and quietly does nothing on failure
+// since this is a nice-to-have, not load-bearing data.
+async function loadTomorrowPreview(){
+  if(!API_BASE_URL) return;
+  const tmrw = addDaysToDateStr(todayDateString(), 1);
+  if(state.tomorrowPreview && state.tomorrowPreview.date === tmrw) return; // already have it this session
+  state.tomorrowPreviewLoading = true;
+  try{
+    const data = await apiCall('calls', {qs:'date='+tmrw});
+    const rows = data.rows || [];
+    state.tomorrowPreview = { date: tmrw, total: rows.length, woi: rows.filter(r=>r.woi).length };
+  }catch(e){
+    // Quiet failure — nothing to show is fine, no error banner needed for a preview.
+  }
+  state.tomorrowPreviewLoading = false;
+  render();
+}
 async function loadDay(dateStr){
   // Scoped to whichever date the import happened on — clearing it here
   // (the one place every date switch/reload passes through) means it
@@ -2279,6 +2322,7 @@ async function loadDay(dateStr){
         // cross-team accuracy, showing nothing by default is safer than
         // auto-showing something that might be stale or wrong. Click a
         // sync button to pull it deliberately.
+        loadTomorrowPreview(); // fire-and-forget — a nice-to-have, never blocks today's own load
       } else {
         // Past dates are more settled, so showing the last-saved snapshot
         // automatically (no live Apps Script call, just a fast DB read)
@@ -2511,10 +2555,98 @@ async function saveAllChanges(){
     // shows there's unsaved work, and surface a clear error instead of
     // quietly claiming success while the change never actually reached the
     // shared database.
-    state.saveError = 'Save failed: ' + (e && e.message ? e.message : 'could not reach the server. Your changes are NOT saved yet — try Save again.');
+    //
+    // FIX (2026-09-30, offline resilience): a genuine connectivity failure
+    // (offline, DNS/TLS refused, or the 20s "took too long to respond"
+    // timeout) is different from a real server-side rejection (bad
+    // credentials, a validation error, a 500) — retrying the exact same
+    // save is the right move for the former and pointless for the latter.
+    // Only the connectivity shape gets queued; anything else still shows
+    // the plain error above exactly as before, since masking a real error
+    // behind "will retry later" would hide something that actually needs
+    // fixing, not waiting out.
+    if(isLikelyOfflineError(e)){
+      queueOfflineSave();
+      state.saveError = '';
+    } else {
+      state.saveError = 'Save failed: ' + (e && e.message ? e.message : 'could not reach the server. Your changes are NOT saved yet — try Save again.');
+    }
   }
   state.saving = false;
   render();
+}
+// ---------- Offline resilience (added 2026-09-30) ----------
+// A dead connection mid-edit used to just mean a failed save and a red
+// error banner, with no way to move forward except staying on this exact
+// screen until connectivity returned — a real risk now that this is used
+// from a phone, where connectivity is far less reliable than a desk. This
+// queues the full day's rows/notes/finalized state locally (keyed by
+// date — a solo user working one date at a time is the common case, but
+// keying by date rather than a single slot means switching dates while
+// offline doesn't clobber an earlier queued day) and retries automatically
+// the moment the browser reports it's back online, with a periodic
+// fallback retry in case that event doesn't fire reliably. A full
+// snapshot, not a diff, matching the exact shape saveDayNow() already
+// sends — so a later queued save for the same date simply replaces the
+// earlier one, "last snapshot wins", same as two ordinary saves in a row
+// would behave once connectivity is normal.
+function isLikelyOfflineError(e){
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  if(e instanceof TypeError) return true; // fetch's own network-failure shape ("Failed to fetch" / "NetworkError…")
+  if(e && /took too long to respond/i.test(e.message||'')) return true; // apiCall's own 20s timeout wording
+  return false;
+}
+function queueOfflineSave(){
+  state.offlineQueue[state.date] = {
+    rows: JSON.parse(JSON.stringify(state.rows)),
+    notes: JSON.parse(JSON.stringify(state.notes)),
+    finalized: state.finalized,
+    queuedAt: Date.now(),
+  };
+  try{ localStorage.setItem('cd_offline_queue', JSON.stringify(state.offlineQueue)); }catch(e){ /* best-effort */ }
+}
+function loadOfflineQueueFromStorage(){
+  try{
+    const raw = localStorage.getItem('cd_offline_queue');
+    state.offlineQueue = raw ? (JSON.parse(raw) || {}) : {};
+  }catch(e){ state.offlineQueue = {}; }
+}
+async function retryOfflineQueue(){
+  const dates = Object.keys(state.offlineQueue || {});
+  if(!dates.length || state.offlineQueueRetrying || !API_BASE_URL) return;
+  state.offlineQueueRetrying = true;
+  render();
+  for(const d of dates){
+    const entry = state.offlineQueue[d];
+    if(!entry) continue;
+    try{
+      await Promise.all([
+        apiCall('calls', {method:'POST', body:{date: d, rows: entry.rows}}),
+        apiCall('notes', {method:'POST', body:{date: d, rows: entry.notes}}),
+        apiCall('finalized', {method:'POST', body:{date: d, finalized: entry.finalized}})
+      ]);
+      delete state.offlineQueue[d];
+      if(d === state.date) state.dirty = false;
+    }catch(e){
+      // Still unreachable (or a real error now) — leave it queued, the next
+      // retry (online event or the periodic fallback) will try again. Not
+      // distinguishing further here: unlike the original save, there's no
+      // person watching this particular attempt to read a live error
+      // message, so silently staying queued is safer than guessing.
+    }
+  }
+  try{ localStorage.setItem('cd_offline_queue', JSON.stringify(state.offlineQueue)); }catch(e){ /* best-effort */ }
+  state.offlineQueueRetrying = false;
+  render();
+}
+function setupOfflineQueue(){
+  loadOfflineQueueFromStorage();
+  if(Object.keys(state.offlineQueue).length) retryOfflineQueue();
+  window.addEventListener('online', retryOfflineQueue);
+  // Fallback for browsers/situations where the 'online' event doesn't fire
+  // reliably (some mobile PWA contexts) — harmless no-op whenever the
+  // queue is already empty, since retryOfflineQueue() returns immediately.
+  setInterval(retryOfflineQueue, 30000);
 }
 function saveDaySoon(){
   clearTimeout(saveTimer);
@@ -2677,6 +2809,71 @@ function businessDayMinutes(t){
   const m = timeToMinutes(t);
   if(m===9999) return 9999;
   return (m + 720) % 1440;
+}
+// ---------- Time-sensitive foreground alerts (added 2026-09-30) ----------
+// Everything else that flags "needs a look" (Data Health, Today's
+// Briefing) is pull-based — you have to open the app to see it. This is
+// the one push-shaped piece: a browser Notification fires on its own for
+// an unassigned, still-live call once it's within ALERT_WINDOW_BEFORE_MIN
+// minutes of its start time (or up to ALERT_WINDOW_AFTER_MIN minutes
+// late), so a gap surfaces before it becomes a missed call instead of
+// after. Deliberately scoped to what's actually buildable and verifiable
+// from here: this fires only while the tab/PWA is open and running (the
+// setInterval below has to actually execute) — a genuine "alert even with
+// the app fully closed" push needs a service worker + VAPID keys + a
+// server-side scheduler hitting real subscribers, none of which this
+// session can deploy or test against a live backend. Worth building as a
+// real follow-on once the basics here prove useful day to day.
+const ALERT_WINDOW_BEFORE_MIN = 15; // fire once a call is this close to its start time
+const ALERT_WINDOW_AFTER_MIN = 10;  // still fire up to this many minutes AFTER start if still unassigned
+function checkTimeSensitiveAlerts(){
+  if(!state.alertsEnabled) return;
+  if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if(state.date !== todayDateString()) return; // only meaningful for the day actually in progress
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  (state.rows||[]).forEach(r=>{
+    if(r.woi || (r.assignee && r.assignee.trim()) || r.status) return; // only still-unassigned, still-live calls
+    if(state.alertedRowIds.has(r.id)) return;
+    const callMin = timeToMinutes(r.time);
+    if(callMin === 9999) return; // unparseable time — nothing to compare against
+    const diff = callMin - nowMin;
+    if(diff <= ALERT_WINDOW_BEFORE_MIN && diff >= -ALERT_WINDOW_AFTER_MIN){
+      state.alertedRowIds.add(r.id);
+      try{
+        const n = new Notification('Unassigned call coming up', {
+          body: `${r.candidate||'(no name)'}${r.company?' — '+r.company:''} at ${r.time||'?'} still has no one assigned.`,
+          tag: 'cd-alert-'+r.id,
+        });
+        n.onclick = ()=>{ try{ window.focus(); }catch(e){} };
+      }catch(e){ /* Notification constructor can throw in some embedded/insecure contexts — fail quietly, nothing else depends on it */ }
+    }
+  });
+}
+function setupTimeSensitiveAlerts(){
+  try{ state.alertsEnabled = localStorage.getItem('cd_alerts_enabled') === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted'; }catch(e){ state.alertsEnabled = false; }
+  setInterval(checkTimeSensitiveAlerts, 60000);
+  checkTimeSensitiveAlerts();
+}
+async function toggleTimeSensitiveAlerts(){
+  if(!state.alertsEnabled){
+    if(typeof Notification === 'undefined'){
+      alert('This browser does not support notifications.');
+      return;
+    }
+    let perm = Notification.permission;
+    if(perm === 'default'){ perm = await Notification.requestPermission(); }
+    if(perm !== 'granted'){
+      alert('Notifications are blocked — enable them for this site in your browser/PWA settings to use time-sensitive alerts.');
+      return;
+    }
+    state.alertsEnabled = true;
+    checkTimeSensitiveAlerts();
+  } else {
+    state.alertsEnabled = false;
+  }
+  try{ localStorage.setItem('cd_alerts_enabled', state.alertsEnabled ? '1' : '0'); }catch(e){ /* best-effort */ }
+  render();
 }
 function hourBucketLabel(mins){
   if(mins===9999) return '?';
@@ -5793,6 +5990,7 @@ function getActivePanelName(){
   if(state.showCompanyScorecard) return 'companyScorecard';
   if(state.showDataHealth) return 'dataHealth';
   if(state.showDailyDigest) return 'dailyDigest';
+  if(state.showEodWrapup) return 'eodWrapup';
   return null;
 }
 // Opens exactly one panel: closes everything else first, then — unless
@@ -5830,6 +6028,7 @@ function renderActivePanel(name){
   if(name === 'companyScorecard') return renderCompanyScorecardPanel();
   if(name === 'dataHealth') return renderDataHealthPanel();
   if(name === 'dailyDigest') return renderDailyDigestPanel();
+  if(name === 'eodWrapup') return renderEodWrapupPanel();
   return '';
 }
 function panelTitle(name){
@@ -5844,7 +6043,8 @@ function panelTitle(name){
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
     companyScorecard: 'Company Scorecard',
     dataHealth: 'Data Health',
-    dailyDigest: "Today's Briefing"
+    dailyDigest: "Today's Briefing",
+    eodWrapup: "End-of-Day Wrap-Up"
   };
   return titles[name] || '';
 }
@@ -5953,6 +6153,46 @@ function renderDataHealthPanel(){
 // woiAgingData / stuckPipelineData) and the exact same jump-to-panel
 // buttons as Data Health, rather than re-deriving or re-rendering its own
 // copy of that list.
+// "End-of-Day Wrap-Up" (added 2026-09-30) — the evening-facing counterpart
+// to Today's Briefing (which is morning-facing: today's numbers plus what
+// needs a look). This answers a different question — "how did today
+// actually go" — rather than duplicating the morning view. Deliberately
+// reads straight off state.rows for whichever date is currently open (no
+// new scan/state needed): "handled" is any row with a real assignee or a
+// status (rescheduled/cancelled/etc — those were dealt with, just not via
+// assignment); "slipped" is anything left with neither, excluding WOI rows
+// (a WOI is expected to be waiting, not slipped). Tomorrow's count reuses
+// the exact same state.tomorrowPreview the home-screen banner already
+// shows, so it's never a second copy of that fetch.
+function computeEodWrapup(){
+  const rows = state.rows || [];
+  const handled = rows.filter(r => (r.assignee && r.assignee.trim()) || r.status);
+  const slipped = rows.filter(r => !r.woi && !(r.assignee && r.assignee.trim()) && !r.status);
+  const woi = rows.filter(r => r.woi);
+  return { total: rows.length, handled: handled.length, slipped, woi: woi.length };
+}
+function renderEodWrapupPanel(){
+  const w = computeEodWrapup();
+  return `
+    <div class="strip-title" style="margin-bottom:6px"><span>🌙 ${escapeHtml(state.date)}</span></div>
+    <div class="summary-big-grid" style="margin-bottom:14px">
+      <div class="summary-big-cell"><div class="summary-big-num">${w.total}</div><div class="summary-big-lbl">Total Calls</div></div>
+      <div class="summary-big-cell sbg-teal"><div class="summary-big-num">${w.handled}</div><div class="summary-big-lbl">Handled</div></div>
+      <div class="summary-big-cell sbg-coral"><div class="summary-big-num">${w.slipped.length}</div><div class="summary-big-lbl">Slipped</div></div>
+      <div class="summary-big-cell sbg-amber"><div class="summary-big-num">${w.woi}</div><div class="summary-big-lbl">WOI</div></div>
+    </div>
+    ${w.slipped.length ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin-bottom:14px">
+      <b>⚠ ${w.slipped.length} call(s) still need a decision:</b>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;font-size:12.5px">
+        ${w.slipped.slice(0,25).map(r=>`<div>${escapeHtml(r.time||'')} — <b>${escapeHtml(r.candidate||'(no name)')}</b>${r.company?' — '+escapeHtml(r.company):''}</div>`).join('')}
+        ${w.slipped.length > 25 ? `<div>…and ${w.slipped.length - 25} more</div>` : ''}
+      </div>
+    </div>` : `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin-bottom:14px">✅ Nothing slipped — every non-WOI call has an owner or a status.</div>`}
+    <div class="hint" style="background:var(--surface-2);border:1px solid var(--border);padding:10px 14px;border-radius:8px">
+      📅 Tomorrow: ${state.tomorrowPreviewLoading ? 'loading…' : (state.tomorrowPreview ? `<b>${state.tomorrowPreview.total}</b> scheduled${state.tomorrowPreview.woi?`, <b>${state.tomorrowPreview.woi}</b> already WOI`:''}` : 'not available yet — open this from today\'s date to load it')}
+    </div>
+  `;
+}
 function renderDailyDigestPanel(){
   const all = state.rows;
   const conflictIds = computeConflicts(all);
@@ -6050,6 +6290,21 @@ function render(){
     );
   }
 
+  // Priority auto-sort (added 2026-09-30): surfaces unassigned-and-soonest
+  // calls at the top instead of pure chronological order, so the 2 calls
+  // that actually need a decision aren't buried under 40 already-handled
+  // rows. Deliberately skipped when groupByCompany is active — that's a
+  // different, already-explicit sort choice, and stacking this on top of
+  // it would fight the very thing the person just asked for.
+  if(state.prioritySort && !state.groupByCompany){
+    filtered = filtered.slice().sort((a,b)=>{
+      const aNeeds = !a.woi && !a.assignee && !a.status ? 0 : 1;
+      const bNeeds = !b.woi && !b.assignee && !b.status ? 0 : 1;
+      if(aNeeds !== bNeeds) return aNeeds - bNeeds; // unassigned-and-live first
+      return businessDayMinutes(a.time) - businessDayMinutes(b.time); // soonest first within each group
+    });
+  }
+
   const activePanel = getActivePanelName();
 
   app.innerHTML = `
@@ -6086,8 +6341,11 @@ function render(){
             ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
+            <button class="more-menu-item" id="toggleEodWrapup" title="How today went — handled vs. slipped, plus a peek at tomorrow. The evening-facing counterpart to Today's Briefing">🌙 End-of-Day Wrap-Up</button>
+            <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A browser notification when an unassigned call is close to its start time. Only fires while this tab/app is open — not a true background push yet.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'} <span class="notif-info-badge" title="Needs the tab/app to stay open">while open</span></button>
             <div class="more-menu-section-label">Look up</div>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
+            <button class="more-menu-item" id="openQuickJumpFromMenu" title="Jump straight to a date, a panel, or a candidate — same as pressing Ctrl/Cmd+K anywhere">⌘ Quick Jump <span class="notif-info-badge" title="Keyboard shortcut">Ctrl/⌘+K</span></button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
             <button class="more-menu-item" id="toggleAllDates">🗓️ All Dates</button>
@@ -6128,6 +6386,10 @@ function render(){
       <button class="btn ghost" id="retryLoadBtn">↻ Retry</button>
     </div>` : ''}
     ${state.saveError ? `<div class="hint" style="color:var(--coral);background:var(--coral-dim);border:1px solid #5A2A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600">⚠ ${escapeHtml(state.saveError)}</div>` : ''}
+    ${Object.keys(state.offlineQueue||{}).length ? `<div class="hint" style="color:var(--amber);background:var(--amber-dim);border:1px solid #5A4A24;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>📡 Offline — ${Object.keys(state.offlineQueue).length} day(s) of changes saved locally, will sync automatically once you're back online.</span>
+      <button class="btn ghost" id="retryOfflineQueueBtn" ${state.offlineQueueRetrying?'disabled':''}>${state.offlineQueueRetrying ? '<span class="spinner"></span>Retrying…' : '🔄 Retry now'}</button>
+    </div>` : ''}
     ${state.lastImportedIds && state.lastImportedIds.length ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>✅ Last import added ${state.lastImportedIds.length} new call(s)${state.lastImportMergedCount?` and updated ${state.lastImportMergedCount} existing call(s) with role/interviewer/round info`:''}.</span>
       <span style="display:flex;gap:8px;flex-shrink:0">
@@ -6211,6 +6473,9 @@ function render(){
         ${items.map(it=>`<div class="hint" style="color:${it.color};padding:9px 14px;border-top:1px solid var(--border-soft)">${it.icon} ${it.text}</div>`).join('')}
       </div>`;
     })()}
+    ${(state.date === todayDateString() && state.tomorrowPreview) ? `<div class="hint" style="background:var(--surface-2);border:1px solid var(--border);padding:8px 14px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>📅 Tomorrow (${escapeHtml(state.tomorrowPreview.date)}): <b>${state.tomorrowPreview.total}</b> scheduled${state.tomorrowPreview.woi ? `, <b>${state.tomorrowPreview.woi}</b> already WOI` : ''}.</span>
+    </div>` : ''}
     <div class="shift-note-box ${state.mobileNoteExpanded?'mobile-expanded':''}">
       <label for="shiftNoteInput" class="shift-note-label-row">
         <span>📝 Note for next shift <span class="hint" style="display:inline">(visible to anyone who opens this date — not tied to any specific call)</span></span>
@@ -6277,6 +6542,7 @@ function render(){
     })() : ''}
     ${state.showQuickSearchModal ? renderQuickSearchModal() : ''}
     ${state.quickActionRowId ? renderQuickActionSheet() : ''}
+    ${state.showQuickJump ? renderQuickJumpOverlay() : ''}
   `;
 
   attachHandlers(conflictIds);
@@ -6422,6 +6688,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <button class="filter-chip ${state.filter==='conflict'?'active':''}" data-f="conflict">Conflicts<span class="n">${sum.conflicts}</span></button>
       ${(state.recentImportIds && state.recentImportIds.size) ? `<button class="filter-chip ${state.filter==='recentImport'?'active':''}" data-f="recentImport" style="color:var(--teal)" title="Calls added or updated by the most recent import">🆕 Recent Import<span class="n">${state.recentImportIds.size}</span></button>` : ''}
       ${(state.recentReschedIds && state.recentReschedIds.size) ? `<button class="filter-chip ${state.filter==='recentResched'?'active':''}" data-f="recentResched" style="color:var(--teal)" title="Calls just marked rescheduled/cancelled/no-response">🔁 Recent Reschedule<span class="n">${state.recentReschedIds.size}</span></button>` : ''}
+      <button class="filter-chip ${state.prioritySort?'active':''}" id="togglePrioritySort" style="${state.prioritySort?'color:var(--amber);border-color:#5A4A24':''}" title="Sort unassigned-and-soonest calls to the top instead of pure time order">⚡ Priority sort</button>
     </div>
 
     ${(!isReadOnly && state.selectedIds.size) ? renderBulkBar() : ''}
@@ -7009,6 +7276,111 @@ function renderQuickSearchModal(){
 // Always reads the row live from state.rows (never a snapshot), so if
 // something else changes or removes the row while this happens to still
 // be open, the sheet reflects that rather than acting on stale data.
+// ---------- Quick-jump command bar (added 2026-09-30) ----------
+// Ctrl/Cmd+K. A step beyond 🔍 Quick Search (which only ever finds a
+// candidate) — this also reaches a specific date or a specific panel/tool
+// without going through the header menus at all. Three things it can match
+// against, checked together on every keystroke: a parsed date (see
+// parseQuickJumpDate below), a fixed list of named commands (substring
+// match against the label), and — same as Quick Search — a live cross-date
+// candidate/company search, debounced and capped at 6 results so it never
+// turns into a second full search panel.
+const QUICK_JUMP_COMMANDS = [
+  { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
+  { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
+  { label: '🔔 Notifications', keywords: 'notifications notif absent absences', action: ()=>{ openOnlyPanel('showNotifications'); } },
+  { label: '🩺 Data Health', keywords: 'data health triage unmatched stale', action: ()=>{
+    const wasOpen = state.showDataHealth;
+    openOnlyPanel('showDataHealth');
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null || state.finalRoundNudgeData===null)) runDataHealthScan();
+  } },
+  { label: "📋 Today's Briefing", keywords: 'briefing digest today', action: ()=>{
+    const wasOpen = state.showDailyDigest;
+    openOnlyPanel('showDailyDigest');
+    if(!wasOpen && (state.closuresPerformance===null || state.woiAgingData===null || state.stuckPipelineData===null || state.finalRoundNudgeData===null)) runDataHealthScan();
+  } },
+  { label: '🌙 End-of-Day Wrap-Up', keywords: 'wrapup wrap up end of day eod', action: ()=>{
+    openOnlyPanel('showEodWrapup');
+    if(!state.tomorrowPreview && !state.tomorrowPreviewLoading) loadTomorrowPreview();
+  } },
+  { label: '🗓️ Calendar', keywords: 'calendar month view', action: ()=>{ openOnlyPanel('showCalendarView'); } },
+  { label: '🏢 Company Scorecard', keywords: 'company scorecard client reliability', action: ()=>{ openOnlyPanel('showCompanyScorecard'); } },
+  { label: '🗓️ All Dates', keywords: 'all dates history', action: ()=>{ openOnlyPanel('showAllDates'); } },
+  { label: '🎓 Students Master', keywords: 'students master', action: ()=>{ openOnlyPanel('showStudentsMaster'); } },
+  { label: '📡 Team Sync', keywords: 'team sync portal', action: ()=>{ openOnlyPanel('showPortalSync'); } },
+  { label: '❔ Help & Shortcuts', keywords: 'help shortcuts keyboard', action: ()=>{ openOnlyPanel('showHelp'); } },
+  { label: '🏠 Home / board', keywords: 'home board close', action: ()=>{ closeAllPanels(); } },
+];
+function parseQuickJumpDate(text){
+  const t = (text||'').trim().toLowerCase();
+  if(!t) return null;
+  if(t === 'today') return todayDateString();
+  if(t === 'tomorrow') return addDaysToDateStr(todayDateString(), 1);
+  if(t === 'yesterday') return addDaysToDateStr(todayDateString(), -1);
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); // ISO
+  if(m){
+    const y=+m[1], mo=+m[2], d=+m[3];
+    if(mo>=1 && mo<=12 && d>=1 && d<=31) return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+  m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/); // MM/DD[/YYYY]
+  if(m){
+    const mo=+m[1], d=+m[2];
+    const y = m[3] ? (m[3].length===2 ? 2000+(+m[3]) : +m[3]) : new Date().getFullYear();
+    if(mo>=1 && mo<=12 && d>=1 && d<=31) return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+  const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  m = t.match(/^([a-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?$/); // "aug 12", "august 12 2026"
+  if(m){
+    const monIdx = months.findIndex(mo=>m[1].startsWith(mo));
+    if(monIdx>=0){
+      const d=+m[2];
+      const y = m[3] ? +m[3] : new Date().getFullYear();
+      if(d>=1 && d<=31) return `${y}-${String(monIdx+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    }
+  }
+  return null;
+}
+let quickJumpSearchTimer = null;
+function runQuickJumpSearch(q){
+  clearTimeout(quickJumpSearchTimer);
+  const query = (q||'').trim();
+  if(query.length < 2){ state.quickJumpResults = null; state.quickJumpLoading = false; render(); return; }
+  quickJumpSearchTimer = setTimeout(async ()=>{
+    state.quickJumpLoading = true;
+    render();
+    const allRows = await fetchAllRowsAcrossDates(false); // cached is fine here — this is a lookup aid, not a data-integrity-sensitive read
+    const qLower = query.toLowerCase();
+    let results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower));
+    results.sort((a,b)=> b._date.localeCompare(a._date));
+    state.quickJumpResults = results.slice(0,6);
+    state.quickJumpLoading = false;
+    render();
+  }, 250);
+}
+function renderQuickJumpOverlay(){
+  const q = state.quickJumpQuery||'';
+  const qLower = q.trim().toLowerCase();
+  const matchedCommands = qLower ? QUICK_JUMP_COMMANDS.filter(c=>c.label.toLowerCase().includes(qLower) || c.keywords.includes(qLower)) : QUICK_JUMP_COMMANDS.slice(0,6);
+  const parsedDate = parseQuickJumpDate(q);
+  return `<div class="my-name-picker-overlay" id="quickJumpOverlay">
+    <div class="my-name-picker-card" style="max-width:480px;width:92vw;max-height:74vh;display:flex;flex-direction:column">
+      <div class="my-name-picker-title">⌘ Quick Jump</div>
+      <input type="text" id="quickJumpInput" placeholder="A date, a command, or a candidate/company…" value="${escapeHtml(q)}" style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-size:14px;margin:8px 0;font-family:inherit" autocomplete="off">
+      <div class="my-name-picker-list" style="overflow-y:auto;flex:1">
+        ${parsedDate ? `<button class="quick-action-item" data-qj-date="${parsedDate}">📅 Go to ${escapeHtml(parsedDate)}</button>` : ''}
+        ${matchedCommands.map(c=>`<button class="quick-action-item" data-qj-cmd="${escapeHtml(c.label)}">${c.label}</button>`).join('')}
+        ${!matchedCommands.length && !parsedDate && !qLower ? `<div class="hint" style="padding:6px 4px">Start typing…</div>` : ''}
+        ${state.quickJumpLoading ? `<div class="hint" style="padding:10px 4px">Searching calls…</div>` : ''}
+        ${(state.quickJumpResults && state.quickJumpResults.length) ? `
+          <div class="quick-action-status-label">Calls</div>
+          ${state.quickJumpResults.map(r=>`<button class="quick-action-item" data-qj-candidate="${escapeHtml(r.candidate||'')}">📋 ${escapeHtml(r.candidate||'(no name)')}${r.company?' — '+escapeHtml(r.company):''} <span style="opacity:.6">(${escapeHtml(r._date)})</span></button>`).join('')}
+        ` : ''}
+        ${(qLower.length>=2 && state.quickJumpResults && !state.quickJumpResults.length && !state.quickJumpLoading) ? `<div class="hint" style="padding:10px 4px">No matching calls found.</div>` : ''}
+      </div>
+      <button class="btn ghost" id="quickJumpCancel" style="margin-top:10px;width:100%">Cancel</button>
+    </div>
+  </div>`;
+}
 function renderQuickActionSheet(){
   const row = state.rows.find(r=>r.id===state.quickActionRowId);
   if(!row) return '';
@@ -10542,9 +10914,11 @@ function attachHandlers(conflictIds){
     state.dirty = true;
     render();
   };
-  document.querySelectorAll('.filter-chip').forEach(btn=>{
+  document.querySelectorAll('.filter-chip[data-f]').forEach(btn=>{
     btn.onclick = ()=>{ state.filter = btn.dataset.f; render(); };
   });
+  const togglePrioritySortBtn = document.getElementById('togglePrioritySort');
+  if(togglePrioritySortBtn) togglePrioritySortBtn.onclick = ()=>{ state.prioritySort = !state.prioritySort; render(); };
   // The stat cards above (.summary .cell[data-f]) now do the same thing as
   // the filter-chip buttons — deliberately the SAME handler shape, not a
   // second copy of the filtering logic, so tapping either one behaves
@@ -10896,6 +11270,8 @@ function attachHandlers(conflictIds){
   if(portalSyncErrorRetryBtn) portalSyncErrorRetryBtn.onclick = ()=>{
     fetchPortalSync(state.portalSyncMode || 'today');
   };
+  const retryOfflineQueueBtn = document.getElementById('retryOfflineQueueBtn');
+  if(retryOfflineQueueBtn) retryOfflineQueueBtn.onclick = ()=>{ retryOfflineQueue(); };
   const dismissPortalCacheWarningBtn = document.getElementById('dismissPortalCacheWarningBtn');
   if(dismissPortalCacheWarningBtn) dismissPortalCacheWarningBtn.onclick = ()=>{
     state.portalSyncCacheWarning = '';
@@ -10985,6 +11361,14 @@ function attachHandlers(conflictIds){
   };
   const toggleUniversalSearchBtn = document.getElementById('toggleUniversalSearch');
   if(toggleUniversalSearchBtn) toggleUniversalSearchBtn.onclick = ()=>{ openOnlyPanel('showUniversalSearch'); render(); };
+  const openQuickJumpFromMenuBtn = document.getElementById('openQuickJumpFromMenu');
+  if(openQuickJumpFromMenuBtn) openQuickJumpFromMenuBtn.onclick = ()=>{
+    closeAllPanels();
+    state.showQuickJump = true;
+    render();
+    const el = document.getElementById('quickJumpInput');
+    if(el) el.focus();
+  };
   const runUniversalSearchBtn = document.getElementById('runUniversalSearchBtn');
   if(runUniversalSearchBtn) runUniversalSearchBtn.onclick = async ()=>{
     const input = document.getElementById('universalSearchInput');
@@ -12204,6 +12588,14 @@ function attachHandlers(conflictIds){
       runDataHealthScan();
     }
   };
+  const toggleEodWrapupBtn = document.getElementById('toggleEodWrapup');
+  if(toggleEodWrapupBtn) toggleEodWrapupBtn.onclick = ()=>{
+    openOnlyPanel('showEodWrapup');
+    render();
+    if(!state.tomorrowPreview && !state.tomorrowPreviewLoading) loadTomorrowPreview();
+  };
+  const toggleTimeSensitiveAlertsBtn = document.getElementById('toggleTimeSensitiveAlerts');
+  if(toggleTimeSensitiveAlertsBtn) toggleTimeSensitiveAlertsBtn.onclick = ()=>{ toggleTimeSensitiveAlerts(); };
   const openDailyDigestBannerBtn = document.getElementById('openDailyDigestBannerBtn');
   if(openDailyDigestBannerBtn) openDailyDigestBannerBtn.onclick = ()=>{
     state.showDailyDigestBanner = false;
@@ -12725,7 +13117,7 @@ function updateBodyScrollLock(){
   // wired for it too — see the clipboardPickerOverlay handler), but was
   // missed from this list when it was first written, so opening it left the
   // page scrollable underneath it same as the original reported bug.
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId);
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -13349,6 +13741,8 @@ function renderClientLoginScreen(){
 
 async function startApp(){
   registerServiceWorker();
+  setupOfflineQueue();
+  setupTimeSensitiveAlerts();
   // Wrapped so that ANY unexpected failure in this chain — not just a
   // timed-out fetch, but literally anything — still reaches render() at
   // the end rather than leaving the static "Loading Coverage Desk…"
@@ -14290,6 +14684,60 @@ function portalMatchSuppressedInfo(row){
     }
   });
 })();
+// Quick-jump command bar (added 2026-09-30) — see renderQuickJumpOverlay()
+// above for how the list is built. Delegated on #app, same pattern as
+// every other floating overlay in this file, plus a plain `input` listener
+// for the live search-as-you-type box (input events don't bubble through
+// the same click-delegation path, so this needs its own listener).
+(function setupQuickJump(){
+  const appEl = document.getElementById('app');
+  if(!appEl) return;
+  function closeQuickJump(){
+    state.showQuickJump = false;
+    state.quickJumpQuery = '';
+    state.quickJumpResults = null;
+    render();
+  }
+  appEl.addEventListener('click', (e)=>{
+    if(!state.showQuickJump) return;
+    if(e.target.id === 'quickJumpOverlay' || e.target.closest('#quickJumpCancel')){
+      closeQuickJump();
+      return;
+    }
+    const dateBtn = e.target.closest('[data-qj-date]');
+    if(dateBtn){
+      const d = dateBtn.dataset.qjDate;
+      closeQuickJump();
+      state.date = d;
+      loadDay(d).then(render);
+      return;
+    }
+    const cmdBtn = e.target.closest('[data-qj-cmd]');
+    if(cmdBtn){
+      const cmd = QUICK_JUMP_COMMANDS.find(c=>c.label === cmdBtn.dataset.qjCmd);
+      closeQuickJump();
+      if(cmd) cmd.action();
+      render();
+      return;
+    }
+    const candidateBtn = e.target.closest('[data-qj-candidate]');
+    if(candidateBtn){
+      const name = candidateBtn.dataset.qjCandidate;
+      closeQuickJump();
+      openCandidateProfile(name);
+      return;
+    }
+  });
+  appEl.addEventListener('input', (e)=>{
+    if(e.target.id !== 'quickJumpInput') return;
+    state.quickJumpQuery = e.target.value;
+    // Don't re-render on every keystroke here (that would rebuild the
+    // input and could disturb cursor position/focus) — just kick off the
+    // debounced search; render() is only called once the search itself
+    // actually has something new to show.
+    runQuickJumpSearch(e.target.value);
+  });
+})();
 // Pull-to-refresh (mobile home screen only) — dragging down from the very
 // top of the page re-pulls today's saved data from the backend, the same
 // gesture Instagram/Facebook use for "check for anything new" instead of
@@ -14585,6 +15033,22 @@ window.addEventListener('keydown', (e)=>{
     if(state.dirty && !state.saving && CURRENT_ROLE==='admin') saveAllChanges();
     return;
   }
+  // Quick-jump command bar (added 2026-09-30) — Ctrl/Cmd+K, same shortcut
+  // convention as most command palettes elsewhere. Deliberately NOT gated
+  // by isTyping, same reasoning as Ctrl/Cmd+S above: this is a modifier
+  // shortcut, not a character that could land in whatever's focused.
+  if(ctrlOrCmd && e.key.toLowerCase()==='k'){
+    e.preventDefault();
+    state.showQuickJump = !state.showQuickJump;
+    if(!state.showQuickJump){ state.quickJumpQuery = ''; state.quickJumpResults = null; }
+    render();
+    if(state.showQuickJump){
+      const el = document.getElementById('quickJumpInput');
+      if(el) el.focus();
+    }
+    return;
+  }
+  // (2026-09-30) showQuickJump added to the Escape close list
   // FIX (2026-09-29): "smooth UI" report — Escape closes whichever
   // floating surface is open (Reports/Admin dropdown, Quick Search modal,
   // swipe-assign picker), same as it would in any well-behaved menu/modal.
@@ -14593,7 +15057,7 @@ window.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape'){
     // (2026-09-29, part 2) showClipboardPicker added here too — same
     // fixed-overlay pattern as the others, just missed on the first pass.
-    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId){
+    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showQuickSearchModal = false;
@@ -14601,6 +15065,9 @@ window.addEventListener('keydown', (e)=>{
       state.pendingSwipeAssignRowId = null;
       state.showClipboardPicker = false;
       state.quickActionRowId = null;
+      state.showQuickJump = false;
+      state.quickJumpQuery = '';
+      state.quickJumpResults = null;
       render();
       return;
     }
