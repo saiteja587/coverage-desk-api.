@@ -2763,7 +2763,7 @@ async function saveRowsToOtherDate(targetDateKey, newRows){
   if(API_BASE_URL){
     const existing = await apiCall('calls', {qs:'date='+targetDateKey}).catch(()=>({rows:[]}));
     const existingRows = existing.rows || [];
-    const routed = autoRouteRows(newRows, existingRows);
+    const routed = await autoRouteRows(newRows, existingRows);
     const merged = existingRows.concat(routed);
     await apiCall('calls', {method:'POST', body:{date: targetDateKey, rows: merged}});
     return merged.length;
@@ -2771,7 +2771,7 @@ async function saveRowsToOtherDate(targetDateKey, newRows){
   const r = await storageAdapter.get('day:'+targetDateKey, false).catch(()=>null);
   const parsedExisting = r && r.value ? JSON.parse(r.value) : null;
   const existingRows = Array.isArray(parsedExisting) ? parsedExisting : (parsedExisting && parsedExisting.rows) || [];
-  const routed = autoRouteRows(newRows, existingRows);
+  const routed = await autoRouteRows(newRows, existingRows);
   const merged = existingRows.concat(routed);
   const payload = (parsedExisting && !Array.isArray(parsedExisting)) ? {...parsedExisting, rows: merged} : {rows: merged, finalized:false, notes:[]};
   await storageAdapter.set('day:'+targetDateKey, JSON.stringify(payload), false);
@@ -3684,7 +3684,7 @@ function teamOfAssignee(assignee, teamNames){
   const p = state.roster.find(p=>p.name===assignee);
   return p ? p.team : null;
 }
-function autoRouteRows(newRows, existingRows){
+async function autoRouteRows(newRows, existingRows){
   existingRows = existingRows || [];
   const teamNames = new Set(state.roster.map(p=>p.team));
   const hydRaw = state.roster.filter(p=>p.team==='HYD Team').length || 6;
@@ -3718,13 +3718,36 @@ function autoRouteRows(newRows, existingRows){
   // rounds at all — the specialist/team routing below deliberately skips
   // 2nd round and up entirely (`isAdvancedRound(row.round)` guard), so
   // without this, every follow-up round has always required a fully
-  // manual pick. Reads findPriorOccurrence()'s existing state.notifications
-  // scan (already warmed by the fire-and-forget scanForRepeatCandidates()
-  // call on app load) rather than a fresh cross-date fetch, so this stays
-  // synchronous like the rest of autoRouteRows() — if that scan hasn't
-  // completed yet (e.g. import happens within the first second of a page
-  // load), findPriorOccurrence() just returns null and this is a no-op,
-  // falling through to the routing below exactly as before this existed.
+  // manual pick.
+  //
+  // REAL BUG, found and fixed 2026-10-01 (reported: a 3rd-round "Helen of
+  // Troy" call stayed unassigned despite two clearly-visible prior rounds
+  // for the same candidate at the same company — confirmed NOT isolated to
+  // that one client, it could silently affect any candidate/company).
+  // findPriorOccurrence() depends entirely on state.notifications, which
+  // this used to read AS-IS and do nothing further — originally relying on
+  // a separate fire-and-forget scanForRepeatCandidates() call elsewhere to
+  // have already finished warming it by the time an import happened. If
+  // that background scan hadn't completed yet (import run within the first
+  // second or two of a page load — a window that scales with how many
+  // saved dates there are to fetch, so BUSIER accounts hit this more
+  // often, not less), carry-forward silently did nothing and fell through
+  // to routing below as if there were no prior history at all — with no
+  // error, no doubt-note, nothing visibly different from a candidate who
+  // genuinely had no history. That silent gap is exactly the failure shape
+  // this app's own rules call out as critical. Fixed by actually awaiting
+  // a real scan here (autoRouteRows is now async) whenever state.notifications
+  // hasn't been warmed yet, instead of treating "not warmed yet" the same
+  // as "no history exists" — scanForRepeatCandidates()'s own cache (see
+  // fetchAllRowsAcrossDates()) makes this free once the page has been open
+  // a few seconds, since by then the normal fire-and-forget scan has
+  // usually already populated it; this await only ever costs real time on
+  // a genuinely cold cache, which is exactly the moment it was silently
+  // failing before.
+  if(!state.notifications){
+    try{ state.notifications = await scanForRepeatCandidates(); }
+    catch(e){ /* leave state.notifications null — findPriorOccurrence() already handles that by returning null, same as before this fix existed */ }
+  }
   newRows.forEach(row=>{
     if(row.woi || row.assignee || !row.candidate) return;
     const prior = findPriorOccurrence(row);
@@ -11705,7 +11728,7 @@ function attachHandlers(conflictIds){
     };
   });
   const reviewMissedBtn = document.getElementById('reviewMissedBtn');
-  if(reviewMissedBtn) reviewMissedBtn.onclick = ()=>{
+  if(reviewMissedBtn) reviewMissedBtn.onclick = async ()=>{
     const flagged = (state.missedCheckResults && state.missedCheckResults.flagged) || [];
     // Preview the same auto-routing the confirm step would apply, on cloned
     // rows only — nothing here touches state.rows — so the review screen
@@ -11721,7 +11744,7 @@ function attachHandlers(conflictIds){
         assignee: base.assignee || '',
       });
     });
-    autoRouteRows(previewRows, state.rows.slice());
+    await autoRouteRows(previewRows, state.rows.slice());
     state.missedCheckReviewItems = flagged.map((f,i)=>({
       include: true,
       candidate: f.candidate,
@@ -12257,7 +12280,7 @@ function attachHandlers(conflictIds){
     parsedAll.filter(r => r._targetDate && r._targetDate !== state.date).forEach(r=>{
       (otherDateRowsByDate[r._targetDate] = otherDateRowsByDate[r._targetDate] || []).push(r);
     });
-    const parsed = autoRouteRows(currentDateRaw, state.rows);
+    const parsed = await autoRouteRows(currentDateRaw, state.rows);
 
     // Detects reschedule/cancel messages mixed into the SAME pasted text.
     // If one genuinely matches a call that already existed BEFORE this
@@ -13375,7 +13398,7 @@ async function maybeSeedMaster(){
       if(assignMap[key]) r.assignee = assignMap[key];
     }
   });
-  autoRouteRows(rows, []);
+  await autoRouteRows(rows, []);
   const extraRows = parseImportText(MARKETING_SEED_TEXT);
   state.rows = rows.concat(extraRows);
   if(state.roster.length !== beforeCount) await saveRoster();
