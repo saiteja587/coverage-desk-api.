@@ -468,6 +468,7 @@ tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
 .badge-row{display:inline-flex;align-items:center;gap:3px;margin-right:4px;vertical-align:middle;}
 .mini-badge{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:5px;font-size:9.5px;font-weight:700;line-height:1;cursor:default;flex-shrink:0;background:var(--surface-3);}
 .mini-badge-prior{color:var(--blue);border:1px solid var(--blue);}
+.mini-badge-expectclosure{color:var(--amber);border:1px solid var(--amber);}
 .mini-badge-round{color:var(--teal);border:1px solid var(--teal);}
 .mini-badge-client{color:var(--amber);border:1px solid var(--amber);}
 .mini-badge-resched{color:var(--coral);border:1px solid var(--coral);}
@@ -564,6 +565,8 @@ select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
 .pin-toggle{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:.4;filter:grayscale(1);margin-right:2px;}
 .pin-toggle:hover{opacity:.8;}
 .pin-toggle-filled{opacity:1;filter:none;}
+.expect-closure-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:.55;margin-right:2px;}
+.expect-closure-btn:hover{opacity:1;}
 .pin-detail-row td{padding:12px 14px !important;background:var(--surface-2);}
 .pin-detail-fields{display:flex;gap:16px;flex-wrap:wrap;}
 .pin-field{flex:1;min-width:200px;}
@@ -1075,6 +1078,26 @@ let state = {
   editingClosuresTarget: false,
   incentiveTargetError: null,
   closuresTargetError: null,
+  // Expected Closures (added 2026-10-01): "who is in the call, we can
+  // except this as closures depends on the call feedback by handlers or
+  // driving persons" — a lightweight flag, separate from the real
+  // (confirmed) Closures log above, for a call that a handler/driving
+  // person says LOOKS like it's heading toward a closure, so it doesn't
+  // get lost among everything else happening that day. Saiteja's own
+  // framing: "let's say like a remainder [reminder] — I can follow up the
+  // candidates or POCs what's the update regarding this." Lives in its
+  // own backend resource/table (expected_closures), never written into
+  // the append-only `closures` log itself until someone explicitly
+  // confirms it.
+  showExpectedClosures: false,
+  expectedClosures: [],
+  expectedClosuresLoaded: false,
+  expectClosureRowId: null, // which board row's "flag as expected closure" note sheet is open, if any
+  expectClosureSaving: false,
+  expectClosureError: null,
+  expectedClosureDeletingId: null,
+  expectedClosureConfirmingId: null,
+  expectedClosureFollowupId: null,
   rescheduleReview: null,
   rescheduleApplying: false,
   duplicatesReview: null,
@@ -2028,6 +2051,59 @@ async function saveNewClosures(rows){
   const payload = rows.map(r=>({ candidate: r.candidate, company: r.company, salary: r.salary||'', rawText: r.raw||'' }));
   await apiCall('closures', {method:'POST', body:{rows: payload}});
   await loadClosures(); // re-fetch rather than guess IDs/timestamps locally — keeps "recorded by" and ordering exactly what the server actually stored
+}
+// ---------- Expected Closures (added 2026-10-01) ----------
+// "Flag this call as an expected closure, based on what the handler/
+// driving person told you after the call, and let me follow up on it
+// later" — a holding area that sits BEFORE the real (confirmed) Closures
+// log above, not a replacement for it. Own backend resource
+// (expected_closures) so flagging something here never writes into the
+// append-only `closures` table until someone explicitly confirms it via
+// confirmExpectedClosure() below.
+async function loadExpectedClosures(){
+  if(!API_BASE_URL) return;
+  try{
+    const data = await apiCall('expected_closures', {});
+    state.expectedClosures = (data.rows||[]).map(r=>({
+      id: r.id, callId: r.callId||null, callDate: r.callDate||'', candidate: r.candidate,
+      company: r.company, round: r.round||'', note: r.note||'', flaggedBy: r.flaggedBy||'',
+      createdAt: r.createdAt, lastFollowupAt: r.lastFollowupAt||null, lastFollowupNote: r.lastFollowupNote||''
+    }));
+    state.expectedClosuresLoaded = true;
+    render();
+  }catch(e){
+    // Backend doesn't have this resource/table yet, or the call failed —
+    // same non-essential fallback behavior as loadClosures() above; the
+    // rest of the app keeps working either way.
+  }
+}
+async function saveExpectedClosure(row){
+  if(!API_BASE_URL) throw new Error('Expected Closures require the backend to be configured.');
+  const payload = {
+    callId: row.id||null, callDate: state.date||'', candidate: row.candidate||'',
+    company: row.company||'', round: row.round||'', note: row.note||''
+  };
+  await apiCall('expected_closures', {method:'POST', body:{rows:[payload]}});
+  await loadExpectedClosures();
+}
+async function deleteExpectedClosure(id){
+  await apiCall('expected_closures', {method:'POST', body:{action:'delete', id}});
+  state.expectedClosures = (state.expectedClosures||[]).filter(c=>c.id !== id);
+}
+async function logExpectedClosureFollowup(id, note){
+  await apiCall('expected_closures', {method:'POST', body:{action:'followup', id, note: note||''}});
+  await loadExpectedClosures();
+}
+// Confirming promotes it into the real, append-only Closures log (exactly
+// the same saveNewClosures() path a pasted-in message uses) and then
+// removes the flag — once it's a real closure it belongs in one place,
+// not two.
+async function confirmExpectedClosure(row, salary){
+  await saveNewClosures([{ candidate: row.candidate, company: row.company, salary: salary||'', raw: row.note||'' }]);
+  await deleteExpectedClosure(row.id);
+}
+function expectedClosuresPendingCount(){
+  return (state.expectedClosures||[]).length;
 }
 // Strips everything but letters before comparing — same idea as
 // normalizeCompanyKey — so a name typed slightly differently in a
@@ -6020,6 +6096,7 @@ function closeAllPanels(){
   state.rescheduleReview = null;
   state.closureReview = null;
   state.showClosures = false;
+  state.showExpectedClosures = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showUniversalSearch = false;
@@ -6052,6 +6129,7 @@ function getActivePanelName(){
   if(state.rescheduleReview) return 'rescheduleReview';
   if(state.closureReview) return 'closureReview';
   if(state.showClosures) return 'closures';
+  if(state.showExpectedClosures) return 'expectedClosures';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showUniversalSearch) return 'universalSearch';
@@ -6090,6 +6168,7 @@ function renderActivePanel(name){
   if(name === 'rescheduleReview') return renderRescheduleConfirmPanel();
   if(name === 'closureReview') return renderClosureConfirmPanel();
   if(name === 'closures') return renderClosuresPanel();
+  if(name === 'expectedClosures') return renderExpectedClosuresPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
@@ -6400,6 +6479,7 @@ function render(){
         <button class="arrow-btn" id="nextDay">›</button>
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
+        <button class="btn ${state.showExpectedClosures?'active':''}" id="toggleExpectedClosures" title="Calls flagged as 'expecting this to become a closure' based on handler/driving-person feedback — follow up on them here" style="${state.expectedClosuresLoaded && expectedClosuresPendingCount() ? 'color:var(--amber);border-color:#5A4420' : ''}">🎯 Expected${state.expectedClosuresLoaded ? ` (${expectedClosuresPendingCount()})` : ''}</button>
         <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
         <div class="more-menu-wrap">
           <!-- FIX (2026-09-29): header cleanup — "so many options" complaint.
@@ -6617,6 +6697,7 @@ function render(){
     })() : ''}
     ${state.showQuickSearchModal ? renderQuickSearchModal() : ''}
     ${state.quickActionRowId ? renderQuickActionSheet() : ''}
+    ${state.expectClosureRowId ? renderExpectClosureNoteSheet() : ''}
     ${state.showQuickJump ? renderQuickJumpOverlay() : ''}
   `;
 
@@ -7363,6 +7444,7 @@ function renderQuickSearchModal(){
 const QUICK_JUMP_COMMANDS = [
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
+  { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
   { label: '🔔 Notifications', keywords: 'notifications notif absent absences', action: ()=>{ openOnlyPanel('showNotifications'); } },
   { label: '🩺 Data Health', keywords: 'data health triage unmatched stale', action: ()=>{
     const wasOpen = state.showDataHealth;
@@ -7473,6 +7555,7 @@ function renderQuickActionSheet(){
       <div class="my-name-picker-list">
         ${canEdit ? `<button class="quick-action-item" data-qa="assign" data-id="${row.id}"><span>🔁 Assign / Reassign</span><span>›</span></button>` : ''}
         <button class="quick-action-item" data-qa="timeline" data-id="${row.id}"><span>📋 View Timeline</span><span>›</span></button>
+        ${canEdit ? `<button class="quick-action-item" data-qa="expectclosure" data-id="${row.id}"><span>🎯 Flag as Expected Closure</span><span>›</span></button>` : ''}
         ${canEdit ? `<div class="quick-action-status-label">Mark status</div>
         <div class="quick-action-status-row">
           ${statusOptions.map(s=>`<button class="quick-action-status-chip" data-qa="status" data-status="${s.v}" data-id="${row.id}">${s.icon} ${escapeHtml(s.label)}</button>`).join('')}
@@ -7480,6 +7563,31 @@ function renderQuickActionSheet(){
         ${(canEdit && row.status) ? `<button class="quick-action-item" data-qa="clearstatus" data-id="${row.id}"><span>Clear current status</span></button>` : ''}
         ${canEdit ? `<button class="quick-action-item" data-qa="delete" data-id="${row.id}" style="color:var(--coral)"><span>🗑 Delete call</span></button>` : ''}
         <button class="quick-action-item" data-qa="cancel"><span>Cancel</span></button>
+      </div>
+    </div>
+  </div>`;
+}
+// Small note-capture overlay for the 🎯 "flag as expected closure" action
+// (added 2026-10-01) — same floating-overlay pattern as the swipe-assign
+// picker and quick-action sheet above, opened from either the 🎯 button in
+// the desktop Actions column or "🎯 Flag as Expected Closure" in the
+// mobile ⋯ sheet. Deliberately just one free-text note field (what the
+// handler/driving person actually said) rather than a longer form — the
+// whole point is this takes a few seconds, right after the call, not a
+// second data-entry chore.
+function renderExpectClosureNoteSheet(){
+  const row = state.rows.find(r=>r.id===state.expectClosureRowId);
+  if(!row) return '';
+  return `<div class="my-name-picker-overlay" id="expectClosureSheetOverlay">
+    <div class="my-name-picker-card">
+      <div class="my-name-picker-title">🎯 Flag as Expected Closure</div>
+      <div class="my-name-picker-sub">${escapeHtml(row.candidate||'(no name)')}${row.company?' — '+escapeHtml(row.company):''}${row.round?' · '+escapeHtml(row.round):''}</div>
+      <div class="hint" style="margin:8px 0">What did the handler/driving person say that makes this look like a closure? This shows up on the 🎯 Expected list so you can follow up later.</div>
+      <textarea id="expectClosureNoteInput" rows="3" placeholder="e.g. Client verbally confirmed, offer letter expected this week…" style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+      ${state.expectClosureError ? `<div class="hint" style="color:var(--coral);margin-top:6px">⚠ ${escapeHtml(state.expectClosureError)}</div>` : ''}
+      <div class="row" style="margin-top:12px;gap:8px">
+        <button class="btn ghost" id="expectClosureCancelBtn" style="flex:1">Cancel</button>
+        <button class="btn primary" id="expectClosureSaveBtn" ${state.expectClosureSaving?'disabled':''} style="flex:1">${state.expectClosureSaving?'<span class="spinner"></span>Saving…':'🎯 Flag it'}</button>
       </div>
     </div>
   </div>`;
@@ -9623,6 +9731,54 @@ function renderImportHubPanel(){
   </div>`;
 }
 
+// Expected Closures panel (added 2026-10-01) — see the state comment above
+// expectClosureRowId for the full "who is in the call, we can except this
+// as closures" backstory. Deliberately its own list, not folded into the
+// real Closures panel above: these are "likely, not yet confirmed" — the
+// whole point is a holding area so a promising call doesn't get lost
+// among everything else happening that day, with a quick way to log a
+// follow-up ("still pending"), promote it into a real Closure once
+// confirmed, or delete it if it didn't pan out after all.
+function renderExpectedClosuresPanel(){
+  const list = (state.expectedClosures||[]).slice().sort((a,b)=>{
+    // Oldest-flagged first, deliberately — these are exactly the ones most
+    // likely to have been forgotten, so they surface at the top rather
+    // than getting buried under whatever was flagged five minutes ago.
+    const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return at - bt;
+  });
+  if(!list.length){
+    return `<div class="import-panel">
+      <div class="hint">Nothing flagged right now. On any call, use the 🎯 button (or ⋯ More actions on mobile) to flag it as "expecting this to become a closure" based on what the handler or driving person told you — it'll show up here so you can follow up later instead of losing track of it.</div>
+    </div>`;
+  }
+  const now = Date.now();
+  const rowsHtml = list.map(c=>{
+    const flaggedDaysAgo = c.createdAt ? Math.floor((now - new Date(c.createdAt).getTime()) / 86400000) : null;
+    const stale = flaggedDaysAgo !== null && flaggedDaysAgo >= 7; // a week with no update is worth calling out
+    const deleting = state.expectedClosureDeletingId === c.id;
+    const confirming = state.expectedClosureConfirmingId === c.id;
+    const loggingFollowup = state.expectedClosureFollowupId === c.id;
+    return `<div class="notif-row" style="flex-direction:column;align-items:stretch${stale?';border-color:var(--amber)':''}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="notif-name">${escapeHtml(c.candidate)} <span class="notif-chip">${escapeHtml(c.company)}</span>${c.round?` <span class="notif-chip">${escapeHtml(c.round)}</span>`:''}${stale?` <span class="notif-warn" style="color:var(--amber)" title="Flagged ${flaggedDaysAgo} days ago with no follow-up logged since">⏱ ${flaggedDaysAgo}d</span>`:''}</div>
+        <span style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn ghost" data-expectclosure-followup="${c.id}" ${loggingFollowup?'disabled':''} title="Log a quick update from following up with the candidate/POC" style="font-size:11px;padding:4px 10px">${loggingFollowup?'<span class="spinner"></span>':'📝 Follow up'}</button>
+          <button class="btn primary" data-expectclosure-confirm="${c.id}" ${confirming?'disabled':''} title="This came through — record it as a real closure" style="font-size:11px;padding:4px 10px">${confirming?'<span class="spinner"></span>':'✅ Confirm'}</button>
+          <button class="btn ghost" data-expectclosure-delete="${c.id}" ${deleting?'disabled':''} title="Didn't pan out — remove this flag" style="font-size:11px;padding:4px 10px;color:var(--coral)">${deleting?'<span class="spinner"></span>':'🗑'}</button>
+        </span>
+      </div>
+      <div class="hint" style="margin-top:2px">${c.note ? escapeHtml(c.note) : '<em>No note left</em>'}${c.flaggedBy?` — flagged by ${escapeHtml(c.flaggedBy)}`:''}${c.createdAt?` on ${new Date(c.createdAt).toLocaleDateString()}`:''}${c.callDate?` (call on ${escapeHtml(c.callDate)})`:''}</div>
+      ${c.lastFollowupAt ? `<div class="hint" style="margin-top:2px;color:var(--teal)">Last follow-up ${new Date(c.lastFollowupAt).toLocaleDateString()}${c.lastFollowupNote?`: ${escapeHtml(c.lastFollowupNote)}`:''}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="import-panel">
+    <div class="hint" style="margin-bottom:10px">${list.length} call${list.length===1?'':'s'} flagged as likely closures, waiting on follow-up — oldest first.</div>
+    ${rowsHtml}
+  </div>`;
+}
+
 function teamCaption(team){
   const captions = {
     "HYD Team": "",
@@ -10282,6 +10438,11 @@ function renderTable(rows, conflictIds, clientConflicts){
   const teamNames = new Set(state.roster.map(p=>p.team));
   const rosterByName = new Map(state.roster.map(p=>[p.name, p]));
   const absentIdSet = new Set(state.absentIds);
+  // Same lookup pattern as teamNames/rosterByName just above — built once
+  // per render, not per row. Matches by candidate+company key (not call
+  // id) so the 🎯 "already flagged" state still shows up correctly even
+  // across a reschedule/re-import that gives the row a new id.
+  const expectedClosureKeys = new Set((state.expectedClosures||[]).map(c=>normalizeNameKey(c.candidate)+'|'+normalizeCompanyKey(c.company||'')));
   const rowsHtml = rows.map(r=>{
     const isConflict = conflictIds.has(r.id);
     const conflictReason = conflictIds.get(r.id) || '';
@@ -10319,7 +10480,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
+        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
   const info = studentMatchBadgeInfo(r.candidate);
   if(!info) return '';
   if(info.kind === 'confirm'){
@@ -10371,6 +10532,9 @@ function renderTable(rows, conflictIds, clientConflicts){
         </select>
       </td>` : ''}
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
+        const alreadyFlagged = r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''));
+        return r.candidate ? `<button class="expect-closure-btn" data-expectclosure="${r.id}" style="${alreadyFlagged?'color:var(--amber)':''}" title="${alreadyFlagged ? 'Already flagged as an expected closure — click to flag again (e.g. after a later round)' : 'Flag as an expected closure, based on what the handler/driving person told you'}">🎯</button>` : '';
+      })()}${(()=>{
         const pm = portalMatch;
         if(pm){
           const differs = pm.handler && r.assignee && !namesEquivalent(pm.handler, r.assignee);
@@ -10781,6 +10945,60 @@ function attachHandlers(conflictIds){
         state.closureDeleteError = (e && e.message) ? `Could not delete this closure: ${e.message}` : 'Could not delete this closure — try again.';
       }
       state.closureDeletingId = null;
+      render();
+    };
+  });
+
+  // Expected Closures panel actions (added 2026-10-01) — delete, log a
+  // follow-up, or confirm/promote into the real Closures log. Same
+  // native-confirm()/prompt() pattern as the rest of this app uses for
+  // rare, deliberate actions rather than a second custom panel each.
+  document.querySelectorAll('[data-expectclosure-delete]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = Number(btn.dataset.expectclosureDelete);
+      if(!confirm('Remove this flag? Use this when it didn’t pan out after all — this only removes the flag, it never touches a real closure.')) return;
+      state.expectedClosureDeletingId = id;
+      render();
+      try{
+        await deleteExpectedClosure(id);
+      }catch(e){
+        alert('Could not remove this flag: ' + (e && e.message ? e.message : 'try again.'));
+      }
+      state.expectedClosureDeletingId = null;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-expectclosure-followup]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = Number(btn.dataset.expectclosureFollowup);
+      const note = prompt('Quick follow-up note — what did the candidate/POC say when you checked in? (Leave blank to just mark that you checked.)');
+      if(note === null) return; // cancelled
+      state.expectedClosureFollowupId = id;
+      render();
+      try{
+        await logExpectedClosureFollowup(id, note);
+      }catch(e){
+        alert('Could not log that follow-up: ' + (e && e.message ? e.message : 'try again.'));
+      }
+      state.expectedClosureFollowupId = null;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-expectclosure-confirm]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = Number(btn.dataset.expectclosureConfirm);
+      const row = (state.expectedClosures||[]).find(c=>c.id===id);
+      if(!row) return;
+      if(!confirm(`Record "${row.candidate}" at ${row.company} as a real closure now? This adds it to the Closures log and removes this flag.`)) return;
+      const salary = prompt('Salary / package (optional — leave blank if not known yet):', '') || '';
+      state.expectedClosureConfirmingId = id;
+      render();
+      try{
+        await confirmExpectedClosure(row, salary);
+      }catch(e){
+        alert('Could not record this as a closure: ' + (e && e.message ? e.message : 'try again.'));
+      }
+      state.expectedClosureConfirmingId = null;
       render();
     };
   });
@@ -12689,6 +12907,13 @@ function attachHandlers(conflictIds){
     if(!_allRowsAcrossDatesCache) fetchAllRowsAcrossDates(false).then(()=>render());
   };
 
+  const toggleExpectedClosuresBtn = document.getElementById('toggleExpectedClosures');
+  if(toggleExpectedClosuresBtn) toggleExpectedClosuresBtn.onclick = ()=>{
+    openOnlyPanel('showExpectedClosures');
+    render();
+    if(!state.expectedClosuresLoaded) loadExpectedClosures();
+  };
+
   const toggleDataHealthBtn = document.getElementById('toggleDataHealth');
   if(toggleDataHealthBtn) toggleDataHealthBtn.onclick = ()=>{
     const wasOpen = state.showDataHealth;
@@ -12979,6 +13204,41 @@ function attachHandlers(conflictIds){
       render();
     };
   });
+  document.querySelectorAll('.expect-closure-btn').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.expectClosureRowId = btn.dataset.expectclosure;
+      state.expectClosureError = null;
+      render();
+    };
+  });
+  const expectClosureOverlay = document.getElementById('expectClosureSheetOverlay');
+  if(expectClosureOverlay){
+    expectClosureOverlay.onclick = (e)=>{
+      if(e.target === expectClosureOverlay){ state.expectClosureRowId = null; render(); }
+    };
+    const expectClosureCancelBtn = document.getElementById('expectClosureCancelBtn');
+    if(expectClosureCancelBtn) expectClosureCancelBtn.onclick = ()=>{ state.expectClosureRowId = null; state.expectClosureError = null; render(); };
+    const expectClosureSaveBtn = document.getElementById('expectClosureSaveBtn');
+    if(expectClosureSaveBtn) expectClosureSaveBtn.onclick = async ()=>{
+      const row = state.rows.find(r=>r.id===state.expectClosureRowId);
+      if(!row) return;
+      const noteInput = document.getElementById('expectClosureNoteInput');
+      const note = noteInput ? noteInput.value.trim() : '';
+      state.expectClosureSaving = true;
+      state.expectClosureError = null;
+      render();
+      try{
+        await saveExpectedClosure({ id: row.id, candidate: row.candidate, company: row.company, round: row.round, note });
+        state.expectClosureSaving = false;
+        state.expectClosureRowId = null;
+        render();
+      }catch(e){
+        state.expectClosureSaving = false;
+        state.expectClosureError = (e && e.message) ? e.message : 'Could not save this flag — try again.';
+        render();
+      }
+    };
+  }
   document.querySelectorAll('.pin-interviewer').forEach(input=>{
     input.addEventListener('input', ()=>{
       const row = state.rows.find(r=>r.id===input.dataset.id);
@@ -13236,7 +13496,7 @@ function updateBodyScrollLock(){
   // wired for it too — see the clipboardPickerOverlay handler), but was
   // missed from this list when it was first written, so opening it left the
   // page scrollable underneath it same as the original reported bug.
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump);
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -13944,6 +14204,7 @@ async function startApp(){
   }).catch(()=>{});
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
   loadClosures().catch(()=>{});
+  loadExpectedClosures().catch(()=>{});
   loadAppSettings().catch(()=>{});
 }
 // The repeat-candidate scan (scanForRepeatCandidates) groups occurrences by
@@ -14758,6 +15019,14 @@ function portalMatchSuppressedInfo(row){
       openCandidateProfile(row.candidate);
       return;
     }
+    if(action === 'expectclosure'){
+      hapticTap(12);
+      state.quickActionRowId = null;
+      state.expectClosureRowId = rowId;
+      state.expectClosureError = null;
+      render();
+      return;
+    }
     if(action === 'delete'){
       hapticTap(20);
       state.quickActionRowId = null;
@@ -14920,7 +15189,7 @@ function portalMatchSuppressedInfo(row){
   document.addEventListener('touchstart', (e)=>{
     if(refreshing) return;
     if(getActivePanelName()) return; // only the home screen
-    if(state.quickActionRowId || state.showSwipeAssignPicker) return; // a floating sheet/picker is open
+    if(state.quickActionRowId || state.showSwipeAssignPicker || state.expectClosureRowId) return; // a floating sheet/picker is open
     if((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
     if(e.target.closest('tr[data-id]')) return; // leave call-card swipes alone
     startY = e.touches[0].clientY;
@@ -15196,7 +15465,7 @@ window.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape'){
     // (2026-09-29, part 2) showClipboardPicker added here too — same
     // fixed-overlay pattern as the others, just missed on the first pass.
-    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump){
+    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showQuickSearchModal = false;
@@ -15204,6 +15473,8 @@ window.addEventListener('keydown', (e)=>{
       state.pendingSwipeAssignRowId = null;
       state.showClipboardPicker = false;
       state.quickActionRowId = null;
+      state.expectClosureRowId = null;
+      state.expectClosureError = null;
       state.showQuickJump = false;
       state.quickJumpQuery = '';
       state.quickJumpResults = null;
