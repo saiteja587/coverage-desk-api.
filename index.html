@@ -1193,6 +1193,7 @@ let state = {
   groupByCompany: false,
   showMoreMenu: false,
   showToolsMenu: false,
+  showImportMenu: false,
   showAllDates: false,
   mobileNoteExpanded: false,
   mobileStripExpanded: false,
@@ -6113,6 +6114,7 @@ function closeAllPanels(){
   state.showEodWrapup = false;
   state.showMoreMenu = false;
   state.showToolsMenu = false;
+  state.showImportMenu = false;
   stopPortalSyncPolling();
 }
 function getActivePanelName(){
@@ -6477,7 +6479,13 @@ function render(){
         <button class="arrow-btn" id="prevDay">‹</button>
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
-        ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<button class="btn ${(state.showImport||state.showRescheduleImport)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>` : ''}
+        ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<div class="more-menu-wrap">
+          <button class="btn ${(state.showImport||state.showRescheduleImport||state.showImportMenu)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>
+          ${state.showImportMenu ? `<div class="more-menu-backdrop" data-close-menu="showImportMenu"></div><div class="more-menu-dropdown">
+            <button class="more-menu-item" id="importMenuNewCalls">＋ Add Calls</button>
+            <button class="more-menu-item" id="importMenuReschedule">↻ Reschedule / Cancel</button>
+          </div>` : ''}
+        </div>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
         <button class="btn ${state.showExpectedClosures?'active':''}" id="toggleExpectedClosures" title="Calls flagged as 'expecting this to become a closure' based on handler/driving-person feedback — follow up on them here" style="${state.expectedClosuresLoaded && expectedClosuresPendingCount() ? 'color:var(--amber);border-color:#5A4420' : ''}">🎯 Expected${state.expectedClosuresLoaded ? ` (${expectedClosuresPendingCount()})` : ''}</button>
         <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
@@ -10783,8 +10791,22 @@ function attachHandlers(conflictIds){
   if(backToCallsBtn) backToCallsBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const toggleImportHubBtn = document.getElementById('toggleImportHub');
   if(toggleImportHubBtn) toggleImportHubBtn.onclick = ()=>{
+    state.showImportMenu = !state.showImportMenu;
+    state.showMoreMenu = false;
+    state.showToolsMenu = false;
+    render();
+  };
+  const importMenuNewCallsBtn = document.getElementById('importMenuNewCalls');
+  if(importMenuNewCallsBtn) importMenuNewCallsBtn.onclick = ()=>{
+    state.showImportMenu = false;
     state.importDefaultRound = state.view==='2nd' ? '2nd' : '1st';
     openOnlyPanel('showImport');
+    render();
+  };
+  const importMenuRescheduleBtn = document.getElementById('importMenuReschedule');
+  if(importMenuRescheduleBtn) importMenuRescheduleBtn.onclick = ()=>{
+    state.showImportMenu = false;
+    openOnlyPanel('showRescheduleImport');
     render();
   };
   // Same action as the toolbar's "📥 Import" button, reachable straight
@@ -11562,12 +11584,14 @@ function attachHandlers(conflictIds){
   if(toggleMoreMenuBtn) toggleMoreMenuBtn.onclick = ()=>{
     state.showMoreMenu = !state.showMoreMenu;
     state.showToolsMenu = false;
+    state.showImportMenu = false;
     render();
   };
   const toggleToolsMenuBtn = document.getElementById('toggleToolsMenu');
   if(toggleToolsMenuBtn) toggleToolsMenuBtn.onclick = ()=>{
     state.showToolsMenu = !state.showToolsMenu;
     state.showMoreMenu = false;
+    state.showImportMenu = false;
     render();
   };
   // Closes whichever dropdown is open whenever an item inside it is
@@ -13472,10 +13496,11 @@ function attachHandlers(conflictIds){
   if(!window.__outsideMenuCloseSetup){
     window.__outsideMenuCloseSetup = true;
     document.addEventListener('click', (e)=>{
-      if(!state.showMoreMenu && !state.showToolsMenu) return;
+      if(!state.showMoreMenu && !state.showToolsMenu && !state.showImportMenu) return;
       if(e.target.closest('.more-menu-wrap')) return; // click was on the toggle button or inside the dropdown itself
       state.showMoreMenu = false;
       state.showToolsMenu = false;
+      state.showImportMenu = false;
       render();
     }, true); // capture phase: fires before the item's own click handler closes it, so this never double-closes-then-reopens
   }
@@ -13496,7 +13521,7 @@ function updateBodyScrollLock(){
   // wired for it too — see the clipboardPickerOverlay handler), but was
   // missed from this list when it was first written, so opening it left the
   // page scrollable underneath it same as the original reported bug.
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId);
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -15465,9 +15490,10 @@ window.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape'){
     // (2026-09-29, part 2) showClipboardPicker added here too — same
     // fixed-overlay pattern as the others, just missed on the first pass.
-    if(state.showMoreMenu || state.showToolsMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId){
+    if(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
+      state.showImportMenu = false;
       state.showQuickSearchModal = false;
       state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
