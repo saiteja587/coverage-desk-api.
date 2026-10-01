@@ -5850,6 +5850,35 @@ async function computeStuckPipeline(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
+// Helper for computeCandidateActivity below — catches a shortcut WhatsApp
+// coordinators actually type: the FIRST TWO+ NAME WORDS with the last name
+// dropped entirely ("Sai Prasanna" for "Sai Prasanna Patlolla"), not just an
+// abbreviated initial ("Sai P" — that's already firstNameLastInitialFuzzyMatch's
+// job). Reported real case: Mahnoor Hasan's Oct-1 call wasn't counted because
+// one of her other calls was on file as a plain "Mahnoor Hasan" while this
+// one carried a longer variant, which the exact-name grouping treated as two
+// different people. Deliberately requires the short form to have AT LEAST 2
+// words — a bare single first name ("Sai") is far too likely to collide with
+// an unrelated person, same under-matching-is-safe principle used everywhere
+// else name-matching happens in this app.
+function namesArePrefixVariant(nameA, nameB){
+  function attempt(shortName, longName){
+    const shortParts = (shortName||'').trim().split(/\s+/).map(normalizeNameKey).filter(Boolean);
+    const longParts = (longName||'').trim().split(/\s+/).map(normalizeNameKey).filter(Boolean);
+    if(shortParts.length < 2 || longParts.length <= shortParts.length) return false;
+    for(let i=0;i<shortParts.length;i++){
+      if(shortParts[i] !== longParts[i]) return false;
+    }
+    return true;
+  }
+  return attempt(nameA, nameB) || attempt(nameB, nameA);
+}
+// Everything computeCandidateActivity treats as "plausibly the same real
+// person" — reuses the app-wide sameCandidateFuzzyMatch (initial+typo
+// tolerance) plus the prefix-shortcut check above.
+function sameCandidateOrVariant(nameA, nameB){
+  return sameCandidateFuzzyMatch(nameA, nameB) || namesArePrefixVariant(nameA, nameB);
+}
 // ---------- Candidate call-activity / low-activity flag (2026-10-01) ----------
 // Saiteja's ask: spot a candidate who's quietly getting very few calls
 // *overall* (e.g. "Sai Prasanna only had 2-3 calls") — a different question
@@ -5861,25 +5890,82 @@ async function computeStuckPipeline(forceRefresh){
 // the top regardless of which month they happened in. Already-closed
 // candidates are excluded (same reasoning Stuck Pipeline uses: a thin
 // trickle of calls after being placed isn't a problem worth flagging).
+//
+// Grouping is two-pass, not a single normalizeNameKey lookup: coordinators
+// type the same candidate's name differently across different calls/dates
+// (full name one day, a shortcut or a typo'd spelling another), and an
+// exact-string group silently undercounts that candidate AND can show the
+// wrong "last call" date (real bug reported 2026-10-01 — Mahnoor Hasan's
+// most recent call didn't surface because it was on file under a slightly
+// different spelling of her name than her other calls). Pass 1 groups by
+// exact normalized name (cheap, always safe). Pass 2 merges two of those
+// exact groups together ONLY when they fuzzy-match each other and NOTHING
+// ELSE — same "never guess when ambiguous" rule Students Master matching
+// uses — so two different real people who happen to both loosely resemble
+// a third name are left separate rather than risked being conflated.
 async function computeCandidateActivity(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
   const closedCandidates = new Set((state.closures||[]).map(c=>normalizeNameKey(c.candidate)));
-  const byCandidate = {};
+
+  const exactGroups = {}; // normalizeNameKey -> { candidate, calls, companies }
   allRows.forEach(row=>{
     const key = normalizeNameKey(row.candidate);
     if(!key || row.woi) return; // WOI isn't a real call yet — would understate activity in the wrong direction
-    if(!byCandidate[key]) byCandidate[key] = { candidate: row.candidate||'', calls: [], companies: new Set() };
-    const entry = byCandidate[key];
+    if(!exactGroups[key]) exactGroups[key] = { candidate: row.candidate||'', calls: [], companies: new Set() };
+    const entry = exactGroups[key];
     // Longest spelling on file as the display name — same heuristic
     // scanClientReliability/Company Scorecard already use for the same reason.
     if((row.candidate||'').length > entry.candidate.length) entry.candidate = row.candidate;
     entry.calls.push(row);
     if(row.company) entry.companies.add(row.company);
   });
+
+  // Union-find merge of exact groups that are plausibly the same person.
+  // Each group's match list is computed once, then two groups only merge
+  // when they're MUTUALLY each other's one-and-only match — not just a
+  // one-directional "A thinks B is its only match". One-directional
+  // checking alone has a real bridging bug: if a short form like "Sai
+  // Prasanna" is itself ambiguous (matches two different full names,
+  // "...Patlolla" and "...Reddy"), each full name can still independently
+  // see the short form as ITS unique match and union into it — silently
+  // merging two different real people through that shared short form as
+  // the bridge. Requiring mutual uniqueness closes that: "Sai Prasanna"
+  // having two matches means neither full name's merge is reciprocated,
+  // so all three stay separate, exactly like the ambiguous Students
+  // Master pathways already refuse to guess.
+  const groupKeys = Object.keys(exactGroups);
+  const matchLists = {};
+  groupKeys.forEach(keyA=>{
+    matchLists[keyA] = groupKeys.filter(keyB => keyB!==keyA && sameCandidateOrVariant(exactGroups[keyA].candidate, exactGroups[keyB].candidate));
+  });
+  const parent = {};
+  groupKeys.forEach(k => { parent[k] = k; });
+  function find(k){ while(parent[k] !== k) k = parent[k]; return k; }
+  function union(a,b){ const ra=find(a), rb=find(b); if(ra!==rb) parent[ra]=rb; }
+  groupKeys.forEach(keyA=>{
+    const matches = matchLists[keyA];
+    if(matches.length !== 1) return;
+    const keyB = matches[0];
+    const reciprocal = matchLists[keyB];
+    if(reciprocal.length === 1 && reciprocal[0] === keyA) union(keyA, keyB);
+  });
+
+  const merged = {}; // root key -> { candidate, calls, companies, closed }
+  groupKeys.forEach(k=>{
+    const root = find(k);
+    if(!merged[root]) merged[root] = { candidate:'', calls:[], companies:new Set(), closed:false };
+    const g = exactGroups[k];
+    const m = merged[root];
+    if(g.candidate.length > m.candidate.length) m.candidate = g.candidate;
+    m.calls.push(...g.calls);
+    g.companies.forEach(c=>m.companies.add(c));
+    if(closedCandidates.has(k)) m.closed = true;
+  });
+
   const todayKey = todayStr();
-  return Object.entries(byCandidate)
-    .filter(([key]) => !closedCandidates.has(key))
-    .map(([, entry])=>{
+  return Object.values(merged)
+    .filter(m => !m.closed)
+    .map(entry=>{
       const sortedDates = entry.calls.map(c=>c._date).filter(Boolean).sort();
       const lastDate = sortedDates.length ? sortedDates[sortedDates.length-1] : null;
       return {
