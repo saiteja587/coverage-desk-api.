@@ -1220,6 +1220,14 @@ let state = {
   conversionFunnelLoading: false,
   stuckPipelineData: null,
   stuckPipelineLoading: false,
+  // Candidate call-activity / low-activity flag (added 2026-10-01): all-time
+  // call count per candidate, lowest first, so a thin pipeline ("only 2-3
+  // calls all along") surfaces instead of staying invisible.
+  showCandidateActivity: false,
+  candidateActivityData: null,
+  candidateActivityLoading: false,
+  candidateActivityThreshold: 3,
+  candidateActivityShowAll: false,
   timeToCloseData: null,
   timeToCloseLoading: false,
   showDataHealth: false,
@@ -5842,6 +5850,48 @@ async function computeStuckPipeline(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
+// ---------- Candidate call-activity / low-activity flag (2026-10-01) ----------
+// Saiteja's ask: spot a candidate who's quietly getting very few calls
+// *overall* (e.g. "Sai Prasanna only had 2-3 calls") — a different question
+// from Stuck Pipeline above (which is about a candidate gone quiet AFTER a
+// real touchpoint) or WOI Aging (stuck before a call is even scheduled).
+// This is simply: total non-WOI call count per candidate, across every
+// saved date and every company, plus the date of their most recent call
+// ever — sorted fewest-calls-first so the thinnest pipelines surface at
+// the top regardless of which month they happened in. Already-closed
+// candidates are excluded (same reasoning Stuck Pipeline uses: a thin
+// trickle of calls after being placed isn't a problem worth flagging).
+async function computeCandidateActivity(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const closedCandidates = new Set((state.closures||[]).map(c=>normalizeNameKey(c.candidate)));
+  const byCandidate = {};
+  allRows.forEach(row=>{
+    const key = normalizeNameKey(row.candidate);
+    if(!key || row.woi) return; // WOI isn't a real call yet — would understate activity in the wrong direction
+    if(!byCandidate[key]) byCandidate[key] = { candidate: row.candidate||'', calls: [], companies: new Set() };
+    const entry = byCandidate[key];
+    // Longest spelling on file as the display name — same heuristic
+    // scanClientReliability/Company Scorecard already use for the same reason.
+    if((row.candidate||'').length > entry.candidate.length) entry.candidate = row.candidate;
+    entry.calls.push(row);
+    if(row.company) entry.companies.add(row.company);
+  });
+  const todayKey = todayStr();
+  return Object.entries(byCandidate)
+    .filter(([key]) => !closedCandidates.has(key))
+    .map(([, entry])=>{
+      const sortedDates = entry.calls.map(c=>c._date).filter(Boolean).sort();
+      const lastDate = sortedDates.length ? sortedDates[sortedDates.length-1] : null;
+      return {
+        candidate: entry.candidate,
+        totalCalls: entry.calls.length,
+        companies: Array.from(entry.companies),
+        lastDate,
+        daysSinceLastCall: lastDate ? Math.max(0, Math.round((new Date(todayKey+'T00:00:00Z').getTime() - new Date(lastDate+'T00:00:00Z').getTime())/86400000)) : null,
+      };
+    })
+    .sort((a,b)=> a.totalCalls - b.totalCalls || (a.lastDate||'').localeCompare(b.lastDate||''));
+}
 // ---------- Final-round-no-closure nudge (2026-09-28) ---------- A narrower,
 // earlier-warning sibling to Stuck Pipeline above: that one catches ANY
 // candidate gone quiet 14+ days, regardless of round. This one is specific
@@ -6098,6 +6148,7 @@ function closeAllPanels(){
   state.closureReview = null;
   state.showClosures = false;
   state.showExpectedClosures = false;
+  state.showCandidateActivity = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showUniversalSearch = false;
@@ -6132,6 +6183,7 @@ function getActivePanelName(){
   if(state.closureReview) return 'closureReview';
   if(state.showClosures) return 'closures';
   if(state.showExpectedClosures) return 'expectedClosures';
+  if(state.showCandidateActivity) return 'candidateActivity';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showUniversalSearch) return 'universalSearch';
@@ -6171,6 +6223,7 @@ function renderActivePanel(name){
   if(name === 'closureReview') return renderClosureConfirmPanel();
   if(name === 'closures') return renderClosuresPanel();
   if(name === 'expectedClosures') return renderExpectedClosuresPanel();
+  if(name === 'candidateActivity') return renderCandidateActivityPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
@@ -6193,7 +6246,8 @@ function panelTitle(name){
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
-    closures:'Closures / Job Offers', studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
+    closures:'Closures / Job Offers', expectedClosures:'Expected Closures', candidateActivity:'Candidate Call Activity',
+    studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
     duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts',
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
@@ -6488,6 +6542,7 @@ function render(){
         </div>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
         <button class="btn ${state.showExpectedClosures?'active':''}" id="toggleExpectedClosures" title="Calls flagged as 'expecting this to become a closure' based on handler/driving-person feedback — follow up on them here" style="${state.expectedClosuresLoaded && expectedClosuresPendingCount() ? 'color:var(--amber);border-color:#5A4420' : ''}">🎯 Expected${state.expectedClosuresLoaded ? ` (${expectedClosuresPendingCount()})` : ''}</button>
+        <button class="btn ${state.showCandidateActivity?'active':''}" id="toggleCandidateActivity" title="Total calls ever logged per candidate, across every date — flags anyone who's quietly only had a couple of calls, not just this month">📉 Low Activity${state.candidateActivityData ? ` (${state.candidateActivityData.filter(c=>c.totalCalls<=(Number.isFinite(state.candidateActivityThreshold)?state.candidateActivityThreshold:3)).length})` : ''}</button>
         <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
         <div class="more-menu-wrap">
           <!-- FIX (2026-09-29): header cleanup — "so many options" complaint.
@@ -9787,6 +9842,52 @@ function renderExpectedClosuresPanel(){
   </div>`;
 }
 
+function renderCandidateActivityPanel(){
+  if(state.candidateActivityLoading){
+    return `<div class="import-panel"><div class="hint"><span class="spinner"></span> Scanning every saved date for each candidate's total call count…</div></div>`;
+  }
+  if(state.candidateActivityData === null){
+    return `<div class="import-panel">
+      <div class="hint" style="margin-bottom:10px">Total calls ever logged per candidate, across every date and company — not just one month — so a candidate who's quietly only ever gotten a couple of calls doesn't stay invisible. Sorted fewest-calls-first. Already-closed candidates are left out.</div>
+      <button class="btn primary" id="runCandidateActivityScan">🔍 Scan all candidates</button>
+    </div>`;
+  }
+  const threshold = Number.isFinite(state.candidateActivityThreshold) ? state.candidateActivityThreshold : 3;
+  const data = state.candidateActivityData;
+  const flagged = data.filter(c => c.totalCalls <= threshold);
+  const list = state.candidateActivityShowAll ? data : flagged;
+  const thresholdControl = `
+    <div class="row" style="margin-bottom:8px;align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="hint" style="margin:0">
+        Flag candidates with <input type="number" id="candidateActivityThresholdInput" min="0" max="99" value="${threshold}" style="width:46px;text-align:center;padding:2px 4px" /> call${threshold===1?'':'s'} or fewer
+        — <strong>${flagged.length}</strong> of ${data.length} candidate${data.length===1?'':'s'}
+      </div>
+      <span style="display:flex;gap:6px;margin-left:auto">
+        <button class="btn ghost" id="toggleCandidateActivityShowAll" style="font-size:11px;padding:4px 10px">${state.candidateActivityShowAll ? 'Show flagged only' : `Show all ${data.length}`}</button>
+        <button class="btn ghost" id="runCandidateActivityScan" style="font-size:11px;padding:4px 10px">Re-scan</button>
+      </span>
+    </div>`;
+  if(!data.length){
+    return `<div class="import-panel">${thresholdControl}<div class="hint">No non-closed candidates with any recorded calls yet.</div></div>`;
+  }
+  if(!list.length){
+    return `<div class="import-panel">${thresholdControl}<div class="hint" style="color:var(--teal)">✅ Nobody's at or below ${threshold} call${threshold===1?'':'s'} right now.</div></div>`;
+  }
+  const rowsHtml = list.map(c=>{
+    const low = c.totalCalls <= threshold;
+    return `<div class="notif-row">
+      <div class="notif-name">${escapeHtml(c.candidate)}</div>
+      <div class="notif-detail">
+        <span class="notif-chip" style="${low?'color:var(--coral);border-color:var(--coral)':''}">${c.totalCalls} call${c.totalCalls===1?'':'s'} total</span>
+        ${c.lastDate ? `<span class="notif-chip">last call ${escapeHtml(c.lastDate)}${c.daysSinceLastCall!==null?` (${c.daysSinceLastCall}d ago)`:''}</span>` : `<span class="notif-chip">no dated call on file</span>`}
+        ${c.companies.length ? `<span class="notif-chip">${escapeHtml(c.companies.slice(0,2).join(', '))}${c.companies.length>2?` +${c.companies.length-2} more`:''}</span>` : ''}
+        ${c.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(c.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="import-panel">${thresholdControl}${rowsHtml}</div>`;
+}
+
 function teamCaption(team){
   const captions = {
     "HYD Team": "",
@@ -12936,6 +13037,38 @@ function attachHandlers(conflictIds){
     openOnlyPanel('showExpectedClosures');
     render();
     if(!state.expectedClosuresLoaded) loadExpectedClosures();
+  };
+
+  const toggleCandidateActivityBtn = document.getElementById('toggleCandidateActivity');
+  if(toggleCandidateActivityBtn) toggleCandidateActivityBtn.onclick = async ()=>{
+    openOnlyPanel('showCandidateActivity');
+    render();
+    if(state.candidateActivityData === null && !state.candidateActivityLoading){
+      state.candidateActivityLoading = true;
+      render();
+      state.candidateActivityData = await computeCandidateActivity(false);
+      state.candidateActivityLoading = false;
+      render();
+    }
+  };
+  const runCandidateActivityScanBtn = document.getElementById('runCandidateActivityScan');
+  if(runCandidateActivityScanBtn) runCandidateActivityScanBtn.onclick = async ()=>{
+    state.candidateActivityLoading = true;
+    render();
+    state.candidateActivityData = await computeCandidateActivity(true);
+    state.candidateActivityLoading = false;
+    render();
+  };
+  const candidateActivityThresholdInput = document.getElementById('candidateActivityThresholdInput');
+  if(candidateActivityThresholdInput) candidateActivityThresholdInput.oninput = (e)=>{
+    const n = parseInt(e.target.value, 10);
+    state.candidateActivityThreshold = Number.isFinite(n) && n >= 0 ? n : 0;
+    render();
+  };
+  const toggleCandidateActivityShowAllBtn = document.getElementById('toggleCandidateActivityShowAll');
+  if(toggleCandidateActivityShowAllBtn) toggleCandidateActivityShowAllBtn.onclick = ()=>{
+    state.candidateActivityShowAll = !state.candidateActivityShowAll;
+    render();
   };
 
   const toggleDataHealthBtn = document.getElementById('toggleDataHealth');
