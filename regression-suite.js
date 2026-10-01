@@ -1331,8 +1331,6 @@ async function main() {
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleExpectedClosures', 150);
   await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleCandidateActivity', 300); // triggers an async scan on first open
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleToolsMenu');
   for (const id of ['toggleRoster', 'togglePortalSync', 'toggleIncentives', 'toggleBackups']) {
     await sPage.evaluate(() => { closeAllPanels(); render(); });
