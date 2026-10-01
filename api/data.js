@@ -253,10 +253,11 @@ module.exports = async (req, res) => {
     if (resource === 'driving_person') return await handleDrivingPerson(req, res, db);
     if (resource === 'closures') return await handleClosures(req, res, db);
     if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
+    if (resource === 'expected_closures') return await handleExpectedClosures(req, res, db);
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|app_settings|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|users|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -912,6 +913,71 @@ async function handleClosures(req, res, db) {
     if (values.some(v => !v[0] || !v[1])) return res.status(400).json({ error: 'Each row needs at least a candidate and a company' });
     await db.query(
       'INSERT INTO closures (candidate, company, salary, raw_text, recorded_by) VALUES ?',
+      [values]
+    );
+    return res.status(200).json({ ok: true, count: values.length });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- expected_closures: "likely closure" flags awaiting follow-up ----------
+// Added 2026-10-01 — Saiteja: "who is in the call, we can except [accept]
+// this as closures depends on the call feedback by handlers or driving
+// persons... if we do this we can follow up the updates regarding this...
+// let's say like a remainder [reminder]." A holding area that sits BEFORE
+// the real (confirmed) `closures` table above — flagging a call here never
+// writes into that append-only log. GET returns everything on file
+// (capped at 500, oldest-flagged-first is handled client-side so the
+// stalest follow-ups surface first). POST appends new flags, or — via the
+// {action:...} shape also used by handleClosures above — deletes a flag
+// ('delete') or logs a follow-up check-in ('followup'). There's no
+// separate "confirm" action here: the frontend's confirmExpectedClosure()
+// promotes a flag into a real closure by calling the `closures` resource
+// directly (same INSERT path a pasted-in message uses) and then deletes
+// the flag here — once it's a real closure it belongs in exactly one
+// table, not two.
+async function handleExpectedClosures(req, res, db) {
+  if (req.method === 'GET') {
+    const [rows] = await db.query(
+      `SELECT id, call_id AS callId, call_date AS callDate, candidate, company, round_text AS round,
+              note, flagged_by AS flaggedBy, created_at AS createdAt,
+              last_followup_at AS lastFollowupAt, last_followup_note AS lastFollowupNote
+       FROM expected_closures ORDER BY created_at DESC LIMIT 500`
+    );
+    return res.status(200).json({ rows });
+  }
+  if (req.method === 'POST') {
+    if (req.body && req.body.action === 'delete') {
+      const id = Number(req.body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      await db.query('DELETE FROM expected_closures WHERE id = ?', [id]);
+      return res.status(200).json({ ok: true });
+    }
+    if (req.body && req.body.action === 'followup') {
+      const id = Number(req.body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      const note = (req.body.note || '').trim();
+      await db.query(
+        'UPDATE expected_closures SET last_followup_at = NOW(), last_followup_note = ? WHERE id = ?',
+        [note, id]
+      );
+      return res.status(200).json({ ok: true });
+    }
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows[] required' });
+    const flaggedBy = req.headers['x-username'] || 'admin';
+    const values = rows.map(r => [
+      r.callId || null,
+      r.callDate || '',
+      (r.candidate || '').trim(),
+      (r.company || '').trim(),
+      r.round || '',
+      r.note || '',
+      flaggedBy,
+    ]);
+    if (values.some(v => !v[2] || !v[3])) return res.status(400).json({ error: 'Each row needs at least a candidate and a company' });
+    await db.query(
+      'INSERT INTO expected_closures (call_id, call_date, candidate, company, round_text, note, flagged_by) VALUES ?',
       [values]
     );
     return res.status(200).json({ ok: true, count: values.length });
