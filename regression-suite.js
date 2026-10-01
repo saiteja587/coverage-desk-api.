@@ -634,6 +634,9 @@ async function main() {
 
     document.getElementById('toggleImportHub').click();
     await new Promise(r => setTimeout(r, 20));
+    out.importMenuShown = !!document.getElementById('importMenuNewCalls') && !!document.getElementById('importMenuReschedule');
+    document.getElementById('importMenuNewCalls').click();
+    await new Promise(r => setTimeout(r, 20));
     out.opensOnNewCallsTab = !!document.getElementById('importText') && !document.getElementById('rescheduleImportText');
 
     document.getElementById('importHubTabReschedule').click();
@@ -662,7 +665,7 @@ async function main() {
 
     document.getElementById('toggleImportHub').click();
     await new Promise(r => setTimeout(r, 20));
-    document.getElementById('importHubTabReschedule').click();
+    document.getElementById('importMenuReschedule').click();
     await new Promise(r => setTimeout(r, 20));
     document.getElementById('rescheduleImportText').value = 'Import Hub Test Candidate – 3:00 PM IST – rescheduled from candidate side';
     document.getElementById('parseRescheduleBtn').click();
@@ -677,7 +680,9 @@ async function main() {
     importHubTests.oldButtonsGone, JSON.stringify(importHubTests));
   check('Import hub', 'A single "Import" button exists in the header',
     importHubTests.hubButtonExists, JSON.stringify(importHubTests));
-  check('Import hub', 'Clicking it opens on the New Calls tab by default',
+  check('Import hub', 'Clicking it shows a dropdown with Add Calls / Reschedule options',
+    importHubTests.importMenuShown, JSON.stringify(importHubTests));
+  check('Import hub', 'Picking "Add Calls" from the dropdown opens the New Calls tab',
     importHubTests.opensOnNewCallsTab, JSON.stringify(importHubTests));
   check('Import hub', 'The Reschedule/Cancel tab switches content without closing the panel',
     importHubTests.switchesToRescheduleTab, JSON.stringify(importHubTests));
@@ -930,6 +935,69 @@ async function main() {
     JSON.stringify(timeoutTests.fullTimeouts) === JSON.stringify([45000, 45000]), JSON.stringify(timeoutTests));
   check('Portal sync timeout', 'Every other apiCall() caller still defaults to the original 20s (unaffected by this fix)',
     timeoutTests.defaultInSource, JSON.stringify(timeoutTests));
+
+  // =====================================================================
+  console.log('\n=== 2h. Expected Closures — flag/follow-up/confirm/delete (added 2026-10-01) ===');
+  // =====================================================================
+  {
+    const ecBrowser = await chromium.launch();
+    const ecPage = await ecBrowser.newPage();
+    const ecErrors = [];
+    ecPage.on('pageerror', e => ecErrors.push(String(e)));
+    await ecPage.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
+    await ecPage.waitForTimeout(1000);
+    const ecResult = await ecPage.evaluate(async () => {
+      CURRENT_ROLE = 'admin';
+      const store = { expected: [], closures: [] };
+      let nextId = 1;
+      window.apiCall = async (resource, opts) => {
+        opts = opts || {};
+        if (resource === 'expected_closures') {
+          if (opts.method === 'POST') {
+            const body = opts.body || {};
+            if (body.action === 'delete') { store.expected = store.expected.filter(r => r.id !== body.id); return { ok: true }; }
+            if (body.action === 'followup') { const row = store.expected.find(r => r.id === body.id); if (row) row.lastFollowupNote = body.note; return { ok: true }; }
+            (body.rows || []).forEach(r => store.expected.push(Object.assign({ id: nextId++, createdAt: new Date().toISOString() }, r)));
+            return { ok: true };
+          }
+          return { rows: store.expected };
+        }
+        if (resource === 'closures') {
+          if (opts.method === 'POST') {
+            const body = opts.body || {};
+            if (body.action === 'delete') { store.closures = store.closures.filter(r => r.id !== body.id); return { ok: true }; }
+            (body.rows || []).forEach(r => store.closures.push(Object.assign({ id: nextId++, createdAt: new Date().toISOString() }, r)));
+            return { ok: true };
+          }
+          return { rows: store.closures };
+        }
+        return { rows: [] };
+      };
+      state.rows = [{ id: 'r1', time: '10:00 AM', candidate: 'Jane Doe', company: 'Acme Corp', round: '2nd Round', assignee: 'Priya Reddy', woi: false, doubts: [] }];
+      state.roster = [{ id: 'p1', name: 'Priya Reddy', team: 'HYD Team' }];
+      state.date = '2026-10-01';
+      state.view = 'all';
+      render();
+      document.querySelector('.expect-closure-btn[data-expectclosure="r1"]').click();
+      await new Promise(r => setTimeout(r, 30));
+      document.getElementById('expectClosureNoteInput').value = 'Client verbally confirmed offer';
+      document.getElementById('expectClosureSaveBtn').click();
+      await new Promise(r => setTimeout(r, 50));
+      const flagged = { expectedCount: state.expectedClosures.length, badgeShown: !!document.querySelector('.mini-badge-expectclosure') };
+      window.confirm = () => true;
+      window.prompt = () => '12 LPA';
+      openOnlyPanel('showExpectedClosures');
+      render();
+      document.querySelector('[data-expectclosure-confirm]').click();
+      await new Promise(r => setTimeout(r, 80));
+      const confirmed = { expectedRemaining: state.expectedClosures.length, closuresCount: state.closures.length };
+      return { flagged, confirmed };
+    });
+    check('Expected Closures', 'Flagging a row via the 🎯 button saves it and badges the row', ecResult.flagged.expectedCount === 1 && ecResult.flagged.badgeShown, JSON.stringify(ecResult.flagged));
+    check('Expected Closures', 'Confirming promotes it into the real Closures log and clears the flag', ecResult.confirmed.expectedRemaining === 0 && ecResult.confirmed.closuresCount === 1, JSON.stringify(ecResult.confirmed));
+    check('Expected Closures', 'No page errors', ecErrors.length === 0, ecErrors.join(' | '));
+    await ecBrowser.close();
+  }
 
   // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
@@ -1251,9 +1319,19 @@ async function main() {
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleImportHub', 150);
+  await click('importMenuNewCalls', 150);
   for (const id of ['importHubTabNew', 'importHubTabReschedule']) {
     await click(id, 150);
   }
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleImportHub', 150);
+  await click('importMenuReschedule', 150);
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleClosures', 150);
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleExpectedClosures', 150);
+  await sPage.evaluate(() => { closeAllPanels(); render(); });
+  await click('toggleCandidateActivity', 300); // triggers an async scan on first open
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleToolsMenu');
   for (const id of ['toggleRoster', 'togglePortalSync', 'toggleIncentives', 'toggleBackups']) {
