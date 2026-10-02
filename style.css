@@ -1,0 +1,933 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#0A0C10;
+  --surface:#14171D;
+  --surface-2:#1B1F27;
+  --surface-3:#252A34;
+  --border:#262B34;
+  --border-soft:#1D2129;
+  --text:#ECEEF1;
+  --text-muted:#8B93A0;
+  --text-faint:#565D69;
+  --teal:#3ECFC0;
+  --teal-dim:#16302C;
+  --amber:#E8AA4A;
+  --amber-dim:#332815;
+  --coral:#E8685C;
+  --coral-dim:#331E1B;
+  --violet:#9B87F5;
+  --green:#6FCF7A;
+  --green-dim:#1B3320;
+  --sky:#5FC9E8;
+  --sky-dim:#173038;
+  --blue:#5B9FE8;
+  --violet-dim:#251F3D;
+  --gold:#D9A96B;
+  --pink:#D97FC0;
+  --onsite:#E85CC8;
+  --onsite-dim:#3A1E33;
+  --display:'Space Grotesk',sans-serif;
+  --body:'Inter',sans-serif;
+  --mono:'IBM Plex Mono',monospace;
+  --shadow-sm:0 1px 0 rgba(255,255,255,.03) inset, 0 2px 6px rgba(0,0,0,.35);
+  --shadow-md:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px rgba(0,0,0,.5);
+}
+/* LIGHT MODE — every rule in this file reads colors through these CSS
+   variables rather than hardcoding them, so overriding them here re-colors
+   the entire app without touching any component's own CSS. Accent colors
+   (teal/amber/coral/etc) are darkened relative to their dark-mode values
+   specifically because several are also used as plain TEXT color on a
+   white background (e.g. save-pending button text, status badges) — the
+   dark-mode values are tuned for contrast against a near-black background
+   and would be too washed-out to read here. */
+:root[data-theme="light"]{
+  --bg:#F4F5F7;
+  --surface:#FFFFFF;
+  --surface-2:#EFF1F4;
+  --surface-3:#E3E6EB;
+  --border:#D7DBE1;
+  --border-soft:#E6E9ED;
+  --text:#1A1D24;
+  --text-muted:#565F6E;
+  --text-faint:#8790A0;
+  --teal:#0E8E7F;
+  --teal-dim:#DEF3EF;
+  --amber:#A8701A;
+  --amber-dim:#FAEBD3;
+  --coral:#C13A2E;
+  --coral-dim:#FBE2DF;
+  --violet:#6A4FD1;
+  --green:#2A8236;
+  --green-dim:#E0F3E2;
+  --sky:#15859F;
+  --sky-dim:#DEF1F6;
+  --blue:#2C5EB0;
+  --violet-dim:#EBE5FC;
+  --gold:#8E6A2C;
+  --pink:#AE4494;
+  --onsite:#B0349B;
+  --onsite-dim:#FBE1F2;
+  --shadow-sm:0 1px 0 rgba(255,255,255,.6) inset, 0 2px 6px rgba(20,25,35,.08);
+  --shadow-md:0 1px 0 rgba(255,255,255,.7) inset, 0 8px 24px rgba(20,25,35,.12);
+}
+*{box-sizing:border-box;}
+/* Removed the blanket html{scroll-behavior:smooth} rule — it animated
+   EVERY scroll on the page, including incidental ones like a browser's
+   own scrollIntoView() during a focus change, not just the two
+   intentional smooth scrolls (the ↑ scroll-to-top button, jump-to-row
+   from the coverage graph). Both of those already explicitly request
+   behavior:'smooth' in their own JS calls, so they're unaffected by
+   removing this — but removing it means an element's position settles
+   immediately everywhere else, instead of visibly drifting for several
+   hundred ms after any scroll, however incidental. */
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:6px;transition:background .15s;}
+::-webkit-scrollbar-thumb:hover{background:var(--text-faint);}
+::-webkit-scrollbar-track{background:transparent;}
+:focus-visible{outline:2px solid var(--teal);outline-offset:1px;}
+button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-input,.mini-badge,.prior-badge{transition:background-color .12s ease,border-color .12s ease,color .12s ease,opacity .12s ease,box-shadow .12s ease;}
+.roster-tag,.user-row,.notif-row{transition:background-color .12s ease;}
+
+.app{max-width:1180px;margin:0 auto;padding:28px 24px 80px;}
+@media (max-width:480px){
+  .app{padding:16px 12px 60px;}
+  .header h1{font-size:21px;margin:0;}
+  .header .sub{display:none;}
+  .summary .cell{padding:10px 8px;}
+  .summary .cell .num{font-size:18px;}
+  .tab-btn{font-size:12px;padding:7px 10px;}
+  .date-row .btn.primary{font-size:11px;padding:8px 10px;}
+}
+
+/* MOBILE CARD VIEW — transforms the calls table into stacked cards below
+   700px. Moved to the very end of the stylesheet (see below) so it
+   reliably wins the cascade over base rules like table{min-width:1050px}
+   defined later in this file — a media query doesn't add specificity, so
+   a same-specificity rule appearing later in source order still wins
+   regardless of whether the media query matches. Keeping the actual rules
+   at the end is what makes that guaranteed rather than order-dependent. */
+
+/* HEADER */
+.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;padding-bottom:18px;gap:16px;flex-wrap:wrap;position:relative;padding-top:30px;border-bottom:1px solid var(--border-soft);}
+.account-chip{position:absolute;top:0;right:0;z-index:5;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 8px 6px 14px;box-shadow:var(--shadow-sm);font-size:12.5px;}
+.account-chip .account-name{color:var(--text);font-weight:600;white-space:nowrap;}
+.account-chip .account-role{color:var(--text-faint);font-size:11px;white-space:nowrap;}
+.account-chip .account-logout-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--coral);font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:14px;cursor:pointer;white-space:nowrap;}
+.account-chip .account-logout-btn:hover{border-color:var(--coral);}
+@media (max-width:640px){
+  .account-chip{position:static;margin:0 0 12px;justify-content:space-between;box-shadow:none;}
+}
+.scroll-to-top-btn{position:fixed;bottom:22px;right:20px;z-index:70;width:44px;height:44px;border-radius:50%;background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-size:20px;line-height:1;cursor:pointer;box-shadow:var(--shadow-md);display:none;align-items:center;justify-content:center;transition:border-color .12s,opacity .12s;}
+.scroll-to-top-btn:hover{border-color:var(--teal);}
+.scroll-to-top-btn.visible{display:flex;}
+body.has-install-banner .scroll-to-top-btn{bottom:74px;}
+.install-banner{position:fixed;left:0;right:0;bottom:0;z-index:80;display:flex;align-items:center;gap:10px;background:var(--surface-2);border-top:1px solid var(--border);padding:10px 14px;box-shadow:0 -4px 16px rgba(0,0,0,.35);}
+.install-banner-icon{font-size:18px;flex-shrink:0;}
+.install-banner-text{flex:1;font-size:12.5px;color:var(--text);min-width:0;}
+.install-banner-action{background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
+.install-banner-dismiss{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:4px 6px;flex-shrink:0;}
+.install-banner-dismiss:hover{color:var(--text);}
+/* Bottom nav is a mobile-only pattern — desktop keeps the header/toolbar
+   navigation it already has. Full styling lives in the mobile media
+   query at the end of the stylesheet (same reasoning as every other
+   mobile-specific rule in this file: placed last so it reliably wins the
+   cascade over base rules defined later, rather than being order-dependent). */
+.bottom-nav{display:none;}
+.header h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0 0 4px;letter-spacing:-0.02em;color:var(--text);background:linear-gradient(90deg,var(--text) 55%,var(--teal) 130%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+@supports not ((-webkit-background-clip:text) or (background-clip:text)){
+  .header h1{-webkit-text-fill-color:initial;background:none;}
+}
+.header .sub{color:var(--text-muted);font-size:13px;}
+.date-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.more-menu-wrap{position:relative;}
+.more-menu-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:220px;max-height:min(70vh,520px);overflow-y:auto;}
+/* FIX (2026-09-29): "smooth UI" report — capped + scrollable on desktop
+   too now (previously only inside the mobile media query below), so a
+   long dropdown scrolls its OWN content instead of relying on the page
+   scrolling underneath it. Paired with updateBodyScrollLock() (see
+   attachHandlers()), which stops the page itself from scrolling at all
+   while this — or the Quick Search modal, or the swipe-assign picker —
+   is open. */
+html.scroll-locked, html.scroll-locked body{overflow:hidden!important;}
+.more-menu-divider{height:1px;background:var(--border);margin:5px 6px;flex:none;}
+/* Small uppercase group headers inside the Reports dropdown (added
+   2026-09-29/30 — the dropdown grew to 16 items as features were added
+   over time, all in one flat list with nothing to scan by; these group it
+   into "today at a glance", lookups, day-to-day tools, admin/export/backup,
+   and reference, without touching any item's id/behavior). Doubles as the
+   visual separator between groups, so no extra divider line is needed. */
+.more-menu-section-label{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);padding:9px 12px 4px;margin-top:2px;}
+.more-menu-section-label:first-child{margin-top:0;padding-top:4px;}
+.more-menu-backdrop{display:none;}
+.more-menu-item{background:none;border:none;color:var(--text);font-family:var(--body);font-size:13px;text-align:left;padding:9px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;}
+.more-menu-item:hover{background:var(--surface-2);}
+.more-menu-item:disabled{opacity:.5;cursor:default;}
+.date-row input[type=date]{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;border-radius:8px;}
+.date-row .arrow-btn{background:var(--surface);border:1px solid var(--border);color:var(--text-muted);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
+.date-row .arrow-btn:hover{color:var(--text);border-color:var(--text-faint);}
+
+/* TABS */
+.tabs-wrap{position:relative;margin-bottom:16px;}
+.tabs-wrap.is-overflowing::after{content:'';position:absolute;top:0;right:0;bottom:0;width:28px;background:linear-gradient(to right, transparent, var(--bg) 85%);pointer-events:none;border-radius:0 10px 10px 0;}
+.tabs{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:3px;width:fit-content;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.tab-btn{white-space:nowrap;}
+.tab-btn{background:transparent;border:none;color:var(--text-muted);font-family:var(--body);font-size:13px;font-weight:500;padding:8px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.tab-btn.active{background:var(--surface-3);color:var(--text);}
+.tab-btn .n{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
+.tab-btn.active .n{color:var(--teal);}
+
+/* LOGIN */
+.login-wrap{min-height:80vh;display:flex;align-items:center;justify-content:center;}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:100%;max-width:340px;}
+.save-pending{background:var(--amber-dim);border-color:#5A4A1E;color:var(--amber);animation:pulse-save 1.6s ease-in-out infinite;}
+.read-only-mode .cell-input,
+.read-only-mode select.cell-input,
+.read-only-mode input.time-input{pointer-events:none;opacity:.6;}
+.read-only-mode .row-select,
+.read-only-mode .move-2nd,
+.read-only-mode .row-del,
+.read-only-mode .resolve-doubt{display:none;}
+.read-only-mode .pin-toggle,
+.read-only-mode .pin-interviewer,
+.read-only-mode .pin-technical-poc,
+.read-only-mode .pin-importance{pointer-events:none;opacity:.5;}
+.read-only-badge{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:12px;padding:8px 14px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;}
+.users-list{display:flex;flex-direction:column;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.user-row{background:var(--surface);padding:10px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.user-name{font-weight:600;font-size:13px;flex:1;min-width:100px;}
+.undo-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:12px 16px;border-radius:10px;font-size:13px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:100;}
+.undo-toast button{background:var(--teal);color:#FFFFFF;border:none;padding:6px 14px;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer;}
+.shift-note-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px;}
+.mobile-collapse-toggle{display:none;}
+.shift-note-box label{display:block;font-size:11.5px;font-weight:600;color:var(--text-muted);margin-bottom:6px;}
+.shift-note-box textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:vertical;min-height:44px;}
+@keyframes pulse-save{0%,100%{opacity:1;}50%{opacity:.6;}}
+
+/* SEARCH */
+.search-row{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:16px;}
+.bulk-bar{display:flex;align-items:center;gap:10px;background:var(--teal-dim);border:1px solid #1F4A43;border-radius:10px;padding:10px 14px;margin-bottom:16px;flex-wrap:wrap;}
+.bulk-count{font-size:12.5px;font-weight:600;color:var(--teal);}
+.select-cell{text-align:center;}
+.select-cell input, th input[type=checkbox]{cursor:pointer;}
+.summary-panel{max-width:520px;}
+.summary-big-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px;}
+.summary-big-cell{background:var(--surface-2);border-radius:10px;padding:12px 6px;text-align:center;}
+.summary-big-num{font-family:var(--mono);font-size:22px;font-weight:600;}
+.summary-big-lbl{font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-top:4px;}
+.summary-big-cell.sbg-teal .summary-big-num{color:var(--teal);}
+.summary-big-cell.sbg-coral .summary-big-num{color:var(--coral);}
+.summary-big-cell.sbg-amber .summary-big-num{color:var(--amber);}
+.summary-big-cell.sbg-violet .summary-big-num{color:var(--violet);}
+.summary-detail-row{display:flex;justify-content:space-between;padding:7px 2px;border-bottom:1px solid var(--border-soft);font-size:13px;}
+.summary-detail-row:last-child{border-bottom:none;}
+.search-icon{font-size:13px;opacity:.6;}
+.search-box{flex:1;background:transparent;border:none;color:var(--text);font-family:var(--body);font-size:14px;outline:none;}
+.search-box::placeholder{color:var(--text-faint);}
+.search-clear{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 6px;}
+.search-clear:hover{color:var(--coral);}
+.search-count{font-family:var(--mono);font-size:11px;color:var(--teal);white-space:nowrap;}
+
+/* SUMMARY STRIP */
+.summary{display:flex;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:var(--shadow-sm);}
+/* Visual refresh (2026-09-26): each stat used to be identical plain text
+   in a plain cell, so the row read as one dense block of numbers rather
+   than five distinct, scannable facts — a "polished/modern professional"
+   pass gives each its own tinted surface and a colored top accent, the
+   same color already used for its number, so the color-coding a person
+   had to read the number to notice becomes visible at a glance. */
+.summary .cell{position:relative;overflow:hidden;transition:background-color .15s ease;}
+.summary .cell::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--text-faint);opacity:.5;}
+.summary .cell.total::before{background:var(--text-muted);}
+.summary .cell.assigned::before{background:var(--teal);}
+.summary .cell.unassigned::before{background:var(--coral);}
+.summary .cell.woi::before{background:var(--amber);}
+.summary .cell.conflict::before{background:var(--violet);}
+.summary .cell.assigned{background:linear-gradient(180deg,var(--teal-dim) 0%,var(--surface) 60%);}
+.summary .cell.unassigned{background:linear-gradient(180deg,var(--coral-dim) 0%,var(--surface) 60%);}
+.summary .cell.woi{background:linear-gradient(180deg,var(--amber-dim) 0%,var(--surface) 60%);}
+.summary .cell.conflict{background:linear-gradient(180deg,var(--violet-dim) 0%,var(--surface) 60%);}
+@media (max-width:700px){
+  .summary{scroll-snap-type:x proximity;flex-wrap:nowrap;}
+  .summary .cell{scroll-snap-align:start;}
+}
+.team-load-strip{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+.team-load-cell{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:border-color .12s,background-color .12s;}
+.team-load-cell:hover{border-color:var(--text-faint);}
+.team-load-cell.team-load-full{border-color:var(--amber);background:var(--amber-dim);}
+.team-load-cell.team-load-active{border-color:var(--teal);background:var(--teal-dim);color:var(--text);}
+.team-load-capacity{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-left:1px;}
+.team-load-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.team-load-num{font-family:var(--mono);font-size:15px;color:var(--text);margin-left:4px;}
+.summary .cell{flex:1 0 auto;min-width:84px;background:var(--surface);padding:14px 16px;}
+.summary .cell .num{font-family:var(--mono);font-size:22px;font-weight:600;line-height:1;}
+.summary .cell .lbl{color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-top:6px;}
+.summary .cell.total .num{color:var(--text);}
+.summary .cell.assigned .num{color:var(--teal);}
+.summary .cell.unassigned .num{color:var(--coral);}
+.summary .cell.woi .num{color:var(--amber);}
+.summary .cell.conflict .num{color:var(--violet);}
+/* (2026-09-30) These stat cards used to be purely decorative — a second,
+   separate row of tappable "filter-chip" buttons further down the toolbar
+   already did the exact same "jump to just this subset" job with its own
+   counts, so this makes the numbers themselves tappable too (only the
+   four cells that map to a real, existing filter value get `data-f` and
+   this treatment — "Assigned" has no single-purpose filter to jump to, so
+   it stays display-only) instead of adding a second, redundant strip of
+   "highlight" chips elsewhere on the screen for the same four numbers. */
+.summary .cell[data-f]{cursor:pointer;transition:background-color .15s ease,transform .1s ease;}
+.summary .cell[data-f]:active{transform:scale(.96);}
+.summary .cell.cell-active{box-shadow:inset 0 0 0 2px var(--text-faint);}
+.summary .cell.total.cell-active{box-shadow:inset 0 0 0 2px var(--text-muted);}
+.summary .cell.unassigned.cell-active{box-shadow:inset 0 0 0 2px var(--coral);}
+.summary .cell.woi.cell-active{box-shadow:inset 0 0 0 2px var(--amber);}
+.summary .cell.conflict.cell-active{box-shadow:inset 0 0 0 2px var(--violet);}
+
+/* COVERAGE STRIP (signature element) */
+.strip-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 12px;margin-bottom:20px;}
+.strip-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+.strip-title-legend{display:flex;flex-wrap:wrap;gap:4px 10px;}
+.legend-chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;text-transform:none;letter-spacing:0;color:var(--text-muted);}
+.legend-chip i{width:8px;height:8px;border-radius:2px;flex-shrink:0;display:inline-block;}
+.strip{display:flex;align-items:flex-end;gap:4px;height:68px;}
+.strip .hour{flex:0 0 46px;display:flex;flex-direction:column-reverse;gap:1.5px;min-width:46px;border-radius:2px 2px 0 0;overflow:visible;position:relative;cursor:default;transition:transform .12s ease,filter .12s ease;}
+@media (hover:hover){
+  .strip .hour:hover{transform:scaleY(1.03);filter:brightness(1.12);transform-origin:bottom;}
+}
+.hour-free-dot{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;}
+.strip-hint{font-size:10.5px;color:var(--text-faint);margin-top:14px;text-align:center;}
+.strip .hour .seg{width:100%;min-height:3px;}
+.strip .hour .seg:last-child{border-radius:3px 3px 0 0;}
+.hour-lbl{font-family:var(--mono);font-size:8px;color:var(--text-faint);text-align:center;margin-top:6px;flex:0 0 46px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.strip-hours{display:flex;gap:4px;}
+.strip-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;}
+.strip-scroll::-webkit-scrollbar{height:8px;}
+.strip-scroll::-webkit-scrollbar-thumb{background:var(--teal-dim);border-radius:4px;}
+.strip-scroll::-webkit-scrollbar-thumb:hover{background:var(--teal);}
+.strip-empty{color:var(--text-faint);font-size:12px;font-family:var(--mono);padding:10px 0;}
+
+/* TOOLBAR */
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:8px 10px;}
+.filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:8px 10px;}
+.btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--body);font-size:12.5px;font-weight:500;padding:8px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:var(--shadow-sm);transition:border-color .12s,box-shadow .12s,transform .12s;}
+@media (hover:hover){
+  .btn:hover{border-color:var(--text-faint);box-shadow:var(--shadow-md);transform:translateY(-1px);}
+}
+.btn.primary{background:var(--teal-dim);border-color:#1F4A43;color:var(--teal);font-weight:600;}
+.btn.primary:hover{border-color:var(--teal);}
+.btn.ghost{background:transparent;box-shadow:none;}
+.spacer{flex:1;}
+.filter-chip{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:12px;padding:6px 12px;border-radius:20px;cursor:pointer;font-family:var(--body);}
+.filter-chip.active{background:var(--surface-3);color:var(--text);border-color:var(--text-faint);}
+.filter-chip .n{font-family:var(--mono);opacity:.7;margin-left:4px;}
+
+/* IMPORT PANEL */
+@keyframes panel-fade-in{from{opacity:0;transform:translateY(2px);}to{opacity:1;transform:translateY(0);}}
+.import-panel{animation:panel-fade-in .15s ease;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes row-jump-flash{0%,100%{background:transparent;}30%,70%{background:var(--teal-dim);}}
+@keyframes cardRowFadeIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:translateY(0);}}
+tr.row-jump-highlight{animation:row-jump-flash 1.4s ease-in-out 2;}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,0.25);border-top-color:currentColor;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:-2px;margin-right:6px;}
+.spinner-lg{width:28px;height:28px;border-width:3px;margin:0 auto;display:block;}
+.loading-block{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 20px;color:var(--text-faint);font-size:13px;}
+.skeleton-row{height:44px;border-radius:8px;background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface) 37%,var(--surface-2) 63%);background-size:400% 100%;animation:skeleton-pulse 1.4s ease infinite;margin-bottom:8px;}
+@keyframes skeleton-pulse{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
+/* First-open skeleton (2026-09-30) — the very first thing painted, before
+   any JS has run at all (it's plain static HTML in the page source, not
+   produced by render()), so it can appear instantly instead of waiting on
+   startApp()'s roster/calls/role fetches. Shaped like the real board (a
+   row of stat cards, then a few call rows) rather than a bare spinner, so
+   the page reads as "already loading your board" instead of "blank,
+   please wait." render() replaces all of #app's innerHTML the moment real
+   data is ready, same as it always has, so this never needs its own
+   cleanup code — it just gets overwritten. Same skeleton-row look the
+   date-switch skeleton (renderDateSwitchSkeleton()) already established,
+   so a page that's mid-first-load and one that's mid-date-switch feel
+   like the same app doing the same kind of thing.*/
+.skeleton-stat-row{display:flex;gap:8px;margin-bottom:16px;overflow:hidden;}
+.skeleton-stat-card{flex:1;min-width:80px;height:64px;border-radius:12px;background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface) 37%,var(--surface-2) 63%);background-size:400% 100%;animation:skeleton-pulse 1.4s ease infinite;}
+.import-panel textarea{width:100%;min-height:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:12px;resize:vertical;}
+.import-panel .row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;}
+.import-panel .hint{color:var(--text-faint);font-size:11.5px;}
+.resched-warning-banner{background:rgba(230,126,102,0.12);border:1px solid var(--coral);color:var(--coral);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:12px;}
+.resched-item{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--surface-2);}
+.resched-item.unmatched{border-color:var(--coral);}
+.resched-item .resched-raw{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-bottom:8px;white-space:pre-wrap;}
+.resched-item .resched-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:12.5px;margin-bottom:8px;}
+.resched-item .resched-meta b{color:var(--text);}
+.resched-item select{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-family:var(--body);font-size:12.5px;}
+.resched-item .resched-flags{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;}
+.resched-match-badge{color:var(--teal);font-size:11.5px;}
+.resched-unmatch-badge{color:var(--coral);font-size:11.5px;}
+
+/* ROSTER PANEL */
+.roster-panel{animation:panel-fade-in .15s ease;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+.roster-panel .tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.roster-tag{background:var(--surface-3);border:1px solid var(--border);border-radius:20px;padding:5px 8px 5px 12px;font-size:12.5px;display:flex;align-items:center;gap:6px;}
+.roster-tag-absent{opacity:.7;border-color:var(--coral);}
+.absent-toggle{display:flex;align-items:center;cursor:pointer;}
+.absent-toggle input{cursor:pointer;}
+.absent-badge{color:var(--coral);font-size:10.5px;font-weight:600;}
+.conflict-pair-card{border:1px solid var(--violet);border-radius:10px;padding:12px 14px;margin-bottom:12px;background:var(--violet-dim);}
+.conflict-pair-title{font-weight:700;font-size:13px;color:var(--violet);margin-bottom:10px;}
+.conflict-pair-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap;}
+.conflict-pair-row:first-of-type{border-top:none;}
+.conflict-pair-info{font-size:13px;flex:1;min-width:200px;}
+.conflict-reassign{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12.5px;min-width:160px;}
+.workload-badge{display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:8px;margin-left:5px;background:var(--surface-3);color:var(--text-faint);vertical-align:middle;}
+.workload-badge.workload-low{background:var(--teal-dim);color:var(--teal);}
+.workload-badge.workload-med{background:var(--amber-dim);color:var(--amber);}
+.workload-badge.workload-high{background:var(--coral-dim);color:var(--coral);}
+.roster-tag button{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;line-height:1;padding:0;}
+.roster-panel .add-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.roster-panel input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-size:13px;font-family:var(--body);flex:1;}
+
+/* TABLE */
+table{width:100%;min-width:1050px;table-layout:fixed;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);}
+/* FIX (2026-09-30): the sticky-right actions column below (📌 →2nd ✕) was
+   silently broken by the `overflow:hidden` above — with `position:sticky`,
+   an ancestor's own `overflow:hidden` becomes ITS containing/clipping
+   context too, and since the <table> itself sits between the sticky <td>
+   and the real scrollable ancestor (.table-scroll, which already clips to
+   the same rounded corners via its own overflow-x:auto), the cell was
+   sticking to the table's full (unscrolled) width instead of the visible
+   viewport — reported as "move to 2nd round is totally gone out": on any
+   wide row (extra columns like Country, Driving Person, Onsite all showing
+   at once), the button needed manual horizontal scrolling to ever reach,
+   with no visual hint that was necessary. Scoped to just the main calls
+   table (not every table in the app) so nothing else's corner-clipping
+   changes.  */
+#tableScrollMain table{overflow:visible;}
+@media (min-width:701px){
+  /* Keep the action buttons (📌 →2nd ✕) reachable without scrolling all
+     the way right, no matter how many columns exist — this is what was
+     "misplaced" after the Portal Assignee column was added. */
+  th:last-child, td.actions-cell{position:sticky;right:0;z-index:3;box-shadow:-6px 0 8px -6px rgba(0,0,0,0.35);}
+  th:last-child{background:var(--surface-2);}
+  td.actions-cell{background:var(--surface);}
+  tbody tr.row-unassigned td.actions-cell{background:var(--coral-dim);}
+}
+th,td{overflow:hidden;text-overflow:ellipsis;}
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px;}
+.table-scroll-top{overflow-x:auto;overflow-y:hidden;height:7px;margin-bottom:5px;opacity:.45;transition:opacity .15s;}
+.table-scroll-top:hover{opacity:1;}
+.table-scroll-top::-webkit-scrollbar{height:5px;}
+.table-scroll-top::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px;}
+.table-scroll-top::-webkit-scrollbar-track{background:transparent;}
+#tableScrollTopInner{height:1px;}
+.table-scroll::-webkit-scrollbar{height:8px;}
+thead th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);padding:10px 10px;border-bottom:1px solid var(--border);background:var(--surface-2);font-weight:600;}
+tbody tr{border-bottom:1px solid var(--border-soft);}
+tbody tr:last-child{border-bottom:none;}
+tbody tr.row-unassigned{background:var(--coral-dim);}
+tbody tr.row-conflict{outline:1px solid var(--violet);outline-offset:-1px;}
+tbody tr.row-healthcare{box-shadow:inset 3px 0 0 var(--teal);}
+tbody tr.row-education{box-shadow:inset 3px 0 0 var(--amber);}
+tbody tr.row-onsite{box-shadow:inset -3px 0 0 var(--onsite);}
+tbody tr.row-healthcare.row-onsite{box-shadow:inset 3px 0 0 var(--teal), inset -3px 0 0 var(--onsite);}
+tbody tr.row-education.row-onsite{box-shadow:inset 3px 0 0 var(--amber), inset -3px 0 0 var(--onsite);}
+tbody tr.row-long-duration td:nth-child(6){background:var(--violet-dim);}
+.cat-badge{display:inline-block;font-size:12px;margin-right:4px;}
+.round-type-badge{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;border-radius:4px;padding:1px 4px;margin-right:5px;vertical-align:middle;cursor:default;}
+.round-type-coding{color:var(--blue);border:1px solid var(--blue);}
+.round-type-loop{color:var(--gold);border:1px solid var(--gold);}
+.round-type-final,.round-type-discussion{color:var(--pink);border:1px solid var(--pink);}
+.prior-badge{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:1px 4px;margin-right:5px;vertical-align:middle;cursor:default;}
+.prior-badge-client{color:var(--amber);border-color:var(--amber);}
+.badge-row{display:inline-flex;align-items:center;gap:3px;margin-right:4px;vertical-align:middle;}
+.mini-badge{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:5px;font-size:9.5px;font-weight:700;line-height:1;cursor:default;flex-shrink:0;background:var(--surface-3);}
+.mini-badge-prior{color:var(--blue);border:1px solid var(--blue);}
+.mini-badge-expectclosure{color:var(--amber);border:1px solid var(--amber);}
+.mini-badge-round{color:var(--teal);border:1px solid var(--teal);}
+.mini-badge-client{color:var(--amber);border:1px solid var(--amber);}
+.mini-badge-resched{color:var(--coral);border:1px solid var(--coral);}
+.mini-badge-newstudent{color:var(--text-muted);border:1px dashed var(--text-faint);cursor:pointer;}
+.mini-badge-confirm-student{color:var(--amber);border:1px solid var(--amber);cursor:pointer;font-weight:800;}
+.mini-badge-recent-import{color:var(--teal);border:1px solid var(--teal);background:var(--teal-dim);}
+.mini-badge-noshow{color:var(--coral);border:1px solid var(--coral);width:auto;min-width:17px;padding:0 3px;}
+.mini-badge-reliability{color:var(--amber);border:1px solid var(--amber);width:auto;min-width:17px;padding:0 3px;font-size:9px;}
+.mini-badge-newstudent:hover{color:var(--text);border-color:var(--text-muted);}
+.doubt-icon{color:var(--amber);}
+.doubt-note-row td{background:var(--amber-dim);color:var(--amber);font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
+.doubt-note-icon{margin-right:5px;}
+.status-note-row td{font-size:12px;padding:6px 12px;border-bottom:1px solid var(--border-soft);}
+.status-note-row.status-note-rescheduled td{background:var(--violet-dim);color:var(--violet);}
+.status-note-row.status-note-cancelled td{background:var(--coral-dim);color:var(--coral);}
+.status-note-row.status-note-not_responded td{background:var(--amber-dim);color:var(--amber);}
+.status-note-row.status-note-no_invite td{background:var(--sky-dim);color:var(--sky);}
+.status-note-icon{margin-right:5px;}
+
+.note-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 6px;flex-shrink:0;}
+.clear-status-btn{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:11px;padding:0 4px;margin-right:4px;vertical-align:middle;}
+.clear-status-btn:hover{color:var(--coral);}
+.note-del:hover{color:var(--coral);}
+
+/* NOTIFICATIONS */
+.notif-alert{border-color:var(--coral) !important;color:var(--coral) !important;}
+/* A calm, neutral pill for the routine "N candidates seen on an earlier
+   date, across your whole history" count — this number is informational
+   and basically always nonzero (repeat interviews are normal), so it
+   should never look like an urgent red alarm the way notif-alert does.
+   Red stays reserved for something actually time-sensitive today, like
+   an absence (see toggleNotifications' markup). */
+.notif-info-badge{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:999px;margin-left:4px;background:rgba(155,135,245,0.14);color:var(--violet);border:1px solid rgba(155,135,245,0.35);vertical-align:1px;}
+.notif-row{padding:10px 0;border-bottom:1px solid var(--border-soft);}
+.notif-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
+.notif-tab-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:11.5px;font-weight:600;padding:7px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+.notif-tab-btn.active{background:var(--teal-dim);border-color:#1F4A43;color:var(--teal);}
+.notif-tab-btn .n{margin-left:4px;opacity:.8;}
+
+/* CALENDAR VIEW */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-grid-header{margin-bottom:4px;}
+.cal-weekday{text-align:center;font-size:10.5px;color:var(--text-faint);font-weight:600;padding:2px 0;}
+.cal-cell{position:relative;aspect-ratio:1/1;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px;font-family:var(--mono);}
+.cal-cell-empty{border:none;background:transparent;cursor:default;}
+.cal-daynum{font-size:11px;color:var(--text-muted);}
+.cal-count{font-size:12px;font-weight:700;color:var(--text);margin-top:1px;}
+.notif-tab-content{min-height:60px;}
+.notif-search{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;}
+.notif-row:last-child{border-bottom:none;}
+.notif-name{font-weight:600;font-size:13.5px;margin-bottom:4px;}
+.notif-detail{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.notif-chip{background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11.5px;font-family:var(--mono);color:var(--text-muted);}
+.notif-arrow{color:var(--text-faint);font-size:12px;}
+.notif-row.notif-urgent{background:var(--coral-dim);border-radius:8px;padding:8px 10px;margin:0 -10px;}
+.notif-warn{color:var(--coral);font-size:11px;font-weight:600;margin-left:4px;}
+.resolve-doubt{background:none;border:none;color:var(--teal);cursor:pointer;font-size:13px;padding:2px 4px;}
+.resolve-doubt:hover{color:var(--text);}
+tbody td{padding:9px 10px;font-size:13px;vertical-align:middle;}
+td.time{font-family:var(--mono);color:var(--text-muted);white-space:nowrap;font-size:12.5px;}
+td input.cell-input, td select.cell-input{width:100%;background:transparent;border:1px solid transparent;color:var(--text);font-family:var(--body);font-size:13px;padding:5px 6px;border-radius:6px;}
+td input.cell-input:hover, td select.cell-input:hover{border-color:var(--border);}
+td input.cell-input:focus, td select.cell-input:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
+select.cell-input{cursor:pointer;}
+.driving-person-select{width:100%;background:transparent;border:1px solid transparent;color:var(--text);font-family:var(--body);font-size:13px;padding:5px 6px;border-radius:6px;cursor:pointer;}
+.driving-person-select:hover{border-color:var(--border);}
+.driving-person-select:focus{outline:none;border-color:var(--text-faint);background:var(--surface-2);}
+.driving-person-select:disabled{cursor:default;opacity:.6;}
+.driving-person-select.driving-person-saving{border-color:var(--amber);}
+.driving-person-select.driving-person-saved{border-color:var(--teal);background:var(--teal-dim);transition:background .3s, border-color .3s;}
+.driving-person-select.driving-person-save-error{border-color:var(--coral);}
+.driving-person-select option, .driving-person-select optgroup{background:var(--surface-2);color:var(--text);}
+select.cell-input option, select.cell-input optgroup{background:var(--surface-2);color:var(--text);}
+select.cell-input.empty{color:var(--coral);}
+select.cell-input.team-level{font-style:italic;color:var(--text-muted);}
+.badge{display:inline-block;font-size:10.5px;font-family:var(--mono);padding:2px 7px;border-radius:5px;white-space:nowrap;}
+.badge.round1{background:var(--surface-3);color:var(--text-muted);}
+.badge.round2{background:var(--teal-dim);color:var(--teal);}
+.badge.roundfinal{background:var(--violet-dim);color:var(--violet);}
+.round-input{font-family:var(--mono);font-size:9.5px;font-weight:600;border-radius:6px !important;padding:4px 4px !important;}
+.round-input.round1{background:var(--surface-3);color:var(--text-muted);}
+.round-input.round2{background:var(--teal-dim);color:var(--teal);}
+.round-input.roundfinal{background:var(--violet-dim);color:var(--violet);}
+.woi-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+.onsite-toggle input{accent-color:var(--onsite);}
+.woi-toggle input{accent-color:var(--amber);}
+.woi-toggle span{font-size:11px;color:var(--text-muted);font-family:var(--mono);}
+.flag-icon{color:var(--violet);font-size:12px;margin-right:4px;}
+.row-del{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:15px;padding:2px 6px;}
+.row-del:hover{color:var(--coral);}
+.move-2nd{background:var(--violet-dim);border:1px solid #3D3566;color:var(--violet);cursor:pointer;font-size:10.5px;padding:3px 6px;border-radius:5px;white-space:nowrap;margin-right:4px;}
+.move-1st{background:var(--teal-dim);border:1px solid #1F4A43;color:var(--teal);cursor:pointer;font-size:10.5px;padding:3px 6px;border-radius:5px;white-space:nowrap;margin-right:4px;}
+.move-1st:hover{border-color:var(--teal);}
+.pin-toggle{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:.4;filter:grayscale(1);margin-right:2px;}
+.pin-toggle:hover{opacity:.8;}
+.pin-toggle-filled{opacity:1;filter:none;}
+.expect-closure-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:.55;margin-right:2px;}
+.expect-closure-btn:hover{opacity:1;}
+.pin-detail-row td{padding:12px 14px !important;background:var(--surface-2);}
+.pin-detail-fields{display:flex;gap:16px;flex-wrap:wrap;}
+.pin-field{flex:1;min-width:200px;}
+.pin-field label{display:block;font-size:10.5px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;}
+.pin-field input{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;font-size:13px;}
+.move-2nd:hover{border-color:var(--violet);}
+/* Shared by EVERY panel (Incentives, Closures, Backups, Reports, all of
+   them) — this is the one piece of chrome every panel has in common, so
+   giving it real visual weight here (rather than the plain inline
+   "← Back to calls" + bold text it used to be) is the single highest-
+   leverage place to make the whole app feel like one consistently
+   designed system, without having to touch each panel individually. */
+.panel-header-bar{display:flex;align-items:center;gap:12px;margin:-4px 0 18px;padding-bottom:14px;border-bottom:1px solid var(--border-soft);}
+.panel-header-title{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:-.01em;}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-faint);}
+.empty-state-icon{font-size:40px;line-height:1;margin-bottom:14px;opacity:.75;}
+.empty-state h3{font-family:var(--display);color:var(--text-muted);font-weight:600;font-size:16px;margin-bottom:6px;}
+.empty-state p{font-size:13px;margin:0 0 16px;max-width:420px;margin-left:auto;margin-right:auto;}
+.empty-state-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+
+.footer-note{margin-top:14px;font-size:11.5px;color:var(--text-faint);text-align:center;}
+/* MOBILE CARD VIEW — transforms the calls table into stacked cards below
+   700px, so assigning calls on a phone never needs horizontal scrolling.
+   Placed here at the end of the stylesheet specifically so it reliably
+   overrides table{min-width:1050px} and every other base rule — a media
+   query doesn't add specificity, so a same-specificity base rule appearing
+   later in source order would otherwise still win even while this media
+   query correctly matches (exactly the bug that was silently defeating
+   this entire section before it was moved here). */
+@media (max-width:700px){
+  .table-scroll{overflow-x:visible;}
+  table{display:block;min-width:unset;width:100%;border-radius:0;border:none;background:transparent;}
+  thead{display:none;}
+  tbody{display:flex;flex-direction:column;gap:8px;width:100%;}
+  tbody tr{display:flex;flex-wrap:wrap;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 12px 9px 14px;box-shadow:0 2px 8px rgba(0,0,0,.22);position:relative;transition:transform .1s ease;}
+  /* (2026-09-30) A light press-down while a finger is actually on the
+     card — pure CSS, so it works for every kind of touch (a plain tap, the
+     start of a long-press, the start of a double-tap) without needing to
+     know in JS yet which one it'll turn out to be. Once a real swipe drag
+     takes over, the JS-driven inline `transform` on this same element
+     always wins over this rule (inline style beats stylesheet regardless
+     of specificity), so the two never fight. */
+  tbody tr:active{transform:scale(.985);}
+  tbody tr.doubt-note-row,
+  tbody tr.status-note-row,
+  tbody tr.pin-detail-row{animation:cardRowFadeIn .22s ease;}
+  tbody tr.row-unassigned{background:var(--coral-dim);}
+  /* A rescheduled/cancelled/not-responded call is exactly the kind of
+     thing that's easy to miss while scanning a stack of cards — this
+     gives each its own colored left edge (matching the badge already
+     shown on the card itself) so it's visible without reading every
+     card's text. */
+  tbody tr.row-status-rescheduled{box-shadow:inset 4px 0 0 var(--violet), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-cancelled{box-shadow:inset 4px 0 0 var(--coral), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-not_responded{box-shadow:inset 4px 0 0 var(--amber), 0 2px 8px rgba(0,0,0,.22);}
+  tbody tr.row-status-no_invite{box-shadow:inset 4px 0 0 var(--sky), 0 2px 8px rgba(0,0,0,.22);}
+  /* Single-cell note/detail rows (doubt, status, pin-detail) stay simple
+     full-width blocks, not the flex meta-grid the main data row uses. */
+  tbody tr.doubt-note-row,
+  tbody tr.status-note-row,
+  tbody tr.pin-detail-row{display:block;border-radius:12px;padding:10px 12px;}
+  tbody tr.doubt-note-row{background:var(--amber-dim);border:1px solid var(--border);}
+  tbody tr.pin-detail-row{background:var(--surface-2);}
+  tbody tr.doubt-note-row td,
+  tbody tr.status-note-row td,
+  tbody tr.pin-detail-row td{display:block;padding:0;border:none;}
+
+  td{padding:0 8px 7px 0;border-bottom:none;max-width:100%;box-sizing:border-box;}
+  td::before{content:attr(data-label);display:block;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);font-weight:600;margin-bottom:2px;}
+  td .cell-input{width:100%;text-align:left;max-width:100%;box-sizing:border-box;}
+  td select.cell-input, td .driving-person-select{width:100%;max-width:100%;box-sizing:border-box;}
+
+  /* Compact meta line: select, time, round, duration — explicit percentage
+     widths, not 'auto'. A <select>'s inner width:100% fights with an
+     auto-sized flex item (the select's own content width wins, which is
+     what made Round/Duration balloon wide with a big gap before this). */
+  td.select-cell{order:1;flex:0 0 auto;padding-right:6px;}
+  td.select-cell::before{display:none;}
+  td[data-label="Time"]{order:2;flex:0 0 34%;}
+  td[data-label="Round"]{order:3;flex:0 0 30%;}
+  td[data-label="Duration"]{order:4;flex:0 0 30%;}
+
+  /* Second compact line: country, WOI, onsite. */
+  td[data-label="Country"]{order:5;flex:0 0 34%;}
+  td[data-label="WOI"]{order:6;flex:0 0 30%;}
+  td[data-label="Onsite"]{order:7;flex:0 0 30%;}
+
+  /* A tag/pill look for the short, glanceable fields — reads as a
+     designed group of info chips rather than squeezed table cells, which
+     is what these looked like when they just inherited the plain
+     desktop cell styling verbatim. */
+  td[data-label="Time"] .cell-input,
+  td[data-label="Round"] .cell-input,
+  td[data-label="Duration"] .cell-input,
+  td[data-label="Country"] .cell-input{
+    background:var(--surface-2);border:1px solid var(--border-soft);border-radius:7px;
+    padding:4px 8px;font-size:12px;
+  }
+  /* On mobile specifically, color the round chip by stage — 1st round vs
+     2nd-round-and-later is meaningful at a glance while scanning a stack
+     of cards, in a way desktop's plain-text cell doesn't need (the tabs
+     already separate 1st from 2nd+ there). */
+  td[data-label="Round"] .cell-input.round2{background:var(--violet-dim);border-color:#3A3160;color:var(--violet);}
+  td[data-label="Round"] .cell-input.roundfinal{background:var(--coral-dim);border-color:#4A2420;color:var(--coral);}
+
+  /* Candidate gets its own full-width line — it carries the name plus
+     several small badges, and is the main thing being scanned for. */
+  td[data-label="Candidate"]{order:8;flex:0 0 100%;padding-top:4px;padding-right:0;}
+  td[data-label="Candidate"] .cell-input{font-size:15px;font-weight:600;color:var(--text);}
+  td[data-label="Company"]{order:9;flex:0 0 100%;padding-right:0;}
+  td[data-label="Company"] .cell-input{color:var(--text-muted);}
+
+  /* Assigned To / Driving Person share a row when both are present. */
+  td[data-label="Assigned to"]{order:10;flex:1 1 50%;padding-top:2px;min-width:0;}
+  td[data-label="Driving Person"]{order:11;flex:1 1 50%;padding-top:2px;padding-right:0;min-width:0;}
+
+  td.actions-cell{order:12;flex:0 0 100%;display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:7px;padding-right:0;border-top:1px solid var(--border-soft);}
+  td.actions-cell::before{display:none;}
+
+  /* The desktop-only top scrollbar helper (for the wide table) has
+     nothing to do once the table is a stack of cards — hide it so it
+     can't leave a phantom wide element behind. */
+  #tableScrollTop{display:none;}
+  .mini-badge{width:22px;height:22px;font-size:11px;}
+  .flag-icon, .cat-badge{padding:2px;}
+}
+
+/* MOBILE TOUCH INTERACTIVITY — scoped to devices with no real hover and a
+   coarse (finger) pointer, so this never touches desktop mouse behavior.
+   A press gives a brief, tactile scale+darken response — the same kind of
+   feedback a native app gives, which a plain :hover-based design (built
+   for a mouse) has no equivalent of on a touchscreen at all. */
+@media (hover:none) and (pointer:coarse){
+  .btn, .tab-btn, .filter-chip, .mini-badge, .more-menu-item, .notif-tab-btn,
+  tbody tr, .scroll-to-top-btn, .install-banner-action{
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active, .tab-btn:active, .filter-chip:active, .more-menu-item:active,
+  .notif-tab-btn:active, .scroll-to-top-btn:active, .install-banner-action:active{
+    transform: scale(0.96);
+    filter: brightness(0.92);
+    transition: transform .08s ease, filter .08s ease;
+  }
+  tbody tr:active{
+    filter: brightness(1.08);
+    transition: filter .1s ease;
+  }
+  .mini-badge:active, .mini-badge-confirm-student:active, .quick-add-student:active{
+    transform: scale(0.88);
+    transition: transform .08s ease;
+  }
+}
+
+/* SWIPE GESTURES (mobile card view) — swipe a call card right to open a
+   quick "assign to…" picker (teams + everyone on the roster), or left to
+   delete it (with the existing undo toast). The hint label is a separate
+   floating element positioned over the card during the gesture, NOT part
+   of the table's own markup — a <tr> can only validly contain <td>/<th>
+   children, so layering a reveal-behind-the-content hint the usual way
+   would mean inserting an invalid child and risking inconsistent
+   rendering across browsers. */
+.swipe-hint{position:fixed;z-index:60;display:flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:700;font-size:13px;pointer-events:none;opacity:0;}
+.swipe-hint.right{background:var(--teal-dim);color:var(--teal);justify-content:flex-start;}
+.swipe-hint.left{background:var(--coral-dim);color:var(--coral);justify-content:flex-end;}
+tbody tr[data-id]{touch-action:pan-y;}
+
+/* Double-tap-to-select burst (2026-09-30) — same "appears centered over
+   what you tapped, scales up, fades out" shape as Instagram's double-tap
+   heart. Positioned via fixed left/top set from the row's own
+   getBoundingClientRect() in JS, not CSS, since it has to land wherever
+   that specific card actually was on screen. */
+.dtap-burst{position:fixed;z-index:9997;pointer-events:none;transform:translate(-50%,-50%);font-size:52px;color:var(--teal);text-shadow:0 2px 14px rgba(0,0,0,.45);animation:dtapBurst .55s cubic-bezier(.2,.9,.3,1) forwards;}
+@keyframes dtapBurst{
+  0%{ opacity:0; transform:translate(-50%,-50%) scale(.4); }
+  25%{ opacity:1; transform:translate(-50%,-50%) scale(1.15); }
+  45%{ transform:translate(-50%,-50%) scale(1); }
+  100%{ opacity:0; transform:translate(-50%,-50%) scale(1.05); }
+}
+
+.my-name-picker-overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;}
+.my-name-picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:18px 16px 22px;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;box-shadow:var(--shadow-md);}
+.quick-search-card{max-width:640px;max-height:80vh;}
+.my-name-picker-title{font-family:var(--display);font-weight:700;font-size:17px;margin-bottom:4px;}
+.my-name-picker-sub{color:var(--text-muted);font-size:12.5px;margin-bottom:14px;}
+.my-name-picker-list{display:flex;flex-direction:column;gap:2px;}
+.my-name-picker-item{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.my-name-picker-team{color:var(--text-faint);font-size:11px;}
+
+/* "..." quick-action sheet (mobile card view) — deliberately its OWN class
+   names (.quick-action-item, not .my-name-picker-item) even though the
+   visual style is identical, so its clicks can never be accidentally
+   caught by the swipe-assign picker's own delegated click listener, which
+   matches on .my-name-picker-item globally regardless of which overlay is
+   actually open. */
+.quick-action-item{width:100%;background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:14px;text-align:left;padding:12px 14px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.quick-action-status-label{color:var(--text-muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin:10px 2px 6px;}
+.quick-action-status-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.quick-action-status-chip{background:var(--surface-2);border:1px solid var(--border-soft);color:var(--text);font-family:var(--body);font-size:12.5px;padding:8px 12px;border-radius:20px;cursor:pointer;}
+.quick-action-status-chip:active{background:var(--teal-dim);color:var(--teal);border-color:var(--teal);}
+.row-quickaction-btn{display:none;}
+@media (max-width:700px){
+  .row-quickaction-btn{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:19px;font-weight:700;line-height:1;padding:3px 9px;letter-spacing:1px;}
+  .row-quickaction-btn:active{color:var(--teal);}
+}
+.swipe-assign-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);font-weight:600;margin:12px 2px 6px;}
+.swipe-assign-group-label:first-child{margin-top:0;}
+
+/* MOBILE CHROME COMPACTION — deliberately placed at the very end of the
+   stylesheet (not up near the other mobile card-view rules) so it reliably
+   wins the cascade over the base .shift-note-box/.strip-wrap/etc rules
+   defined further down in this file, regardless of what gets added
+   between here and there later. Equal-specificity CSS rules are decided
+   by source order, not by which one is "more specific in intent" — an
+   earlier override for a later-defined base rule silently loses.
+   The card view above fixes each record's own height, but on a phone the
+   bigger problem was everything ABOVE the list: header, buttons, shift
+   note, a keyboard-shortcut hint (meaningless on a touchscreen), and the
+   coverage graph could together push the first call off the bottom of the
+   screen entirely. This shrinks that stack so the actual list — the
+   reason someone opened the app — shows up right away. */
+@media (max-width:700px){
+  .keyboard-hint{display:none;}
+  .shift-note-box{padding:8px 10px;margin-bottom:10px;}
+  .shift-note-box label{font-size:10.5px;margin-bottom:4px;}
+  .shift-note-box textarea{min-height:32px;font-size:12.5px;padding:7px 9px;}
+  .strip-wrap{padding:10px 12px 8px;margin-bottom:12px;}
+  .strip-title{font-size:10px;margin-bottom:0;flex-wrap:wrap;gap:2px 8px;}
+  .strip{height:44px;}
+  .strip-hint{display:none;}
+  .tabs-wrap{margin-bottom:10px;}
+
+  /* Header toolbar cleanup (2026-09-26): Home/date-nav/Notifications/DB/
+     Import/Closures/Reports/Save/theme used to all wrap onto 2-3 full-width
+     rows on a phone — a wall of buttons before any actual call is visible.
+     None of these can be removed or moved into another menu without either
+     breaking a control someone relies on or touching the regression suite's
+     direct id-based clicks, so instead this turns the row into a single
+     horizontally-scrollable strip (exactly how the coverage-by-hour graph
+     above it already handles overflow) — same controls, same ids, same
+     order, just one compact scrollable line instead of a tall wrapped block. */
+  .date-row{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+  .date-row .btn, .date-row .more-menu-wrap, .date-row .arrow-btn, .date-row input[type=date]{flex-shrink:0;}
+
+  /* Collapsed by default on mobile — these two sections are useful but
+     secondary to the actual call list, and together with the header/
+     buttons above them were pushing the first real call off the bottom
+     of the screen entirely on a phone. */
+  .shift-note-label-row{display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;}
+  .mobile-collapse-toggle{display:inline-flex;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);width:24px;height:24px;border-radius:6px;font-size:12px;cursor:pointer;flex-shrink:0;}
+  .shift-note-collapsible{max-height:0;overflow:hidden;}
+  .shift-note-box.mobile-expanded .shift-note-collapsible{max-height:260px;margin-top:8px;}
+  .mobile-collapsed-preview{font-size:11.5px;color:var(--text-faint);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  .strip-title{position:relative;}
+  .strip-title-legend{display:none;}
+  .strip-title .mobile-collapse-toggle{position:absolute;right:0;top:-2px;}
+  .strip-collapsible{max-height:0;overflow:hidden;}
+  .strip-wrap.mobile-expanded .strip-collapsible{max-height:300px;margin-top:8px;}
+
+  .summary{margin-bottom:10px;}
+  .summary .cell{padding:8px 10px;min-width:66px;}
+  .summary .cell .num{font-size:16px;}
+  .summary .cell .lbl{font-size:9px;margin-top:3px;}
+  .team-load-strip{gap:6px;margin-bottom:10px;}
+  .team-load-cell{padding:6px 10px;font-size:11px;}
+  .toolbar{gap:6px;margin-bottom:10px;}
+  .filter-bar{gap:6px;margin-bottom:10px;padding:6px 8px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .filter-bar > *{flex-shrink:0;}
+  .toolbar .btn{font-size:11.5px;padding:6px 10px;}
+  .filter-bar .btn{font-size:11.5px;padding:6px 10px;}
+  /* The person/client filter selects used to size themselves to fit
+     their widest OPTION text (a long client name), with nothing capping
+     that width — on a narrow phone that pushed the whole filter bar
+     wider than the screen, which in turn triggered this app's known
+     mobile-viewport-ballooning quirk (the same root cause as the earlier
+     dropdown-menu overflow bug). Capping them here, tighter than the
+     220px desktop cap, keeps both selects comfortably on one row. */
+  .filter-bar-select{max-width:44vw !important;flex:0 0 auto !important;min-width:130px !important;}
+  /* The Tools/More dropdown used to anchor left:0 (or right:0) relative
+     to its own toggle button. That's fragile on mobile in two directions
+     at once: the More button sits toward the right of its toolbar (so
+     left:0 pushed the dropdown off the right edge) while the Tools
+     button sits toward the left of ITS toolbar (so the later right:0 fix
+     pushed THAT dropdown off the LEFT edge instead — confirmed via a
+     real-viewport check, x landed at -10px). Either overflow can also
+     leave part of the menu sitting underneath the fixed bottom nav
+     (z-index 75), which is what actually made options untappable —
+     visible but covered by another element intercepting the touch.
+     A fixed, centered bottom sheet — the same pattern Instagram/PhonePe
+     use for an actions menu — sidesteps all of it: it no longer cares
+     where its toggle button lives, it's always fully on-screen, and its
+     z-index (200) is deliberately above the bottom nav so nothing can
+     ever cover it again. */
+  .more-menu-dropdown{
+    position:fixed;top:auto;left:12px;right:12px;bottom:76px;
+    max-width:none;max-height:60vh;overflow-y:auto;
+    border-radius:14px;z-index:200;
+    box-shadow:0 -10px 34px rgba(0,0,0,.5);
+  }
+  .more-menu-item{padding:12px 14px;font-size:14px;}
+  .more-menu-backdrop{
+    display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:190;
+  }
+  body.has-install-banner .more-menu-dropdown{bottom:128px;}
+}
+
+/* BOTTOM NAVIGATION (mobile only) — the single most recognizable pattern
+   that makes an app feel native rather than like a scaled-down website.
+   Lives outside #app (see the static HTML) so it survives every
+   re-render untouched, same reasoning as the scroll-to-top button and
+   install banner. Coordinates with both of those: they're bumped up
+   above this bar's height instead of sitting underneath it, and the
+   page body gets bottom padding so the last card in a scrolled list is
+   never hidden behind the bar. */
+@media (max-width:700px){
+  body{padding-bottom:64px;}
+  .bottom-nav{
+    display:flex;position:fixed;left:0;right:0;bottom:0;z-index:75;
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    box-shadow:0 -4px 20px rgba(0,0,0,.35);
+  }
+  .bottom-nav-item{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:none;border:none;color:var(--text-faint);padding:6px 2px;border-radius:10px;
+    position:relative;cursor:pointer;
+  }
+  .bottom-nav-item.active{color:var(--teal);}
+  .bottom-nav-icon{font-size:19px;line-height:1;}
+  .bottom-nav-label{font-size:9.5px;font-weight:600;letter-spacing:.01em;}
+  .bottom-nav-dot{position:absolute;top:2px;right:22%;width:7px;height:7px;border-radius:50%;background:var(--coral);border:1.5px solid var(--surface);}
+  /* The center Add button is deliberately raised above the bar itself
+     (a circular accent button breaking the top edge) — the same visual
+     trick Instagram/PhonePe-style apps use to make the primary action
+     stand out from the row of destination icons around it. */
+  .bottom-nav-fab{flex:0 0 54px;}
+  .bottom-nav-fab-icon{
+    width:46px;height:46px;border-radius:50%;
+    background:var(--teal);color:#06110F;font-size:24px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+    margin-top:-26px;box-shadow:0 4px 14px rgba(79,209,197,.45);
+    border:3px solid var(--surface);
+  }
+
+  /* Stack above the bottom nav instead of underneath it. */
+  .scroll-to-top-btn{bottom:76px;}
+  body.has-install-banner .scroll-to-top-btn{bottom:128px;}
+  .install-banner{bottom:64px;}
+  body{padding-bottom:64px;} /* always reserve room for the nav bar */
+  body.has-install-banner{padding-bottom:124px;} /* nav bar + install banner both showing at once */
+}
+
+.global-busy-bar{
+  position:fixed; top:0; left:0; right:0; height:3px; z-index:9999;
+  background:var(--teal); transform:none;
+  opacity:0; pointer-events:none;
+  transition:opacity .15s ease;
+}
+/* FIX (2026-09-30): the old version grew the bar left-to-right on a loop
+   (scaleX 0.08 -> 0.6 -> 0.95, repeat) — a sweeping motion that's genuinely
+   tiring to track with your eyes when it's sitting there for 20-30+ seconds
+   during a slow/cold-start sync. Swapped for a full-width bar that just
+   breathes (opacity up and down) in place — same "something's happening"
+   signal, nothing crossing the screen. */
+.global-busy-bar.active{
+  opacity:1;
+  animation:globalBusyPulse 1.4s ease-in-out infinite;
+}
+@keyframes globalBusyPulse{
+  0%, 100%{ opacity:.35; }
+  50%{ opacity:1; }
+}
+
+/* Pull-to-refresh indicator (mobile home screen only) — a small floating
+   circle that tracks a downward drag from the very top of the page, the
+   same visual language as Instagram/Facebook's own pull-to-refresh, so
+   reloading today's board doesn't require finding a button. Lives outside
+   #app (same reasoning as .global-busy-bar) so a render() mid-drag never
+   resets it. Positioned/animated via direct style writes from
+   setupPullToRefresh() below, not CSS custom properties, since it needs to
+   track a finger 1:1 during the drag itself — the .visible/.refreshing
+   classes only handle the settled (not currently dragging) states. */
+.pull-refresh-indicator{
+  position:fixed; top:0; left:50%; z-index:9998;
+  width:38px; height:38px; border-radius:50%;
+  background:var(--surface); border:1px solid var(--border);
+  box-shadow:0 4px 14px rgba(0,0,0,.28);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transform:translate(-50%,-60px);
+}
+.pull-refresh-indicator.settling{ transition:transform .28s cubic-bezier(.34,1.4,.64,1), opacity .2s ease; }
+.pull-refresh-icon{ font-size:16px; line-height:1; color:var(--teal); display:inline-block; }
