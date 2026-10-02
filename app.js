@@ -7795,50 +7795,61 @@ function renderNotificationsPanel(){
       const staleFilterHtml = (staleCount || staleOnly)
         ? `<button class="btn ${staleOnly?'primary':'ghost'}" id="candidateActivityStaleOnlyToggle" style="margin-bottom:8px;color:${staleOnly?'':'var(--coral)'};border-color:var(--coral)">${staleOnly ? `✕ Showing only ${staleCount} stale — click to show all` : `🔴 ${staleCount} stale (${CANDIDATE_ACTIVITY_STALE_DAYS}+ days, no new calls) — click to filter`}</button>`
         : '';
+      // The search box and the month-nav/stale-filter controls must stay on
+      // screen even when the CURRENT query happens to match nothing — they
+      // used to live only inside this "got results" branch, so typing a
+      // query with zero matches (even transiently, character by character)
+      // made the entire search box vanish along with the list, with no
+      // visible way to clear it. Now only the "No candidates..." vs. the
+      // grouped list toggles; the input/nav/filter are built once, always
+      // shown, below.
+      let listHtml;
       if(!visible.length){
-        content = navHtml + staleFilterHtml + `<div class="hint">No candidates${candidateActivityShowAll?'':' with a last call in '+escapeHtml(monthKeyLabel(candidateActivityMonth))} found${staleOnly?' (stale filter is on)':''}${q?' matching your search':''}.</div>`;
+        listHtml = `<div class="hint">No candidates${candidateActivityShowAll?'':' with a last call in '+escapeHtml(monthKeyLabel(candidateActivityMonth))} found${staleOnly?' (stale filter is on)':''}${q?' matching your search':''}.</div>`;
       } else {
-      // Group into months, in the order candidates already come in (most
-      // recent lastDate first — computeCandidateActivity's own sort), so
-      // the month headers themselves fall out newest-first with no extra
-      // sort step here.
-      const monthOrder = [];
-      const byMonth = {};
-      visible.forEach(s=>{
-        if(!byMonth[s.monthKey]){ byMonth[s.monthKey] = []; monthOrder.push(s.monthKey); }
-        byMonth[s.monthKey].push(s);
-      });
-      const monthSectionsHtml = monthOrder.map(mk=>{
-        const label = mk === 'Undated' ? 'Undated' : monthKeyLabel(mk);
-        const rowsHtml = byMonth[mk].map(s=>{
-          const statusChip = s.lastStatus
-            ? `<span class="notif-chip" style="color:${statusBadgeInfo(s.lastStatus).colorVar};border-color:${statusBadgeInfo(s.lastStatus).colorVar}">${statusBadgeInfo(s.lastStatus).icon} ${statusBadgeInfo(s.lastStatus).label}</span>`
-            : (s.lastWoi ? `<span class="notif-chip" style="color:var(--amber);border-color:var(--amber)">⏳ Waiting on Invite</span>` : `<span class="notif-chip">no status tagged</span>`);
-          const historyStr = s.calls.map(c=>`${c.date}${c.round?' ('+c.round+')':''}`).join('  →  ');
-          return `<div class="notif-row">
-            <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}
-              ${s.isStale?`<span class="notif-warn" style="color:var(--coral)">🔴 ${s.daysSince}d, no new calls</span>`:''}
-            </div>
-            <div class="notif-detail">
-              <span class="notif-chip">${s.totalCalls} call${s.totalCalls===1?'':'s'} total</span>
-              <span class="notif-chip">last: ${escapeHtml(s.lastDate||'date n/a')}${s.lastRound?' — '+escapeHtml(s.lastRound):''}</span>
-              ${statusChip}
-              ${s.assignee?`<span class="notif-chip">${escapeHtml(s.assignee)}</span>`:''}
-              ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
-            </div>
-            ${s.calls.length>1?`<div class="hint" style="margin-top:2px;font-size:11px" title="${escapeHtml(historyStr)}">${s.calls.length} touchpoints: ${escapeHtml(historyStr)}</div>`:''}
-          </div>`;
+        // Group into months, in the order candidates already come in (most
+        // recent lastDate first — computeCandidateActivity's own sort), so
+        // the month headers themselves fall out newest-first with no extra
+        // sort step here.
+        const monthOrder = [];
+        const byMonth = {};
+        visible.forEach(s=>{
+          if(!byMonth[s.monthKey]){ byMonth[s.monthKey] = []; monthOrder.push(s.monthKey); }
+          byMonth[s.monthKey].push(s);
+        });
+        const monthSectionsHtml = monthOrder.map(mk=>{
+          const label = mk === 'Undated' ? 'Undated' : monthKeyLabel(mk);
+          const rowsHtml = byMonth[mk].map(s=>{
+            const statusChip = s.lastStatus
+              ? `<span class="notif-chip" style="color:${statusBadgeInfo(s.lastStatus).colorVar};border-color:${statusBadgeInfo(s.lastStatus).colorVar}">${statusBadgeInfo(s.lastStatus).icon} ${statusBadgeInfo(s.lastStatus).label}</span>`
+              : (s.lastWoi ? `<span class="notif-chip" style="color:var(--amber);border-color:var(--amber)">⏳ Waiting on Invite</span>` : `<span class="notif-chip">no status tagged</span>`);
+            const historyStr = s.calls.map(c=>`${c.date}${c.round?' ('+c.round+')':''}`).join('  →  ');
+            return `<div class="notif-row">
+              <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}
+                ${s.isStale?`<span class="notif-warn" style="color:var(--coral)">🔴 ${s.daysSince}d, no new calls</span>`:''}
+              </div>
+              <div class="notif-detail">
+                <span class="notif-chip">${s.totalCalls} call${s.totalCalls===1?'':'s'} total</span>
+                <span class="notif-chip">last: ${escapeHtml(s.lastDate||'date n/a')}${s.lastRound?' — '+escapeHtml(s.lastRound):''}</span>
+                ${statusChip}
+                ${s.assignee?`<span class="notif-chip">${escapeHtml(s.assignee)}</span>`:''}
+                ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+              </div>
+              ${s.calls.length>1?`<div class="hint" style="margin-top:2px;font-size:11px" title="${escapeHtml(historyStr)}">${s.calls.length} touchpoints: ${escapeHtml(historyStr)}</div>`:''}
+            </div>`;
+          }).join('');
+          return `<div style="font-weight:700;font-size:13px;margin:14px 0 6px">${escapeHtml(label)} <span class="hint" style="font-weight:400">(${byMonth[mk].length})</span></div>${rowsHtml}`;
         }).join('');
-        return `<div style="font-weight:700;font-size:13px;margin:14px 0 6px">${escapeHtml(label)} <span class="hint" style="font-weight:400">(${byMonth[mk].length})</span></div>${rowsHtml}`;
-      }).join('');
-      content = navHtml + staleFilterHtml + `
+        listHtml = `
         <div class="row" style="margin-bottom:8px">
           <div class="hint">${visible.length} candidate(s)${candidateActivityShowAll?' — grouped by month of last call, newest first.':''}</div>
           <button class="btn ghost" id="runCandidateLastStatusScan">Re-scan</button>
         </div>
-        <input type="text" class="notif-search" id="notifSearchLastStatus" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchLastStatus||'')}">
         ${monthSectionsHtml}`;
       }
+      content = navHtml + staleFilterHtml + `
+        <input type="text" class="notif-search" id="notifSearchLastStatus" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchLastStatus||'')}">
+        ${listHtml}`;
     }
   }
 
