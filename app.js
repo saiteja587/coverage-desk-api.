@@ -5043,17 +5043,35 @@ async function computeCandidateActivity(forceRefresh){
     if(!cluster){ cluster = { key, canonicalName: row.candidate, rows: [] }; clusters.push(cluster); }
     cluster.rows.push(row);
   });
-  const closedKeys = new Set();
-  (state.closures||[]).forEach(c=>{ if(c.candidate) closedKeys.add(c.candidate.trim().toLowerCase()); });
+  // FIX (2026-10-02, follow-up): the first cut of the closed-candidate
+  // exclusion below used an EXACT name match against state.closures — same
+  // mistake already fixed once in this file for candidate clustering
+  // itself (the Sai Prasanna / Ruchitha case): a closure recorded with a
+  // slightly different spelling than the call record's candidate name
+  // (typo, abbreviation, a middle/last name dropped) silently failed to
+  // match, so Murali Krishna Mallipudi kept showing up as "stale" even
+  // after getting an offer. Reuses the exact same matching this app
+  // already trusts for closure↔call matching elsewhere (findClosureMatch):
+  // same or fuzzy candidate name, AND same or fuzzy company — company is
+  // required too so a name-only fuzzy match can't accidentally exclude an
+  // unrelated person who just has a similar-sounding name.
+  function clusterIsClosed(cluster){
+    return (state.closures||[]).some(c=>{
+      if(!c.candidate) return false;
+      return cluster.rows.some(r=>{
+        const nameMatch = (r.candidate||'').trim().toLowerCase() === c.candidate.trim().toLowerCase()
+          || sameCandidateFuzzyMatch(r.candidate, c.candidate);
+        if(!nameMatch) return false;
+        return normalizeCompanyKey(r.company) === normalizeCompanyKey(c.company) || fuzzyCompanyKeyMatch(r.company, c.company);
+      });
+    });
+  }
   return clusters
-    // FIX (2026-10-02): "murali krishna gets an offer, we don't want to
-    // count those members" — a closed candidate (already placed) isn't
-    // someone to check in on for more interviews, so this report now drops
-    // them entirely instead of just excluding them from the 🔴 stale flag.
-    // Same exact-name-against-closures check the stale-flag logic already
-    // used; just filtering the whole candidate out now instead of keeping
-    // a non-stale "✅ closed" card for them.
-    .filter(cluster => !cluster.rows.some(r => closedKeys.has((r.candidate||'').trim().toLowerCase())) && !closedKeys.has(cluster.key))
+    // "murali krishna gets an offer, we don't want to count those members"
+    // — a closed candidate (already placed) isn't someone to check in on
+    // for more interviews, so this report drops them entirely rather than
+    // just excluding them from the 🔴 stale flag.
+    .filter(cluster => !clusterIsClosed(cluster))
     .map(cluster=>{
     const sorted = cluster.rows.slice().sort((a,b)=> (a._date||'').localeCompare(b._date||'') || (a.time||'').localeCompare(b.time||''));
     const last = sorted[sorted.length-1];
