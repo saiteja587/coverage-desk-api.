@@ -242,6 +242,7 @@ module.exports = async (req, res) => {
     }
 
     if (resource === 'calls') return await handleCalls(req, res, db);
+    if (resource === 'all_calls') return await handleAllCalls(req, res, db);
     if (resource === 'roster') return await handleRoster(req, res, db);
     if (resource === 'notes') return await handleNotes(req, res, db);
     if (resource === 'dates') return await handleDates(req, res, db);
@@ -257,7 +258,7 @@ module.exports = async (req, res) => {
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|users|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -393,6 +394,42 @@ async function handleCalls(req, res, db) {
     }
   }
   return res.status(405).json({ error: 'Method not allowed' });
+}
+// ---------- all_calls: every call on file, in ONE request (added 2026-10-02) ----------
+// PERF: every "scan the whole board" feature (Stuck Pipeline, Company
+// Scorecard, WOI Aging, Closures matching, the Candidate search fallback,
+// etc. — see fetchAllRowsAcrossDates() in index.html) used to fetch the
+// `dates` list and then fire one `calls?date=...` request PER saved date,
+// all in parallel. That's correct, but each of those requests opens its
+// own fresh database connection (see getConnection()'s comment on why this
+// API never pools connections) — so a single "scan everything" action
+// could briefly open dozens of simultaneous connections once history grows
+// to months/years of dates, right up against Aiven's free-tier connection
+// cap. This collapses that into exactly one query / one connection. Same
+// joins and row shape as handleCalls' GET, just without the date filter —
+// each row carries its own call_date (as `_date`, matching the field name
+// the frontend already attaches to rows from the old per-date loop) so the
+// client can group by date itself without a second round trip.
+async function handleAllCalls(req, res, db) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  let rows;
+  try {
+    [rows] = await db.query(
+      `SELECT c.*, cs.status AS cs_status, cs.status_fields_json AS cs_status_fields_json,
+              cdp.driving_person AS cdp_driving_person
+       FROM calls c
+       LEFT JOIN call_status cs ON cs.call_id = c.id
+       LEFT JOIN call_driving_person cdp ON cdp.call_id = c.id
+       ORDER BY c.call_date, c.created_at`
+    );
+  } catch (e) {
+    // Same fallback as handleCalls — one or both join tables don't exist
+    // yet (migration not run), so the app still works, just without
+    // status/driving-person fields until that migration happens.
+    [rows] = await db.query('SELECT * FROM calls ORDER BY call_date, created_at');
+  }
+  const mapped = rows.map(r => Object.assign(rowToCall(r), { _date: formatDate(r.call_date) }));
+  return res.status(200).json({ rows: mapped });
 }
 function rowToCall(row) {
   return {
