@@ -9087,6 +9087,46 @@ function renderTeamOnlyClosuresHtml(teamOnlyDetails){
     `Matched to a call on ${escapeHtml(match._date||'—')}${match.round?` (${escapeHtml(match.round)})`:''} — assigned to a team (${escapeHtml((match.drivingPerson||match.assignee)||'')}), not an individual, so no one specific gets credit yet.`
   );
 }
+function monthKeyOf(createdAt){
+  if(!createdAt) return null;
+  const d = new Date(createdAt);
+  if(isNaN(d.getTime())) return null;
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+// Scopes an all-time computeClosuresPerformance() result down to one month
+// (added 2026-10-02): "by handlers area it is showing september month
+// calls" — the By Handler tab had always shown all-time totals by design
+// (unlike the All Closures list tab, which already defaults to the current
+// month with its own prev/next nav), so browsing it in October still
+// surfaced September's numbers mixed in with no way to narrow it down. This
+// re-derives the handler totals/tooltips and the three "still needs
+// fixing" buckets from only the closures recorded in the given month,
+// without re-fetching or re-matching anything — computeClosuresPerformance
+// itself still always scans every call record on file (that part has to
+// stay all-time, since a closure recorded this month can still belong to a
+// call from any past date), only WHICH CLOSURES COUNT toward the display
+// gets narrowed.
+function filterClosuresPerfToMonth(perf, monthKey){
+  if(!perf || perf.loading || perf.error) return perf;
+  const inMonth = c => monthKeyOf(c && c.createdAt) === monthKey;
+  const rows = perf.rows.map(r=>{
+    const records = (r.records||[]).filter(inMonth);
+    return records.length ? Object.assign({}, r, { closures: records.length, records }) : null;
+  }).filter(Boolean).sort((a,b)=> b.closures - a.closures);
+  const unmatchedDetails = (perf.unmatchedDetails||[]).filter(d=>inMonth(d.closure));
+  const noAssigneeDetails = (perf.noAssigneeDetails||[]).filter(d=>inMonth(d.closure));
+  const teamOnlyDetails = (perf.teamOnlyDetails||[]).filter(d=>inMonth(d.closure));
+  return Object.assign({}, perf, {
+    rows,
+    unmatchedDetails,
+    noAssigneeDetails,
+    teamOnlyDetails,
+    unmatchedCount: unmatchedDetails.length,
+    noAssigneeCount: noAssigneeDetails.length,
+    teamOnlyCount: teamOnlyDetails.length,
+    totalClosures: rows.reduce((s,r)=>s+r.closures,0) + unmatchedDetails.length + noAssigneeDetails.length + teamOnlyDetails.length,
+  });
+}
 function renderClosuresPanel(){
   const list = state.closures || [];
   // FIX (2026-10-01): the "Closures in <Month>" stat card used to always be
@@ -9209,7 +9249,11 @@ function renderClosuresPanel(){
         : `<div class="hint">No closures recorded for ${escapeHtml(monthKeyLabel(closuresListMonthKey))}.</div>`);
 
   const view = state.closuresView || 'list';
-  const perf = state.closuresPerformance;
+  const rawPerf = state.closuresPerformance;
+  // By Handler now follows the same month the All Closures list tab is on
+  // (see filterClosuresPerfToMonth()) instead of always showing all-time —
+  // "Show all months" (closuresListShowAll) still bypasses the scoping.
+  const perf = (rawPerf && !closuresListShowAll) ? filterClosuresPerfToMonth(rawPerf, closuresListMonthKey) : rawPerf;
   let perfHtml;
   if(view === 'byHandler'){
     if(!perf || perf.loading){
@@ -9217,7 +9261,7 @@ function renderClosuresPanel(){
     } else if(perf.error){
       perfHtml = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(perf.error)}</div>`;
     } else if(!perf.rows.length && !(perf.unmatchedDetails && perf.unmatchedDetails.length) && !perf.teamOnlyCount && !perf.noAssigneeCount){
-      perfHtml = `<div class="hint">No closure could be matched to a handler yet — either no closures are recorded, or none matched a call record's candidate/company on file.</div>`;
+      perfHtml = `<div class="hint">No closure could be matched to a handler yet for ${closuresListShowAll ? 'any month' : escapeHtml(monthKeyLabel(closuresListMonthKey))} — either none are recorded in this period, or none matched a call record's candidate/company on file.</div>`;
     } else {
       const rowsHtml = perf.rows.map(r=>{
         // Hover the closure count to see exactly which records make it up —
@@ -9242,7 +9286,8 @@ function renderClosuresPanel(){
       if(perf.teamOnlyCount) notes.push(`${perf.teamOnlyCount} matched only to a team-level assignment, not an individual`);
       if(perf.noAssigneeCount) notes.push(`${perf.noAssigneeCount} matched to a call record with no assignee, so no handler to credit`);
       if(perf.unmatchedCount) notes.push(`${perf.unmatchedCount} couldn't be matched to any call record (spelling difference, or predates your records)`);
-      perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) all-time, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
+      const periodLabel = closuresListShowAll ? 'all-time' : `in ${escapeHtml(monthKeyLabel(closuresListMonthKey))}`;
+      perfHtml = `<div class="hint" style="margin-bottom:10px">${perf.totalClosures} closure(s) ${periodLabel}, ${rowsHtml ? perf.rows.reduce((s,r)=>s+r.closures,0) : 0} matched to a handler.${notes.length ? ' '+notes.join('; ')+'.' : ''} For $ incentive totals per handler by month, see Reports → 💰 Incentives.</div>${rowsHtml}`;
       perfHtml += renderUnmatchedClosuresHtml(perf.unmatchedDetails || []);
       perfHtml += renderNoAssigneeClosuresHtml(perf.noAssigneeDetails || []);
       perfHtml += renderTeamOnlyClosuresHtml(perf.teamOnlyDetails || []);
@@ -9265,6 +9310,7 @@ function renderClosuresPanel(){
       ${list.length ? `<button class="btn ghost" id="exportClosuresExcelBtn" title="Download every closure on file as an Excel file" style="margin-left:${(view==='byHandler' && CURRENT_ROLE==='admin')?'0':'auto'}">📊 Export to Excel</button>` : ''}
     </div>
     ${view === 'byHandler' ? renderDrivingPersonBackfillResultHtml() : ''}
+    ${view === 'byHandler' ? closuresListNavHtml : ''}
     ${view === 'byHandler' ? perfHtml : view === 'summary' ? renderClosuresSummaryHtml() : closuresListBodyHtml}
     <div class="hint" style="margin-top:14px">Looking for a closing-rate or time-to-close report across every candidate (not just closures)? See 🔔 Notifications → 🎯 Conversion Funnel / ⏱ Time to Close.</div>
     <div class="hint" style="margin-top:4px">Want to search any candidate/company and see their full call-by-call timeline? Use ⋯ More → 🔎 Search Everywhere, then tap 📋 Timeline on any result.</div>
