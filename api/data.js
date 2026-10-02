@@ -689,7 +689,11 @@ async function handlePortalSyncFetch(req, res) {
     // (main key, or any per-date fan-out key) is collected into
     // `cacheWarnings` and returned to the caller as `cacheWarning` on the
     // response, so the UI can show it instead of silently losing data.
-    const cacheKey = resourceRequested + ':' + (date || 'ALL');
+    // Same month-scoping fix as the read side (handlePortalSyncCacheRead) —
+    // incentives requests carry `month`, not `date`, so without this an
+    // incentives sync for any month always overwrote the same shared
+    // "incentives:ALL" cache row, making month-scoped caching impossible.
+    const cacheKey = resourceRequested + ':' + (date || month || 'ALL');
     const cacheWarnings = [];
     try {
       const db = await getConnection();
@@ -760,7 +764,16 @@ async function handlePortalSyncCacheRead(req, res) {
     ? req.query.type
     : 'everything';
   const date = req.query.date || '';
-  const cacheKey = resourceRequested + ':' + (date || 'ALL');
+  const month = req.query.month || '';
+  // FIX (2026-10-02): incentives requests are scoped by MONTH, not date (see
+  // the matching fix in handlePortalSyncFetch's write side below) — this
+  // read path previously ignored `month` entirely, so every incentives
+  // cache lookup hit the single "incentives:ALL" key regardless of which
+  // month was actually being viewed. That made month-scoped caching
+  // impossible: syncing October's incentives would silently return as
+  // September's (or vice versa) the moment more than one month had ever
+  // been synced.
+  const cacheKey = resourceRequested + ':' + (date || month || 'ALL');
 
   const db = await getConnection();
   try {
