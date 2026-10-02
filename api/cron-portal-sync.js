@@ -217,8 +217,44 @@ module.exports = async (req, res) => {
   }
 
   const backfill = await backfillDrivingPersonFromPortal(syncResult.body.data);
+
+  // Step 3 (added 2026-10-02): also pull and save this month's Incentives
+  // totals every night, not just assignments. Saiteja's ask: "every time
+  // [I open] incentives [it] needs syncing... that's already auto-syncing
+  // every night at 10pm right? save them, show them in incentives" — before
+  // this, the nightly cron only ever synced `type: 'assignments'`, so
+  // Incentives had no saved nightly snapshot at all and the in-app panel
+  // had to hit the slow Apps Script bridge live, every single time it was
+  // opened (see fetchIncentivesMonth()/loadIncentivesCache() in
+  // index.html for the matching frontend-side fix). Scoped to the CURRENT
+  // month only — Incentives for a month that's already over rarely changes
+  // once it's finalized, and the in-app "Refresh" button still covers any
+  // month on demand. Non-fatal: a failure here is reported alongside the
+  // real sync result but never turns an otherwise-successful nightly run
+  // into a failure, same reasoning as the backfill step above.
+  let incentivesSync = { ok: false, skipped: true };
+  try {
+    const currentMonthKeyIST = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit',
+    }).format(new Date()).slice(0, 7); // en-CA gives "YYYY-MM-DD"; keep "YYYY-MM"
+    const incentivesFakeReq = { method: 'GET', query: { type: 'incentives', month: currentMonthKeyIST } };
+    let incentivesResult = null;
+    const incentivesFakeRes = {
+      _code: 200,
+      status(code) { this._code = code; return this; },
+      json(body) { incentivesResult = { code: this._code, body }; return this; },
+    };
+    await handlePortalSyncFetch(incentivesFakeReq, incentivesFakeRes);
+    incentivesSync = incentivesResult && incentivesResult.body
+      ? { ok: incentivesResult.body.ok === true, month: currentMonthKeyIST, error: incentivesResult.body.error || null }
+      : { ok: false, month: currentMonthKeyIST, error: 'No response from incentives sync.' };
+  } catch (incentivesErr) {
+    incentivesSync = { ok: false, error: incentivesErr.message };
+  }
+
   return res.status(200).json({
     ...syncResult.body,
     drivingPersonBackfill: backfill,
+    incentivesSync,
   });
 };
