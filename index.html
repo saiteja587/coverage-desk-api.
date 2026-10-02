@@ -1072,6 +1072,15 @@ let state = {
   closureManualMatchSaving: false,
   closureMatchError: null,
   closureMatchSearch: '', // manual-match picker's search box text — see getClosureMatchCandidateList()
+  // Pre-save "pick the right call" picker on the closure REVIEW screen
+  // (added 2026-10-02) — same idea as the post-save "🔗 Match manually"
+  // picker above, but for a closure that hasn't been saved yet, so the
+  // candidate doesn't have to save it unmatched first and come back to fix
+  // it afterward. See getReviewMatchCandidateList() / renderClosureConfirmPanel().
+  closureReviewMatchIdx: null, // which closureReview[] item's picker is open, if any
+  closureReviewMatchSearch: '',
+  closureReviewAllRows: [], // cached from the same fetchAllRowsAcrossDates() call parseClosureBtn already does for cross-referencing
+  closureReviewMatchRefreshing: false, // true while [data-open-review-match] is force-refreshing closureReviewAllRows — see that handler
   companyAliasError: null, // error text for the "🔗 Company aliases" add form — see renderCompanyAliasesHtml()
   appSettings: {}, // generic key/value settings map — see loadAppSettings()/saveAppSetting()
   editingIncentiveTarget: false,
@@ -4791,24 +4800,37 @@ async function downloadFullBackup(){
 // slowing things down a lot for anyone with many saved dates.
 let _allRowsAcrossDatesCache = null;
 let _allRowsAcrossDatesCacheAt = 0;
+let _allRowsAcrossDatesDebug = null; // last run's diagnostics — see fetchAllRowsAcrossDates()
 async function fetchAllRowsAcrossDates(forceRefresh){
   const CACHE_MS = 60000; // 1 minute — long enough to cover both scans running back-to-back, short enough to stay fresh
   if(!forceRefresh && _allRowsAcrossDatesCache && (Date.now() - _allRowsAcrossDatesCacheAt) < CACHE_MS){
     return _allRowsAcrossDatesCache;
   }
+  // DIAGNOSTIC (2026-10-02): "search not working, no records" reports from
+  // Closures kept coming back even after the force-refresh fix, while every
+  // OTHER cross-date feature (Stuck Pipeline, Company Scorecard, WOI Aging)
+  // kept working fine on the same data — meaning something specific to
+  // this call's path was quietly swallowing an error rather than this
+  // function itself being broken in general. Every catch below now also
+  // records into _allRowsAcrossDatesDebug (module-level, read by the
+  // Closures picker's "no records" state) instead of just discarding the
+  // error, so a real production failure is visible on-screen instead of
+  // disappearing into an empty array with no trace.
+  const debug = { datesApiError: null, dateFetchErrors: 0, datesAttempted: 0, at: Date.now() };
   let dates = [];
   if(API_BASE_URL){
     try{
       const data = await apiCall('dates', {});
       dates = data.dates || [];
-    }catch(e){ dates = []; }
+    }catch(e){ dates = []; debug.datesApiError = String(e && e.message || e); }
   } else {
     try{
       const idx = await storageAdapter.get('known-dates', false);
       dates = idx && idx.value ? JSON.parse(idx.value) : [];
-    }catch(e){ dates = []; }
+    }catch(e){ dates = []; debug.datesApiError = String(e && e.message || e); }
   }
   if(!dates.includes(state.date)) dates.push(state.date);
+  debug.datesAttempted = dates.length;
 
   // Fetches every date IN PARALLEL instead of one at a time — with many
   // saved dates, sequential fetching could take many seconds, and any date
@@ -4820,19 +4842,21 @@ async function fetchAllRowsAcrossDates(forceRefresh){
       try{
         const data = await apiCall('calls', {qs:'date='+d});
         return data.rows || [];
-      }catch(e){ return []; }
+      }catch(e){ debug.dateFetchErrors++; return []; }
     }
     try{
       const r = await storageAdapter.get('day:'+d, false);
       const parsed = r && r.value ? JSON.parse(r.value) : null;
       return Array.isArray(parsed) ? parsed : (parsed && parsed.rows) || [];
-    }catch(e){ return []; }
+    }catch(e){ debug.dateFetchErrors++; return []; }
   }));
 
   const allRows = [];
   dates.forEach((d, i)=>{
     (perDateResults[i]||[]).forEach(row => allRows.push(Object.assign({}, row, { _date: d })));
   });
+  debug.rowsReturned = allRows.length;
+  _allRowsAcrossDatesDebug = debug;
   _allRowsAcrossDatesCache = allRows;
   _allRowsAcrossDatesCacheAt = Date.now();
   return allRows;
@@ -5121,6 +5145,34 @@ function getClosureMatchCandidateList(closureId){
     return { list, searching: true, portalSearched: !!(state.portalAssignments && state.portalAssignments.length) };
   }
   return { list: detail.suggestions || [], searching: false };
+}
+// Same idea as getClosureMatchCandidateList() above, but for the closure
+// REVIEW screen (before anything is saved) instead of the post-save
+// "Unmatched closures" list — added 2026-10-02 so a closure that doesn't
+// auto-match can be pointed at the right call record right there, rather
+// than having to save it unmatched first and come back later to fix it.
+// Keyed by the review item's index (it has no id yet, since it isn't saved)
+// rather than a closure id, and reads from state.closureReviewAllRows
+// (cached once per paste by the parse handler) instead of
+// state.closuresPerformance, since that performance scan only exists for
+// already-saved closures. Deliberately Coverage-Desk-only, not Portal —
+// Portal-only matches stay a post-save-only option (findClosureMatchWithOverride's
+// 'manualPortal' type needs a saved closure id to attach to).
+function getReviewMatchCandidateList(idx){
+  const item = state.closureReview && state.closureReview[idx];
+  if(!item) return { list: [], searching: false };
+  const allRows = state.closureReviewAllRows || [];
+  const q = (state.closureReviewMatchSearch||'').trim().toLowerCase();
+  const itemCandKey = (item.candidate||'').trim().toLowerCase();
+  if(q.length >= 2){
+    const list = allRows
+      .filter(r=>r.candidate && (r.candidate.toLowerCase().includes(q) || (r.company||'').toLowerCase().includes(q)))
+      .map(r=>({ ...r, _sameCandidate: itemCandKey && r.candidate.trim().toLowerCase() === itemCandKey }))
+      .sort((a,b)=> (b._sameCandidate - a._sameCandidate) || (b._date||'').localeCompare(a._date||''))
+      .slice(0, 30);
+    return { list, searching: true };
+  }
+  return { list: findClosureMatchSuggestions(item, allRows), searching: false };
 }
 // Round-by-round timeline for one closure — "when did Round 1 happen, when
 // did Round 2 happen, when did Round 3 happen" — requested 2026-09-27.
@@ -8761,6 +8813,64 @@ function renderClosureConfirmPanel(){
     const s = styles[cr.status] || styles.no_match;
     return `<div style="background:${s.bg};color:${s.color};border-radius:8px;padding:7px 10px;font-size:12px;margin-top:8px">${s.icon} ${escapeHtml(cr.message)}</div>`;
   }
+  // Inline "🔗 Pick the right call" picker for a review item that didn't
+  // auto-match (or matched the wrong one) — lets this get fixed BEFORE
+  // saving instead of only after, via the post-save Unmatched Closures
+  // list. See getReviewMatchCandidateList() for where the options come from.
+  function reviewMatchPickerHtml(it, idx){
+    if(state.closureReviewMatchIdx !== idx) return '';
+    // FIX (2026-10-02): same bug class as the post-save "🔗 Match manually"
+    // picker fixed on 2026-09-28 — this picker's whole point is to search
+    // against the CURRENT state of the board, so it force-refreshes on open
+    // (see [data-open-review-match] below) rather than searching whatever
+    // snapshot parseClosureBtn happened to capture when the text was pasted,
+    // which can be a stale/empty fetchAllRowsAcrossDates() cache from
+    // earlier in the session ("no records showing searching option").
+    if(state.closureReviewMatchRefreshing){
+      return `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+        <div class="hint"><span class="spinner"></span> Pulling the latest calls before searching…</div>
+      </div>`;
+    }
+    const allRows = state.closureReviewAllRows || [];
+    if(!allRows.length){
+      // DIAGNOSTIC (2026-10-02): this message kept appearing with real
+      // calls plainly on the board elsewhere, so it now also prints exactly
+      // what the last fetch found — which dates it saw, how many of those
+      // per-date fetches failed, and any outright error from the dates
+      // lookup — instead of just the one-line dead end. See
+      // _allRowsAcrossDatesDebug in fetchAllRowsAcrossDates().
+      const dbg = _allRowsAcrossDatesDebug;
+      const dbgLine = dbg
+        ? `Debug: saw ${dbg.datesAttempted} date(s) on file, ${dbg.dateFetchErrors} failed to load${dbg.datesApiError ? `, dates lookup error: "${escapeHtml(dbg.datesApiError)}"` : ''}.`
+        : 'Debug: no fetch diagnostics recorded.';
+      return `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+        <div class="hint">No call records came back for the latest check — nothing to match this closure to. <button class="btn ghost" data-cancel-review-match="${idx}" style="margin-left:6px">Close</button></div>
+        <div class="hint" style="margin-top:6px;font-size:11px;opacity:.75">${dbgLine}</div>
+      </div>`;
+    }
+    const { list, searching } = getReviewMatchCandidateList(idx);
+    const itemCandKey = (it.candidate||'').trim().toLowerCase();
+    const options = list.map((r,i)=>{
+      const differentCandidate = itemCandKey && r.candidate.trim().toLowerCase() !== itemCandKey;
+      return `<option value="${i}">${escapeHtml(r.candidate)} — ${escapeHtml(r.company)} — ${escapeHtml(r._date||'')}${r.assignee?` — ${escapeHtml(r.assignee)}`:''}${differentCandidate?' ⚠ different candidate':''}</option>`;
+    }).join('');
+    const allFallback = !searching && list.length > 0 && list.every(r=>r._fallback);
+    let hint;
+    if(searching) hint = list.length ? 'Search results:' : 'No calls on file match that search. Try a different spelling.';
+    else if(allFallback) hint = 'No obvious match by name or company — pick from the most recent calls on file, or search below:';
+    else hint = 'Pick the call this closure actually belongs to, or search below:';
+    return `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
+      <input type="text" data-review-match-search="${idx}" placeholder="🔎 Search by candidate or company name…" value="${escapeHtml(state.closureReviewMatchSearch||'')}" style="width:100%;margin-bottom:8px;padding:6px 8px;border-radius:6px;border:1px solid var(--border-soft);background:var(--surface);color:inherit">
+      <div class="hint" style="margin-bottom:6px">${hint}</div>
+      ${list.length ? `
+        <select id="reviewMatchSelect-${idx}" style="width:100%;margin-bottom:8px">${options}</select>
+        <div style="display:flex;gap:8px">
+          <button class="btn primary" data-confirm-review-match="${idx}">Use this record</button>
+          <button class="btn ghost" data-cancel-review-match="${idx}">Cancel</button>
+        </div>
+      ` : `<button class="btn ghost" data-cancel-review-match="${idx}">Close</button>`}
+    </div>`;
+  }
   const itemsHtml = items.map((it, idx)=>`<div class="resched-item" data-idx="${idx}">
       <div class="resched-raw">${escapeHtml(it.raw)}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -8779,6 +8889,8 @@ function renderClosureConfirmPanel(){
         <button class="btn ghost closure-review-remove" data-idx="${idx}" title="Remove this one" style="align-self:flex-end">✕</button>
       </div>
       ${crossRefBadge(it.crossRef)}
+      ${(it.crossRef && (it.crossRef.status==='no_match' || it.crossRef.status==='mismatch') && state.closureReviewMatchIdx!==idx) ? `<button class="btn ghost" data-open-review-match="${idx}" style="font-size:11px;padding:4px 10px;margin-top:6px">🔗 Pick the right call</button>` : ''}
+      ${reviewMatchPickerHtml(it, idx)}
     </div>`).join('');
   return `<div class="import-panel">
     ${itemsHtml || '<div class="hint">No closure/offer messages were detected in that text.</div>'}
@@ -8834,9 +8946,16 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
           <div class="hint"><span class="spinner"></span> Pulling the latest calls and closures before searching…</div>
         </div>`;
       } else if(!hasAnyRecords){
+        // DIAGNOSTIC (2026-10-02): same debug line as the pre-save picker —
+        // see _allRowsAcrossDatesDebug in fetchAllRowsAcrossDates().
+        const dbg = _allRowsAcrossDatesDebug;
+        const dbgLine = dbg
+          ? `Debug: saw ${dbg.datesAttempted} date(s) on file, ${dbg.dateFetchErrors} failed to load${dbg.datesApiError ? `, dates lookup error: "${escapeHtml(dbg.datesApiError)}"` : ''}.`
+          : 'Debug: no fetch diagnostics recorded.';
         pickerHtml = `<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid var(--teal)">
           <div style="font-weight:700;font-size:12px;margin-bottom:6px;color:var(--teal)">🔗 Matching: ${escapeHtml(closure.candidate)} — ${escapeHtml(closure.company)}</div>
-          <div class="hint">No call records exist on file at all yet — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>
+          <div class="hint">No call records came back for the latest check — nothing to match this closure to. <button class="btn ghost" data-cancel-closure-match="${closure.id}" style="margin-left:6px">Close</button></div>
+          <div class="hint" style="margin-top:6px;font-size:11px;opacity:.75">${dbgLine}</div>
         </div>`;
       } else {
         // FIX (2026-09-27): the select used to only ever offer the up-to-8
@@ -12859,6 +12978,7 @@ function attachHandlers(conflictIds){
     try{
       const allRows = await fetchAllRowsAcrossDates();
       if(!state.closureReview) return; // panel was cancelled while this was in flight
+      state.closureReviewAllRows = allRows; // reused by the inline "🔗 Pick the right call" picker — see getReviewMatchCandidateList()
       state.closureReview.forEach(item=>{
         item.crossRef = crossReferenceClosure(item.candidate, item.company, allRows);
       });
@@ -12871,7 +12991,12 @@ function attachHandlers(conflictIds){
   };
 
   const cancelClosureConfirm = document.getElementById('cancelClosureConfirm');
-  if(cancelClosureConfirm) cancelClosureConfirm.onclick = ()=>{ state.closureReview = null; render(); };
+  if(cancelClosureConfirm) cancelClosureConfirm.onclick = ()=>{
+    state.closureReview = null;
+    state.closureReviewMatchIdx = null;
+    state.closureReviewMatchSearch = '';
+    render();
+  };
 
   document.querySelectorAll('.closure-review-field').forEach(input=>{
     input.oninput = ()=>{
@@ -12887,6 +13012,58 @@ function attachHandlers(conflictIds){
         state.closureReview.splice(idx, 1);
         render();
       }
+    };
+  });
+
+  // Pre-save "🔗 Pick the right call" picker on the closure review screen —
+  // see getReviewMatchCandidateList() / reviewMatchPickerHtml() above.
+  document.querySelectorAll('[data-open-review-match]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      state.closureReviewMatchIdx = Number(btn.dataset.openReviewMatch);
+      state.closureReviewMatchSearch = '';
+      // FIX (2026-10-02): force a fresh cross-date fetch on open instead of
+      // trusting the snapshot parseClosureBtn grabbed at parse time (which
+      // can be stale/empty if the shared fetchAllRowsAcrossDates() cache was
+      // already warmed earlier in the session) — see reviewMatchPickerHtml().
+      state.closureReviewMatchRefreshing = true;
+      render();
+      try{
+        state.closureReviewAllRows = await fetchAllRowsAcrossDates(true);
+      }catch(e){ /* keep whatever snapshot we already had — search still works, just possibly stale */ }
+      state.closureReviewMatchRefreshing = false;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-cancel-review-match]').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.closureReviewMatchIdx = null;
+      state.closureReviewMatchSearch = '';
+      render();
+    };
+  });
+  document.querySelectorAll('[data-review-match-search]').forEach(input=>{
+    input.oninput = (e)=>{ state.closureReviewMatchSearch = e.target.value; render(); };
+  });
+  document.querySelectorAll('[data-confirm-review-match]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const idx = Number(btn.dataset.confirmReviewMatch);
+      const item = state.closureReview && state.closureReview[idx];
+      const select = document.getElementById('reviewMatchSelect-'+idx);
+      if(!item || !select) return;
+      const { list } = getReviewMatchCandidateList(idx);
+      const chosen = list[Number(select.value)];
+      if(!chosen) return;
+      // Sets the review item's candidate/company to EXACTLY match the
+      // chosen call record, then re-runs the same cross-reference check
+      // used at parse time — once the text matches a real record exactly,
+      // the normal save-time matching logic finds it on its own, so no
+      // separate manual-match override is needed for this path.
+      item.candidate = chosen.candidate;
+      item.company = chosen.company;
+      item.crossRef = crossReferenceClosure(item.candidate, item.company, state.closureReviewAllRows || []);
+      state.closureReviewMatchIdx = null;
+      state.closureReviewMatchSearch = '';
+      render();
     };
   });
 
@@ -12910,6 +13087,8 @@ function attachHandlers(conflictIds){
       if(state.closuresPerformance) state.closuresPerformance = await computeClosuresPerformance(true);
       state.closureApplying = false;
       state.closureReview = null;
+      state.closureReviewMatchIdx = null;
+      state.closureReviewMatchSearch = '';
       render();
       alert(`${items.length} closure${items.length===1?'':'s'} saved.`);
     }catch(e){
