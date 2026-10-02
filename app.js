@@ -5045,12 +5045,20 @@ async function computeCandidateActivity(forceRefresh){
   });
   const closedKeys = new Set();
   (state.closures||[]).forEach(c=>{ if(c.candidate) closedKeys.add(c.candidate.trim().toLowerCase()); });
-  return clusters.map(cluster=>{
+  return clusters
+    // FIX (2026-10-02): "murali krishna gets an offer, we don't want to
+    // count those members" — a closed candidate (already placed) isn't
+    // someone to check in on for more interviews, so this report now drops
+    // them entirely instead of just excluding them from the 🔴 stale flag.
+    // Same exact-name-against-closures check the stale-flag logic already
+    // used; just filtering the whole candidate out now instead of keeping
+    // a non-stale "✅ closed" card for them.
+    .filter(cluster => !cluster.rows.some(r => closedKeys.has((r.candidate||'').trim().toLowerCase())) && !closedKeys.has(cluster.key))
+    .map(cluster=>{
     const sorted = cluster.rows.slice().sort((a,b)=> (a._date||'').localeCompare(b._date||'') || (a.time||'').localeCompare(b.time||''));
     const last = sorted[sorted.length-1];
-    const isClosed = cluster.rows.some(r => closedKeys.has((r.candidate||'').trim().toLowerCase())) || closedKeys.has(cluster.key);
     const daysSince = last._date ? daysBetween(last._date, todayKey) : null;
-    const isStale = !isClosed && daysSince !== null
+    const isStale = daysSince !== null
       && !STUCK_PIPELINE_EXCLUDE_STATUSES.includes(last.status||'')
       && daysSince >= CANDIDATE_ACTIVITY_STALE_DAYS;
     return {
@@ -5063,7 +5071,7 @@ async function computeCandidateActivity(forceRefresh){
       assignee: last.drivingPerson || last.assignee || '',
       totalCalls: sorted.length,
       daysSince,
-      isStale, isClosed,
+      isStale,
       calls: sorted.map(r=>({ date:r._date||'', time:r.time||'', round:r.round||'', company:r.company||'', status:r.status||'', woi:!!r.woi })),
       monthKey: last._date ? last._date.slice(0,7) : 'Undated',
     };
@@ -7735,7 +7743,7 @@ function renderNotificationsPanel(){
       content = `<div class="hint"><span class="spinner"></span> Scanning every saved date and grouping each candidate's full call history…</div>`;
     } else if(state.candidateLastStatusData === null){
       content = `
-        <div class="hint" style="margin-bottom:10px">Every candidate's full call history, grouped by the month of their most recent call — name typos/abbreviations are matched to the same person, so a candidate's calls aren't silently split into separate "people". A candidate with no new call in ${CANDIDATE_ACTIVITY_STALE_DAYS}+ days (and no closure, cancel, or not-responded tag) is flagged 🔴 stale — worth checking with the team to get them more interviews.</div>
+        <div class="hint" style="margin-bottom:10px">Every open (not yet closed) candidate's full call history, grouped by the month of their most recent call — name typos/abbreviations are matched to the same person, so a candidate's calls aren't silently split into separate "people". Already-closed candidates (a real offer recorded) are left out entirely — nothing more to chase there. A candidate with no new call in ${CANDIDATE_ACTIVITY_STALE_DAYS}+ days (and no cancel/not-responded tag) is flagged 🔴 stale — worth checking with the team to get them more interviews.</div>
         <button class="btn primary" id="runCandidateLastStatusScan">🔍 Scan candidate activity</button>`;
     } else if(!state.candidateLastStatusData.length){
       content = `<div class="hint">No candidates found yet. <button class="btn ghost" id="runCandidateLastStatusScan" style="margin-left:8px">Re-scan</button></div>`;
@@ -7792,7 +7800,6 @@ function renderNotificationsPanel(){
           return `<div class="notif-row">
             <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}
               ${s.isStale?`<span class="notif-warn" style="color:var(--coral)">🔴 ${s.daysSince}d, no new calls</span>`:''}
-              ${s.isClosed?`<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">✅ closed</span>`:''}
             </div>
             <div class="notif-detail">
               <span class="notif-chip">${s.totalCalls} call${s.totalCalls===1?'':'s'} total</span>
