@@ -4997,33 +4997,74 @@ async function computeStuckPipeline(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
-// ---------- Candidate Last Status (added 2026-10-02) ---------- "what is the
-// last call taken by candidate, at the last time" — a plain per-candidate
-// lookup, not a problems-only list like Stuck Pipeline/Final Round Nudge
-// above. Same "latest row per candidate" grouping those two already
-// established, but deliberately keeps EVERY candidate (no days-since
-// threshold, no excluding WOI or closed candidates, no status filter) —
-// this is a lookup report, not an alert list. Sorted most-recent-first so
-// today's/this-week's activity surfaces first, with a name/company search
-// box since the full candidate list can run long.
-async function computeCandidateLastStatus(forceRefresh){
+// ---------- Candidate Activity (added 2026-10-02, reworked same day) ----------
+// Saiteja's actual ask, after the first cut of this (a plain "last call per
+// candidate" lookup) wasn't it: "sai prassana P she has a call on sep 1 and
+// 8... there is only calls happened for this candidate [and nothing since] —
+// if we notice this we can check with team... get more interviewers for
+// candidates" — i.e. a candidate whose calls have dried up should be
+// noticeable so the team can go source them more interviews, same shape as
+// 🧊 Stuck in Pipeline, but Stuck Pipeline only tracks each candidate's ONE
+// latest touchpoint and groups by an EXACT lowercased name — his follow-up
+// ("there are naming mismatches and for student and candidate") was that a
+// candidate typed two slightly different ways (a typo, an abbreviation) gets
+// silently split into two separate "candidates" that each look like a single
+// isolated call, instead of one person with a real call history. Fixed by
+// clustering every row by the SAME fuzzy "is this plausibly the same real
+// person" check (sameCandidateFuzzyMatch) already used for repeat-candidate
+// detection and duplicate-import detection elsewhere in this file — one
+// cluster per real candidate, however many ways their name was typed, with
+// every one of their calls (not just the latest) kept as a history. Also
+// grouped by month (per his ask), keyed by the month of each candidate's
+// MOST RECENT call, newest month first — so "who went quiet in September"
+// is a glance, not a scroll through a flat list.
+const CANDIDATE_ACTIVITY_STALE_DAYS = STUCK_PIPELINE_MIN_DAYS; // same 14-day bar Stuck Pipeline already uses — no second, uncoordinated threshold
+async function computeCandidateActivity(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
-  const byCandidate = {};
+  const todayKey = todayStr();
+  const daysBetween = (a,b)=>{
+    const da = new Date(a+'T00:00:00Z').getTime(), db = new Date(b+'T00:00:00Z').getTime();
+    return Math.max(0, Math.round((db-da)/86400000));
+  };
+  // Cluster by fuzzy candidate identity — same pattern findDuplicateCallGroups()
+  // already uses: exact normalized-name match first (cheap, the common
+  // case), falling back to sameCandidateFuzzyMatch against the cluster's
+  // first-seen spelling so a typo'd/abbreviated repeat still lands in the
+  // same cluster instead of starting a new, falsely-isolated one.
+  const clusters = [];
   allRows.forEach(row=>{
-    const key = (row.candidate||'').trim().toLowerCase();
-    if(!key) return;
-    const existing = byCandidate[key];
-    if(!existing || (row._date && row._date >= (existing._date||''))){
-      byCandidate[key] = row;
-    }
+    if(!row.candidate || !row.candidate.trim()) return;
+    const key = row.candidate.trim().toLowerCase();
+    let cluster = clusters.find(c => c.key === key) ||
+      clusters.find(c => sameCandidateFuzzyMatch(c.canonicalName, row.candidate));
+    if(!cluster){ cluster = { key, canonicalName: row.candidate, rows: [] }; clusters.push(cluster); }
+    cluster.rows.push(row);
   });
-  return Object.values(byCandidate)
-    .map(row=>({
-      candidate: row.candidate, company: row.company||'', round: row.round||'',
-      lastDate: row._date||'', time: row.time||'', woi: !!row.woi,
-      status: row.status||'', assignee: row.assignee||'', drivingPerson: row.drivingPerson||'',
-    }))
-    .sort((a,b)=> (b.lastDate||'').localeCompare(a.lastDate||''));
+  const closedKeys = new Set();
+  (state.closures||[]).forEach(c=>{ if(c.candidate) closedKeys.add(c.candidate.trim().toLowerCase()); });
+  return clusters.map(cluster=>{
+    const sorted = cluster.rows.slice().sort((a,b)=> (a._date||'').localeCompare(b._date||'') || (a.time||'').localeCompare(b.time||''));
+    const last = sorted[sorted.length-1];
+    const isClosed = cluster.rows.some(r => closedKeys.has((r.candidate||'').trim().toLowerCase())) || closedKeys.has(cluster.key);
+    const daysSince = last._date ? daysBetween(last._date, todayKey) : null;
+    const isStale = !isClosed && daysSince !== null
+      && !STUCK_PIPELINE_EXCLUDE_STATUSES.includes(last.status||'')
+      && daysSince >= CANDIDATE_ACTIVITY_STALE_DAYS;
+    return {
+      candidate: cluster.canonicalName,
+      company: last.company||'',
+      lastDate: last._date||'',
+      lastRound: last.round||'',
+      lastStatus: last.status||'',
+      lastWoi: !!last.woi,
+      assignee: last.drivingPerson || last.assignee || '',
+      totalCalls: sorted.length,
+      daysSince,
+      isStale, isClosed,
+      calls: sorted.map(r=>({ date:r._date||'', time:r.time||'', round:r.round||'', company:r.company||'', status:r.status||'', woi:!!r.woi })),
+      monthKey: last._date ? last._date.slice(0,7) : 'Undated',
+    };
+  }).sort((a,b)=> (b.lastDate||'').localeCompare(a.lastDate||''));
 }
 // ---------- Final-round-no-closure nudge (2026-09-28) ---------- A narrower,
 // earlier-warning sibling to Stuck Pipeline above: that one catches ANY
@@ -7232,7 +7273,7 @@ function renderNotificationsPanel(){
     { key:'stuckPipeline', label:'🧊 Stuck in Pipeline' },
     { key:'finalRoundNudge', label:'🎯 Final Round, No Closure' },
     { key:'timeToClose', label:'⏱ Time to Close' },
-    { key:'candidateLastStatus', label:'📋 Candidate Last Status' }
+    { key:'candidateLastStatus', label:'📋 Candidate Activity' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>{
@@ -7688,39 +7729,58 @@ function renderNotificationsPanel(){
     }
   } else if(active === 'candidateLastStatus'){
     if(state.candidateLastStatusLoading){
-      content = `<div class="hint"><span class="spinner"></span> Scanning every saved date for each candidate's most recent call…</div>`;
+      content = `<div class="hint"><span class="spinner"></span> Scanning every saved date and grouping each candidate's full call history…</div>`;
     } else if(state.candidateLastStatusData === null){
       content = `
-        <div class="hint" style="margin-bottom:10px">Every candidate on file, with their most recent call — date, round, company, status, and who handled it. One row per candidate, most-recent-first, instead of hunting through each date to see where someone last stood.</div>
-        <button class="btn primary" id="runCandidateLastStatusScan">🔍 Scan for last status</button>`;
+        <div class="hint" style="margin-bottom:10px">Every candidate's full call history, grouped by the month of their most recent call — name typos/abbreviations are matched to the same person, so a candidate's calls aren't silently split into separate "people". A candidate with no new call in ${CANDIDATE_ACTIVITY_STALE_DAYS}+ days (and no closure, cancel, or not-responded tag) is flagged 🔴 stale — worth checking with the team to get them more interviews.</div>
+        <button class="btn primary" id="runCandidateLastStatusScan">🔍 Scan candidate activity</button>`;
     } else if(!state.candidateLastStatusData.length){
       content = `<div class="hint">No candidates found yet. <button class="btn ghost" id="runCandidateLastStatusScan" style="margin-left:8px">Re-scan</button></div>`;
     } else {
       const q = (state.notifSearchLastStatus||'').trim().toLowerCase();
       const visible = q ? state.candidateLastStatusData.filter(s => (s.candidate||'').toLowerCase().includes(q) || (s.company||'').toLowerCase().includes(q)) : state.candidateLastStatusData;
-      const rowsHtml = visible.map(s=>{
-        const statusChip = s.status
-          ? `<span class="notif-chip" style="color:${statusBadgeInfo(s.status).colorVar};border-color:${statusBadgeInfo(s.status).colorVar}">${statusBadgeInfo(s.status).icon} ${statusBadgeInfo(s.status).label}</span>`
-          : (s.woi ? `<span class="notif-chip" style="color:var(--amber);border-color:var(--amber)">⏳ Waiting on Invite</span>` : `<span class="notif-chip">no status tagged</span>`);
-        return `<div class="notif-row">
-          <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}</div>
-          <div class="notif-detail">
-            <span class="notif-chip">${escapeHtml(s.lastDate||'date n/a')}</span>
-            ${s.time?`<span class="notif-chip">${escapeHtml(s.time)}</span>`:''}
-            ${s.round?`<span class="notif-chip">${escapeHtml(s.round)}</span>`:''}
-            ${statusChip}
-            ${(s.drivingPerson||s.assignee)?`<span class="notif-chip">${escapeHtml(s.drivingPerson||s.assignee)}</span>`:''}
-            ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
-          </div>
-        </div>`;
+      const staleCount = state.candidateLastStatusData.filter(s=>s.isStale).length;
+      // Group into months, in the order candidates already come in (most
+      // recent lastDate first — computeCandidateActivity's own sort), so
+      // the month headers themselves fall out newest-first with no extra
+      // sort step here.
+      const monthOrder = [];
+      const byMonth = {};
+      visible.forEach(s=>{
+        if(!byMonth[s.monthKey]){ byMonth[s.monthKey] = []; monthOrder.push(s.monthKey); }
+        byMonth[s.monthKey].push(s);
+      });
+      const monthSectionsHtml = monthOrder.map(mk=>{
+        const label = mk === 'Undated' ? 'Undated' : monthKeyLabel(mk);
+        const rowsHtml = byMonth[mk].map(s=>{
+          const statusChip = s.lastStatus
+            ? `<span class="notif-chip" style="color:${statusBadgeInfo(s.lastStatus).colorVar};border-color:${statusBadgeInfo(s.lastStatus).colorVar}">${statusBadgeInfo(s.lastStatus).icon} ${statusBadgeInfo(s.lastStatus).label}</span>`
+            : (s.lastWoi ? `<span class="notif-chip" style="color:var(--amber);border-color:var(--amber)">⏳ Waiting on Invite</span>` : `<span class="notif-chip">no status tagged</span>`);
+          const historyStr = s.calls.map(c=>`${c.date}${c.round?' ('+c.round+')':''}`).join('  →  ');
+          return `<div class="notif-row">
+            <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}
+              ${s.isStale?`<span class="notif-warn" style="color:var(--coral)">🔴 ${s.daysSince}d, no new calls</span>`:''}
+              ${s.isClosed?`<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">✅ closed</span>`:''}
+            </div>
+            <div class="notif-detail">
+              <span class="notif-chip">${s.totalCalls} call${s.totalCalls===1?'':'s'} total</span>
+              <span class="notif-chip">last: ${escapeHtml(s.lastDate||'date n/a')}${s.lastRound?' — '+escapeHtml(s.lastRound):''}</span>
+              ${statusChip}
+              ${s.assignee?`<span class="notif-chip">${escapeHtml(s.assignee)}</span>`:''}
+              ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+            </div>
+            ${s.calls.length>1?`<div class="hint" style="margin-top:2px;font-size:11px" title="${escapeHtml(historyStr)}">${s.calls.length} touchpoints: ${escapeHtml(historyStr)}</div>`:''}
+          </div>`;
+        }).join('');
+        return `<div style="font-weight:700;font-size:13px;margin:14px 0 6px">${escapeHtml(label)} <span class="hint" style="font-weight:400">(${byMonth[mk].length})</span></div>${rowsHtml}`;
       }).join('');
       content = `
         <div class="row" style="margin-bottom:8px">
-          <div class="hint">${state.candidateLastStatusData.length} candidate(s), most recent call first.</div>
+          <div class="hint">${state.candidateLastStatusData.length} candidate(s)${staleCount?`, ${staleCount} 🔴 stale (${CANDIDATE_ACTIVITY_STALE_DAYS}+ days, no new calls)`:''} — grouped by month of last call, newest first.</div>
           <button class="btn ghost" id="runCandidateLastStatusScan">Re-scan</button>
         </div>
         <input type="text" class="notif-search" id="notifSearchLastStatus" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchLastStatus||'')}">
-        ${rowsHtml || '<div class="hint">No matches.</div>'}`;
+        ${monthSectionsHtml || '<div class="hint">No matches.</div>'}`;
     }
   }
 
@@ -11264,7 +11324,7 @@ function attachHandlers(conflictIds){
   if(runCandidateLastStatusBtn) runCandidateLastStatusBtn.onclick = async ()=>{
     state.candidateLastStatusLoading = true;
     render();
-    state.candidateLastStatusData = await computeCandidateLastStatus(true);
+    state.candidateLastStatusData = await computeCandidateActivity(true);
     state.candidateLastStatusLoading = false;
     render();
   };
