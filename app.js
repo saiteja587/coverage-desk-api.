@@ -233,6 +233,9 @@ let state = {
   showQuickSearchModal: false,
   finalRoundNudgeData: null,
   finalRoundNudgeLoading: false,
+  candidateLastStatusData: null,
+  candidateLastStatusLoading: false,
+  notifSearchLastStatus: '',
   candidateProfileClosureForm: null,
   candidateProfileClosureSaving: false,
   closureMatchRefreshing: false,
@@ -4994,6 +4997,34 @@ async function computeStuckPipeline(forceRefresh){
     }))
     .sort((a,b)=> b.daysSince - a.daysSince);
 }
+// ---------- Candidate Last Status (added 2026-10-02) ---------- "what is the
+// last call taken by candidate, at the last time" — a plain per-candidate
+// lookup, not a problems-only list like Stuck Pipeline/Final Round Nudge
+// above. Same "latest row per candidate" grouping those two already
+// established, but deliberately keeps EVERY candidate (no days-since
+// threshold, no excluding WOI or closed candidates, no status filter) —
+// this is a lookup report, not an alert list. Sorted most-recent-first so
+// today's/this-week's activity surfaces first, with a name/company search
+// box since the full candidate list can run long.
+async function computeCandidateLastStatus(forceRefresh){
+  const allRows = await fetchAllRowsAcrossDates(forceRefresh);
+  const byCandidate = {};
+  allRows.forEach(row=>{
+    const key = (row.candidate||'').trim().toLowerCase();
+    if(!key) return;
+    const existing = byCandidate[key];
+    if(!existing || (row._date && row._date >= (existing._date||''))){
+      byCandidate[key] = row;
+    }
+  });
+  return Object.values(byCandidate)
+    .map(row=>({
+      candidate: row.candidate, company: row.company||'', round: row.round||'',
+      lastDate: row._date||'', time: row.time||'', woi: !!row.woi,
+      status: row.status||'', assignee: row.assignee||'', drivingPerson: row.drivingPerson||'',
+    }))
+    .sort((a,b)=> (b.lastDate||'').localeCompare(a.lastDate||''));
+}
 // ---------- Final-round-no-closure nudge (2026-09-28) ---------- A narrower,
 // earlier-warning sibling to Stuck Pipeline above: that one catches ANY
 // candidate gone quiet 14+ days, regardless of round. This one is specific
@@ -7200,7 +7231,8 @@ function renderNotificationsPanel(){
     { key:'conversionFunnel', label:'🎯 Conversion Funnel' },
     { key:'stuckPipeline', label:'🧊 Stuck in Pipeline' },
     { key:'finalRoundNudge', label:'🎯 Final Round, No Closure' },
-    { key:'timeToClose', label:'⏱ Time to Close' }
+    { key:'timeToClose', label:'⏱ Time to Close' },
+    { key:'candidateLastStatus', label:'📋 Candidate Last Status' }
   ];
   const active = state.notifTab || 'absent';
   const tabsHtml = tabs.map(t=>{
@@ -7653,6 +7685,42 @@ function renderNotificationsPanel(){
         </div>
         <div style="font-weight:700;font-size:13px;margin:6px 0">By company (${TIME_TO_CLOSE_MIN_COMPANY_CLOSURES}+ closures only)</div>
         ${companyHtml}`;
+    }
+  } else if(active === 'candidateLastStatus'){
+    if(state.candidateLastStatusLoading){
+      content = `<div class="hint"><span class="spinner"></span> Scanning every saved date for each candidate's most recent call…</div>`;
+    } else if(state.candidateLastStatusData === null){
+      content = `
+        <div class="hint" style="margin-bottom:10px">Every candidate on file, with their most recent call — date, round, company, status, and who handled it. One row per candidate, most-recent-first, instead of hunting through each date to see where someone last stood.</div>
+        <button class="btn primary" id="runCandidateLastStatusScan">🔍 Scan for last status</button>`;
+    } else if(!state.candidateLastStatusData.length){
+      content = `<div class="hint">No candidates found yet. <button class="btn ghost" id="runCandidateLastStatusScan" style="margin-left:8px">Re-scan</button></div>`;
+    } else {
+      const q = (state.notifSearchLastStatus||'').trim().toLowerCase();
+      const visible = q ? state.candidateLastStatusData.filter(s => (s.candidate||'').toLowerCase().includes(q) || (s.company||'').toLowerCase().includes(q)) : state.candidateLastStatusData;
+      const rowsHtml = visible.map(s=>{
+        const statusChip = s.status
+          ? `<span class="notif-chip" style="color:${statusBadgeInfo(s.status).colorVar};border-color:${statusBadgeInfo(s.status).colorVar}">${statusBadgeInfo(s.status).icon} ${statusBadgeInfo(s.status).label}</span>`
+          : (s.woi ? `<span class="notif-chip" style="color:var(--amber);border-color:var(--amber)">⏳ Waiting on Invite</span>` : `<span class="notif-chip">no status tagged</span>`);
+        return `<div class="notif-row">
+          <div class="notif-name">${escapeHtml(s.candidate)}${s.company?` <span class="notif-detail" style="font-weight:400">— ${escapeHtml(s.company)}</span>`:''}</div>
+          <div class="notif-detail">
+            <span class="notif-chip">${escapeHtml(s.lastDate||'date n/a')}</span>
+            ${s.time?`<span class="notif-chip">${escapeHtml(s.time)}</span>`:''}
+            ${s.round?`<span class="notif-chip">${escapeHtml(s.round)}</span>`:''}
+            ${statusChip}
+            ${(s.drivingPerson||s.assignee)?`<span class="notif-chip">${escapeHtml(s.drivingPerson||s.assignee)}</span>`:''}
+            ${s.candidate?`<button class="btn ghost" data-view-timeline="${escapeHtml(s.candidate)}" style="font-size:10.5px;padding:3px 8px;margin-left:4px">📋 Timeline</button>`:''}
+          </div>
+        </div>`;
+      }).join('');
+      content = `
+        <div class="row" style="margin-bottom:8px">
+          <div class="hint">${state.candidateLastStatusData.length} candidate(s), most recent call first.</div>
+          <button class="btn ghost" id="runCandidateLastStatusScan">Re-scan</button>
+        </div>
+        <input type="text" class="notif-search" id="notifSearchLastStatus" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchLastStatus||'')}">
+        ${rowsHtml || '<div class="hint">No matches.</div>'}`;
     }
   }
 
@@ -11192,6 +11260,19 @@ function attachHandlers(conflictIds){
     state.timeToCloseLoading = false;
     render();
   };
+  const runCandidateLastStatusBtn = document.getElementById('runCandidateLastStatusScan');
+  if(runCandidateLastStatusBtn) runCandidateLastStatusBtn.onclick = async ()=>{
+    state.candidateLastStatusLoading = true;
+    render();
+    state.candidateLastStatusData = await computeCandidateLastStatus(true);
+    state.candidateLastStatusLoading = false;
+    render();
+  };
+  const notifSearchLastStatusInput = document.getElementById('notifSearchLastStatus');
+  if(notifSearchLastStatusInput) notifSearchLastStatusInput.addEventListener('input', ()=>{
+    state.notifSearchLastStatus = notifSearchLastStatusInput.value;
+    render();
+  });
   const missedCheckFileInput = document.getElementById('missedCheckFileInput');
   if(missedCheckFileInput) missedCheckFileInput.addEventListener('change', async (e)=>{
     const file = e.target.files && e.target.files[0];
