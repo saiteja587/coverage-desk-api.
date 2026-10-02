@@ -1131,6 +1131,7 @@ let state = {
   incentivesLoading: false,
   incentivesError: '',
   incentivesUpdatedAt: null,
+  incentivesFromCache: false, // true when incentivesData came from the saved cache (loadIncentivesCache) rather than a live Refresh (fetchIncentivesMonth) — see renderIncentivesPanel()
   showHelp: false,
   showCalendarView: false,
   calendarMonth: '',
@@ -1732,6 +1733,13 @@ function monthKeyLabel(monthKey){
   const [y,m] = monthKey.split('-').map(Number);
   return new Date(y, m-1, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
 }
+// Forces a fresh LIVE pull from the slow Apps Script Portal bridge and
+// saves it (handlePortalSyncFetch caches every fetch server-side under a
+// month-scoped key — see the matching fix in api-data.js). This is now
+// reserved for the explicit "Refresh" button and the nightly cron job
+// (api/cron-portal-sync.js, added 2026-10-02) — opening the panel or
+// switching months no longer calls this directly; see
+// loadIncentivesCache() below for that instant, cache-only path.
 async function fetchIncentivesMonth(monthKey){
   if(!API_BASE_URL){ state.incentivesError = 'Incentives requires the app to be connected to the database backend.'; render(); return; }
   state.incentivesMonth = monthKey;
@@ -1741,9 +1749,40 @@ async function fetchIncentivesMonth(monthKey){
     const result = await apiCall('portal_sync', {qs:'type=incentives&month=' + encodeURIComponent(monthKey)});
     state.incentivesData = result.data;
     state.incentivesUpdatedAt = Date.now();
+    state.incentivesFromCache = false;
     state.incentivesError = '';
   }catch(e){
     state.incentivesError = e && e.message ? e.message : 'Could not reach the Portal sync bridge.';
+  }
+  state.incentivesLoading = false;
+  render();
+}
+// Shows whatever was last SAVED for this month instantly, without touching
+// the slow Apps Script bridge — added 2026-10-02 per Saiteja's ask: "every
+// time [I open] incentives [it] needs [a live] sync... that's already
+// auto-syncing every night at 10pm right? save them, show them in
+// incentives... if I sync for a new time the saved data will be updated."
+// Before this, opening the Incentives panel (or switching months) always
+// called fetchIncentivesMonth() above — a full live Portal pull every
+// time, with nothing saved to fall back on in between. Now the panel opens
+// instantly to whatever the last sync (nightly cron, or a manual Refresh)
+// saved, and only an explicit Refresh click does a live pull. Same
+// "cache first, live fetch is a deliberate separate action" pattern
+// loadPortalSyncCache()/loadCachedPortalAssignmentsForDate() already use
+// for Team Sync.
+async function loadIncentivesCache(monthKey){
+  if(!API_BASE_URL) return;
+  state.incentivesMonth = monthKey;
+  state.incentivesLoading = true;
+  state.incentivesError = '';
+  render();
+  try{
+    const result = await apiCall('portal_sync', {qs:'type=incentives&cached=1&month=' + encodeURIComponent(monthKey)});
+    state.incentivesData = result.data;
+    state.incentivesUpdatedAt = result.generatedAt ? new Date(result.generatedAt).getTime() : null;
+    state.incentivesFromCache = true;
+  }catch(e){
+    state.incentivesError = e && e.message ? e.message : 'Could not load the saved Incentives data.';
   }
   state.incentivesLoading = false;
   render();
@@ -9648,13 +9687,25 @@ function renderIncentiveHandlerRecordsHtml(handler, monthKey){
 function renderIncentivesPanel(){
   const monthKey = state.incentivesMonth || currentMonthKey();
   const d = state.incentivesData;
-  const updatedLabel = state.incentivesUpdatedAt ? new Date(state.incentivesUpdatedAt).toLocaleTimeString() : '—';
+  // Shows the full date+time (not just a time) since this is now usually
+  // the saved snapshot from last night's 10pm auto-sync, not something
+  // fetched moments ago — "Last updated: 10:02 PM" alone would be
+  // ambiguous about which day. "(saved)" vs "(just synced)" tells you
+  // whether you're looking at the cache or a Refresh you just triggered.
+  const updatedLabel = state.incentivesUpdatedAt
+    ? new Date(state.incentivesUpdatedAt).toLocaleString() + (state.incentivesFromCache ? ' (saved)' : ' (just synced)')
+    : '—';
 
   let body = '';
   if(state.incentivesError){
     body = `<div class="hint" style="color:var(--coral)">⚠ ${escapeHtml(state.incentivesError)}</div>`;
   } else if(!d){
-    body = `<div class="hint">${state.incentivesLoading ? '<span class="spinner"></span>Loading…' : 'No data yet — pick a month above.'}</div>`;
+    // "No data yet" now distinguishes "still loading the saved snapshot"
+    // from "nothing has ever been synced for this month at all" (the
+    // nightly cron only covers the CURRENT month, so browsing to a month
+    // that's never had a manual sync run can genuinely come back empty) —
+    // the latter needs a Refresh, not just patience.
+    body = `<div class="hint">${state.incentivesLoading ? '<span class="spinner"></span>Loading…' : `Nothing saved for ${escapeHtml(monthKeyLabel(monthKey))} yet. Click Refresh above to pull it from the Portal (the nightly auto-sync only keeps the current month up to date).`}</div>`;
   } else {
     const byHandler = d.byHandler || [];
     const byTeam = d.byTeam || {};
@@ -11012,15 +11063,17 @@ function attachHandlers(conflictIds){
   const toggleIncentivesBtn = document.getElementById('toggleIncentives');
   if(toggleIncentivesBtn) toggleIncentivesBtn.onclick = ()=>{
     openOnlyPanel('showIncentives');
-    if(state.showIncentives && !state.incentivesData){ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); }
+    // Opening the panel shows whatever was last saved (instant) instead of
+    // forcing a live Portal pull — see loadIncentivesCache() for why.
+    if(state.showIncentives && !state.incentivesData){ loadIncentivesCache(state.incentivesMonth || currentMonthKey()); }
     render();
   };
   const closeIncentivesBtn = document.getElementById('closeIncentives');
   if(closeIncentivesBtn) closeIncentivesBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const incentivesPrevBtn = document.getElementById('incentivesPrevMonth');
-  if(incentivesPrevBtn) incentivesPrevBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), -1)); };
+  if(incentivesPrevBtn) incentivesPrevBtn.onclick = ()=>{ loadIncentivesCache(shiftMonthKey(state.incentivesMonth || currentMonthKey(), -1)); };
   const incentivesNextBtn = document.getElementById('incentivesNextMonth');
-  if(incentivesNextBtn) incentivesNextBtn.onclick = ()=>{ fetchIncentivesMonth(shiftMonthKey(state.incentivesMonth || currentMonthKey(), 1)); };
+  if(incentivesNextBtn) incentivesNextBtn.onclick = ()=>{ loadIncentivesCache(shiftMonthKey(state.incentivesMonth || currentMonthKey(), 1)); };
   const refreshIncentivesBtn = document.getElementById('refreshIncentives');
   if(refreshIncentivesBtn) refreshIncentivesBtn.onclick = ()=>{ fetchIncentivesMonth(state.incentivesMonth || currentMonthKey()); };
   const exportIncentivesExcelBtn = document.getElementById('exportIncentivesExcelBtn');
