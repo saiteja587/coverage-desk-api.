@@ -236,6 +236,8 @@ let state = {
   candidateLastStatusData: null,
   candidateLastStatusLoading: false,
   notifSearchLastStatus: '',
+  candidateActivityMonth: null,
+  candidateActivityShowAll: true, // default to "all months" so a stale candidate from a while back is never hidden by default — nav lets you narrow to one month on top of that
   candidateProfileClosureForm: null,
   candidateProfileClosureSaving: false,
   closureMatchRefreshing: false,
@@ -7737,9 +7739,28 @@ function renderNotificationsPanel(){
     } else if(!state.candidateLastStatusData.length){
       content = `<div class="hint">No candidates found yet. <button class="btn ghost" id="runCandidateLastStatusScan" style="margin-left:8px">Re-scan</button></div>`;
     } else {
+      // Month nav (same pattern as the Closures List tab's month-at-a-time
+      // nav): defaults to showing every month at once — important here,
+      // since the whole point of this report is spotting a candidate whose
+      // LAST call was a while ago, and narrowing to "this month only" by
+      // default would hide exactly the stale candidates it exists to
+      // surface. Prev/Next/toggle let you narrow down on top of that when
+      // you want to look at one month specifically.
+      const candidateActivityShowAll = state.candidateActivityShowAll !== false;
+      const candidateActivityMonth = state.candidateActivityMonth || currentMonthKey();
+      const monthScoped = candidateActivityShowAll ? state.candidateLastStatusData : state.candidateLastStatusData.filter(s => s.monthKey === candidateActivityMonth);
       const q = (state.notifSearchLastStatus||'').trim().toLowerCase();
-      const visible = q ? state.candidateLastStatusData.filter(s => (s.candidate||'').toLowerCase().includes(q) || (s.company||'').toLowerCase().includes(q)) : state.candidateLastStatusData;
-      const staleCount = state.candidateLastStatusData.filter(s=>s.isStale).length;
+      const visible = q ? monthScoped.filter(s => (s.candidate||'').toLowerCase().includes(q) || (s.company||'').toLowerCase().includes(q)) : monthScoped;
+      const staleCount = monthScoped.filter(s=>s.isStale).length;
+      const navHtml = `<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="btn ghost" id="candidateActivityPrevMonth" title="Previous month" ${candidateActivityShowAll?'disabled':''}>◀</button>
+        <div style="font-weight:700;font-size:14px;min-width:150px;text-align:center">${candidateActivityShowAll ? 'All months' : escapeHtml(monthKeyLabel(candidateActivityMonth))}</div>
+        <button class="btn ghost" id="candidateActivityNextMonth" title="Next month" ${candidateActivityShowAll?'disabled':''}>▶</button>
+        <button class="btn ghost" id="candidateActivityToggleAll" style="margin-left:auto">${candidateActivityShowAll ? '📅 Show one month at a time' : '📋 Show all months'}</button>
+      </div>`;
+      if(!visible.length){
+        content = navHtml + `<div class="hint">No candidates${candidateActivityShowAll?'':' with a last call in '+escapeHtml(monthKeyLabel(candidateActivityMonth))} found${q?' matching your search':''}.</div>`;
+      } else {
       // Group into months, in the order candidates already come in (most
       // recent lastDate first — computeCandidateActivity's own sort), so
       // the month headers themselves fall out newest-first with no extra
@@ -7774,13 +7795,14 @@ function renderNotificationsPanel(){
         }).join('');
         return `<div style="font-weight:700;font-size:13px;margin:14px 0 6px">${escapeHtml(label)} <span class="hint" style="font-weight:400">(${byMonth[mk].length})</span></div>${rowsHtml}`;
       }).join('');
-      content = `
+      content = navHtml + `
         <div class="row" style="margin-bottom:8px">
-          <div class="hint">${state.candidateLastStatusData.length} candidate(s)${staleCount?`, ${staleCount} 🔴 stale (${CANDIDATE_ACTIVITY_STALE_DAYS}+ days, no new calls)`:''} — grouped by month of last call, newest first.</div>
+          <div class="hint">${visible.length} candidate(s)${staleCount?`, ${staleCount} 🔴 stale (${CANDIDATE_ACTIVITY_STALE_DAYS}+ days, no new calls)`:''}${candidateActivityShowAll?' — grouped by month of last call, newest first.':''}</div>
           <button class="btn ghost" id="runCandidateLastStatusScan">Re-scan</button>
         </div>
         <input type="text" class="notif-search" id="notifSearchLastStatus" placeholder="Search candidate or client…" value="${escapeHtml(state.notifSearchLastStatus||'')}">
-        ${monthSectionsHtml || '<div class="hint">No matches.</div>'}`;
+        ${monthSectionsHtml}`;
+      }
     }
   }
 
@@ -10841,6 +10863,16 @@ function attachHandlers(conflictIds){
   if(closuresListNextBtn) closuresListNextBtn.onclick = ()=>{ state.closuresListMonth = shiftMonthKey(state.closuresListMonth || currentMonthKey(), 1); render(); };
   const closuresListToggleAllBtn = document.getElementById('closuresListToggleAll');
   if(closuresListToggleAllBtn) closuresListToggleAllBtn.onclick = ()=>{ state.closuresListShowAll = !state.closuresListShowAll; render(); };
+  // Candidate Activity month nav (2026-10-02) — same prev/next/toggle-all
+  // pattern as the Closures List tab above. Narrowing to one month also
+  // turns off "show all" automatically (mirrors clicking ◀/▶ meaning "I
+  // want to look at a specific month now").
+  const candidateActivityPrevBtn = document.getElementById('candidateActivityPrevMonth');
+  if(candidateActivityPrevBtn) candidateActivityPrevBtn.onclick = ()=>{ state.candidateActivityMonth = shiftMonthKey(state.candidateActivityMonth || currentMonthKey(), -1); state.candidateActivityShowAll = false; render(); };
+  const candidateActivityNextBtn = document.getElementById('candidateActivityNextMonth');
+  if(candidateActivityNextBtn) candidateActivityNextBtn.onclick = ()=>{ state.candidateActivityMonth = shiftMonthKey(state.candidateActivityMonth || currentMonthKey(), 1); state.candidateActivityShowAll = false; render(); };
+  const candidateActivityToggleAllBtn = document.getElementById('candidateActivityToggleAll');
+  if(candidateActivityToggleAllBtn) candidateActivityToggleAllBtn.onclick = ()=>{ state.candidateActivityShowAll = !state.candidateActivityShowAll; render(); };
 
   // Manual closure↔call matching (the "🔗 Match manually" picker on
   // unmatched closures in the By Handler view — see
