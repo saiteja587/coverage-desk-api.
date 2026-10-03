@@ -2032,6 +2032,63 @@ function setupTimeSensitiveAlerts(){
   setInterval(checkTimeSensitiveAlerts, 60000);
   checkTimeSensitiveAlerts();
 }
+// ---------- Background push (added 2026-10-02) ----------
+// The real follow-on flagged when foreground-only alerts shipped
+// 2026-09-30: subscribes this device to Web Push (via the service worker)
+// and saves the subscription on the backend, so a server-side check
+// (api/check-push-alerts.js — hit every few minutes by an external
+// scheduler, since Vercel's own Hobby-plan Cron Jobs only guarantee once-a-
+// day firing) can reach this device even with the tab/app fully closed.
+// Deliberately layered UNDER the same "🔔 Alerts" toggle rather than a
+// second switch — from Saiteja's side this is still just "alerts on/off";
+// whether the browser happens to support background Push is an
+// implementation detail, not a decision he should have to make. A browser/
+// context that doesn't support Push (e.g. iOS Safari outside an installed
+// home-screen app) silently just keeps the foreground-only behavior that
+// already existed — nothing regresses for it.
+const VAPID_PUBLIC_KEY = 'BLNR3xtNZpdCEZMTKXzYqFWGwFiMXAisrwanST0R5MHpQ6occWEWn2zHL_w4J3sRIoBTsslAMmXYYOR57YXHPUI';
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for(let i=0;i<rawData.length;i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+async function subscribeToPushAlerts(){
+  try{
+    if(!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if(!subscription){
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+    await apiCall('push_subscription', { method:'POST', body:{ subscription: subscription.toJSON() } });
+    return true;
+  }catch(e){
+    // Fails quietly — a device that can't subscribe (unsupported browser,
+    // permission revoked at the OS level after the fact, etc.) still keeps
+    // working exactly as before this feature existed: foreground alerts
+    // via checkTimeSensitiveAlerts don't depend on this succeeding.
+    console.error('Push subscribe failed', e);
+    return false;
+  }
+}
+async function unsubscribeFromPushAlerts(){
+  try{
+    if(!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if(subscription){
+      const endpoint = subscription.endpoint;
+      await subscription.unsubscribe();
+      await apiCall('push_subscription', { method:'POST', body:{ action:'delete', endpoint } });
+    }
+  }catch(e){ console.error('Push unsubscribe failed', e); }
+}
 async function toggleTimeSensitiveAlerts(){
   if(!state.alertsEnabled){
     if(typeof Notification === 'undefined'){
@@ -2046,8 +2103,10 @@ async function toggleTimeSensitiveAlerts(){
     }
     state.alertsEnabled = true;
     checkTimeSensitiveAlerts();
+    subscribeToPushAlerts(); // fire-and-forget — foreground alerts above don't wait on this
   } else {
     state.alertsEnabled = false;
+    unsubscribeFromPushAlerts(); // fire-and-forget — the toggle itself shouldn't block on a network round trip
   }
   try{ localStorage.setItem('cd_alerts_enabled', state.alertsEnabled ? '1' : '0'); }catch(e){ /* best-effort */ }
   render();
@@ -3856,6 +3915,11 @@ let _closuresPerfCacheSig = null;
 // signature above/below, since a manual match can flip a closure's match
 // result without state.closures or allRows themselves changing at all.
 let _closureManualMatchesVersion = 0;
+// Same reasoning as _closureManualMatchesVersion just above — a saved/
+// removed Company alias can also flip a closure's match result (fuzzy
+// company matching checks aliases first) without state.closures or
+// allRows changing at all, so it needs its own cache-busting signal too.
+let _companyAliasesVersion = 0;
 async function fetchAllRowsAcrossDates(forceRefresh){
   const CACHE_MS = 60000; // 1 minute — long enough to cover both scans running back-to-back, short enough to stay fresh
   if(!forceRefresh && _allRowsAcrossDatesCache && (Date.now() - _allRowsAcrossDatesCacheAt) < CACHE_MS){
@@ -4306,7 +4370,7 @@ async function computeClosuresPerformance(forceRefresh){
   // refresh). If nothing meaningful changed since the last computation,
   // skip the O(closures × allRows) work entirely and return that result.
   const lastClosure = (state.closures && state.closures[state.closures.length-1]) || null;
-  const sig = (state.closures||[]).length + ':' + (lastClosure ? lastClosure.id + '|' + (lastClosure.createdAt||'') : '') + '::' + allRows.length + ':' + _allRowsAcrossDatesCacheAt + ':' + _closureManualMatchesVersion + ':' + (state.roster||[]).length;
+  const sig = (state.closures||[]).length + ':' + (lastClosure ? lastClosure.id + '|' + (lastClosure.createdAt||'') : '') + '::' + allRows.length + ':' + _allRowsAcrossDatesCacheAt + ':' + _closureManualMatchesVersion + ':' + _companyAliasesVersion + ':' + (state.roster||[]).length;
   if(_closuresPerfCache && _closuresPerfCacheSig === sig){
     return _closuresPerfCache;
   }
@@ -5759,7 +5823,7 @@ function render(){
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
             <button class="more-menu-item" id="toggleEodWrapup" title="How today went — handled vs. slipped, plus a peek at tomorrow. The evening-facing counterpart to Today's Briefing">🌙 End-of-Day Wrap-Up</button>
-            <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A browser notification when an unassigned call is close to its start time. Only fires while this tab/app is open — not a true background push yet.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'} <span class="notif-info-badge" title="Needs the tab/app to stay open">while open</span></button>
+            <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A notification when an unassigned call is close to its start time — fires in the open tab/app immediately, and as a real background push to every device that's subscribed (needs the server-side check set up — see the deploy notes) even once closed.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'}</button>
             <div class="more-menu-section-label">Look up</div>
             <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
             <button class="more-menu-item" id="openQuickJumpFromMenu" title="Jump straight to a date, a panel, or a candidate — same as pressing Ctrl/Cmd+K anywhere">⌘ Quick Jump <span class="notif-info-badge" title="Keyboard shortcut">Ctrl/⌘+K</span></button>
@@ -5921,7 +5985,20 @@ function render(){
     `}
 
     <div class="footer-note">Saved automatically for ${state.date} · only visible to you</div>
-    ${state.lastDeleted ? `<div class="undo-toast">Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}" <button id="undoDeleteBtn">Undo</button></div>` : ''}
+    ${state.lastDeleted ? (()=>{
+      // Visual countdown (2026-10-02): the toast used to give no warning
+      // before "Undo" vanished — a shrinking bar now shows how much time
+      // is actually left, computed fresh from the stored expiresAt (see
+      // deleteCallRow's comment) rather than a fixed-duration CSS
+      // animation, so it stays accurate across any unrelated re-render.
+      const remainingMs = Math.max(0, state.lastDeleted.expiresAt - Date.now());
+      const elapsedMs = UNDO_TOAST_MS - remainingMs;
+      return `<div class="undo-toast">
+        <span>Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}"</span>
+        <span class="undo-toast-bar-track" aria-hidden="true"><span class="undo-toast-bar" style="animation-duration:${UNDO_TOAST_MS}ms;animation-delay:-${elapsedMs}ms"></span></span>
+        <button id="undoDeleteBtn">Undo</button>
+      </div>`;
+    })() : ''}
     ${state.showSwipeAssignPicker ? (()=>{
       const pendingRow = state.rows.find(r=>r.id===state.pendingSwipeAssignRowId);
       return `<div class="my-name-picker-overlay" id="myNamePickerOverlay">
@@ -9656,11 +9733,21 @@ async function saveCompanyAliasPair(nameA, nameB){
   const pairs = getCompanyAliasPairs();
   pairs.push([nameA, nameB]);
   await saveAppSetting('company_aliases', JSON.stringify(pairs));
+  // BUG FIX (2026-10-02): found while re-verifying the company-aliases
+  // test after the same-day performance batch. computeClosuresPerformance()
+  // now memoizes on a signature of closures/allRows/manual-matches/roster
+  // — none of which change when an alias is added or removed — so a saved
+  // alias used to silently keep showing the OLD (unmatched) result until
+  // something else happened to bump the cache. Same fix pattern as
+  // _closureManualMatchesVersion: bump a dedicated version counter so the
+  // signature always changes when the matching rules themselves change.
+  _companyAliasesVersion++;
 }
 async function removeCompanyAliasPair(index){
   const pairs = getCompanyAliasPairs();
   pairs.splice(index, 1);
   await saveAppSetting('company_aliases', JSON.stringify(pairs));
+  _companyAliasesVersion++;
 }
 // Same idea as the "First L." abbreviation matching in
 // findStudentMasterMatchWithConfidence() above, but symmetric (either name
@@ -10125,14 +10212,24 @@ function hapticTap(ms){
 }
 // Shared by the row's delete button and swipe-to-delete — same action,
 // same undo toast, two different entry points into it.
+const UNDO_TOAST_MS = 6000;
 function deleteCallRow(id){
   const idx = state.rows.findIndex(r=>r.id===id);
   if(idx===-1) return;
   const removed = state.rows[idx];
   state.rows = state.rows.filter(r=>r.id!==id);
-  state.lastDeleted = { row: removed, index: idx };
+  // expiresAt (an absolute timestamp), not just a duration, so the visual
+  // countdown bar below can always compute "how much is really left" from
+  // scratch on every render — including a render triggered by something
+  // totally unrelated (an edit elsewhere) that rebuilds this toast's DOM
+  // from nothing. Without that, a fresh <div> would restart its CSS
+  // animation from 100% on every unrelated re-render while the real
+  // setTimeout dismissal below kept counting down on its own original
+  // schedule — silently decoupling what the bar shows from when "Undo"
+  // actually disappears.
+  state.lastDeleted = { row: removed, index: idx, expiresAt: Date.now() + UNDO_TOAST_MS };
   clearTimeout(undoToastTimer);
-  undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, 6000);
+  undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, UNDO_TOAST_MS);
   markDirty(); render();
 }
 function addBlankCallRow(){
@@ -15042,6 +15139,45 @@ window.addEventListener('keydown', (e)=>{
       if(el) el.focus();
     }
     return;
+  }
+  // Tab focus trap (added 2026-10-02) — none of the floating pickers/
+  // dropdowns used to trap Tab, so keyboard-only navigation could tab
+  // straight past the open surface and land on something hidden behind
+  // the dim backdrop underneath, with no visual sign focus had left the
+  // thing actually on screen. Every surface this applies to is exactly
+  // the set `updateBodyScrollLock()` already locks background scroll
+  // for, so reusing that same `scroll-locked` class (set at the end of
+  // every render()) means this never needs its own separate list to keep
+  // in sync. Deliberately not gated by isTyping, same reasoning as
+  // Escape below — Tab has to keep working while focus is inside a real
+  // input in one of these surfaces.
+  if(e.key === 'Tab' && document.documentElement.classList.contains('scroll-locked')){
+    // Prefer an open overlay's card (swipe-assign picker, Quick Search,
+    // Quick Jump, the quick-action sheet, the clipboard/expect-closure
+    // pickers — all share `.my-name-picker-overlay` > `.my-name-picker-
+    // card`); fall back to the Reports/Admin/Import dropdown, since only
+    // one of these surfaces is ever open at a time in practice.
+    const overlayCard = document.querySelector('.my-name-picker-overlay .my-name-picker-card');
+    const container = overlayCard || document.querySelector('.more-menu-dropdown');
+    if(container){
+      const focusables = Array.from(container.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter(el => el.offsetParent !== null);
+      if(focusables.length){
+        const first = focusables[0], last = focusables[focusables.length - 1];
+        const current = document.activeElement;
+        if(!container.contains(current)){
+          e.preventDefault();
+          first.focus();
+        } else if(e.shiftKey && current === first){
+          e.preventDefault();
+          last.focus();
+        } else if(!e.shiftKey && current === last){
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
   }
   // (2026-09-30) showQuickJump added to the Escape close list
   // FIX (2026-09-29): "smooth UI" report — Escape closes whichever
