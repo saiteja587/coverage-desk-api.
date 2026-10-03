@@ -789,6 +789,13 @@ tbody tr[data-id]{touch-action:pan-y;}
   .date-row{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
   .date-row .btn, .date-row .more-menu-wrap, .date-row .arrow-btn, .date-row input[type=date]{flex-shrink:0;}
 
+  /* FIX (2026-10-03): the bottom-nav ＋ button now opens the same two
+     choices (Add call / Reschedule) this header button did, so it's just
+     duplicate clutter in the already-crowded mobile strip above — hidden
+     here, not removed from the markup, so nothing else (ids, handlers,
+     the desktop view) has to change. */
+  #importHubWrap{display:none;}
+
   /* Collapsed by default on mobile — these two sections are useful but
      secondary to the actual call list, and together with the header/
      buttons above them were pushing the first real call off the bottom
