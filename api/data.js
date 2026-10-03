@@ -232,7 +232,14 @@ module.exports = async (req, res) => {
     // server-side rather than just hidden in the UI.
     if (req.method === 'POST') {
       const allowedForTeamLead = resource === 'driving_person';
-      if (auth.role !== 'admin' && !(auth.role === 'team_lead' && allowedForTeamLead)) {
+      // push_subscription (added 2026-10-02) is deliberately exempt from
+      // the admin-only write gate entirely, for every role including a
+      // read-only user: subscribing/unsubscribing a browser for push
+      // alerts is a per-device notification preference, not a data edit —
+      // it never touches calls/closures/roster/etc, so the usual "only
+      // admin can write" reasoning doesn't apply here.
+      const allowedForAnyRole = resource === 'push_subscription';
+      if (!allowedForAnyRole && auth.role !== 'admin' && !(auth.role === 'team_lead' && allowedForTeamLead)) {
         return res.status(403).json({ error: 'You do not have permission to save changes to this.' });
       }
     }
@@ -256,9 +263,10 @@ module.exports = async (req, res) => {
     if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
     if (resource === 'expected_closures') return await handleExpectedClosures(req, res, db);
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
+    if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|users|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|push_subscription|users|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -1095,6 +1103,45 @@ async function handleAppSettings(req, res, db) {
     await db.query(
       'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
       [k, String(value == null ? '' : value)]
+    );
+    return res.status(200).json({ ok: true });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- push_subscription: Web Push subscriptions (added 2026-10-02) ----------
+// The frontend's "🔔 Alerts" toggle (index.html's toggleTimeSensitiveAlerts)
+// also registers a real PushManager subscription here once background push
+// is turned on — GET returns a bare count only (for a quick admin sanity
+// check, never the subscriptions themselves), POST saves/removes exactly
+// one subscription for the calling device. Sending the actual push
+// notifications is NOT done here — see api/check-push-alerts.js, a
+// separate isolated endpoint (same "keep it isolated" reasoning as
+// api/auth.js and api/cron-portal-sync.js) meant to be hit every few
+// minutes by an external scheduler.
+async function handlePushSubscription(req, res, db) {
+  if (req.method === 'GET') {
+    const [[{ count }]] = await db.query('SELECT COUNT(*) AS count FROM push_subscriptions');
+    return res.status(200).json({ count });
+  }
+  if (req.method === 'POST') {
+    if (req.body && req.body.action === 'delete') {
+      const endpoint = (req.body.endpoint || '').trim();
+      if (!endpoint) return res.status(400).json({ error: 'endpoint is required' });
+      const endpointHash = crypto.createHash('sha256').update(endpoint).digest('hex');
+      await db.query('DELETE FROM push_subscriptions WHERE endpoint_hash = ?', [endpointHash]);
+      return res.status(200).json({ ok: true });
+    }
+    const sub = req.body && req.body.subscription;
+    if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+      return res.status(400).json({ error: 'A valid push subscription object ({endpoint, keys:{p256dh, auth}}) is required' });
+    }
+    const endpointHash = crypto.createHash('sha256').update(sub.endpoint).digest('hex');
+    await db.query(
+      `INSERT INTO push_subscriptions (endpoint_hash, endpoint, p256dh, auth_key)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE endpoint = VALUES(endpoint), p256dh = VALUES(p256dh), auth_key = VALUES(auth_key)`,
+      [endpointHash, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
     );
     return res.status(200).json({ ok: true });
   }
