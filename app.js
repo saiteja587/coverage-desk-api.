@@ -55,6 +55,7 @@ let state = {
   finalized: false,
   showImport: false,
   showRescheduleImport: false,
+  showNavAddMenu: false, // the mobile bottom-nav ＋ button's "Add call / Reschedule" dropdown
   closureReview: null,
   closureApplying: false,
   showClosures: false,
@@ -5411,6 +5412,7 @@ function closeAllPanels(){
   state.showRoster = false;
   state.showImport = false;
   state.showRescheduleImport = false;
+  state.showNavAddMenu = false;
   state.rescheduleReview = null;
   state.closureReview = null;
   state.showClosures = false;
@@ -5797,7 +5799,7 @@ function render(){
         <button class="arrow-btn" id="prevDay">‹</button>
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
-        ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<div class="more-menu-wrap">
+        ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<div class="more-menu-wrap" id="importHubWrap">
           <button class="btn ${(state.showImport||state.showRescheduleImport||state.showImportMenu)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>
           ${state.showImportMenu ? `<div class="more-menu-backdrop" data-close-menu="showImportMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="importMenuNewCalls">＋ Add Calls</button>
@@ -5855,6 +5857,10 @@ function render(){
         <button class="arrow-btn" id="toggleThemeBtn" title="${state.theme==='light' ? 'Switch to dark mode' : 'Switch to light mode'}">${state.theme==='light' ? '🌙' : '☀️'}</button>
       </div>
     </div>
+    ${state.showNavAddMenu ? `<div class="more-menu-backdrop" data-close-menu="showNavAddMenu"></div><div class="more-menu-dropdown">
+      <button class="more-menu-item" id="navAddMenuNewCall">＋ Add call</button>
+      <button class="more-menu-item" id="navAddMenuReschedule">↻ Reschedule / Cancel</button>
+    </div>` : ''}
     ${state.showDailyDigestBanner ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>📋 Today's Briefing is ready — today's numbers plus anything that needs a look, in one glance.</span>
       <span style="display:flex;gap:8px;flex-shrink:0">
@@ -10381,6 +10387,25 @@ function attachHandlers(conflictIds){
     openOnlyPanel('showRescheduleImport');
     render();
   };
+  // The mobile bottom-nav ＋ button's own dropdown (same two choices as the
+  // header's "📥 Import" menu above) — the header Import button is hidden
+  // on mobile (see the max-width:700px rule for #importHubWrap) now that
+  // this covers the same two actions from the bottom nav instead.
+  const navAddMenuNewCallBtn = document.getElementById('navAddMenuNewCall');
+  if(navAddMenuNewCallBtn) navAddMenuNewCallBtn.onclick = ()=>{
+    state.showNavAddMenu = false;
+    hapticTap();
+    addBlankCallRow();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const navAddMenuRescheduleBtn = document.getElementById('navAddMenuReschedule');
+  if(navAddMenuRescheduleBtn) navAddMenuRescheduleBtn.onclick = ()=>{
+    state.showNavAddMenu = false;
+    hapticTap();
+    openOnlyPanel('showRescheduleImport');
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   // Same action as the toolbar's "📥 Import" button, reachable straight
   // from the empty-state message on a day with no calls yet.
   const emptyStateImportBtn = document.getElementById('emptyStateImportBtn');
@@ -13155,11 +13180,13 @@ function attachHandlers(conflictIds){
   if(!window.__outsideMenuCloseSetup){
     window.__outsideMenuCloseSetup = true;
     document.addEventListener('click', (e)=>{
-      if(!state.showMoreMenu && !state.showToolsMenu && !state.showImportMenu) return;
+      if(!state.showMoreMenu && !state.showToolsMenu && !state.showImportMenu && !state.showNavAddMenu) return;
       if(e.target.closest('.more-menu-wrap')) return; // click was on the toggle button or inside the dropdown itself
+      if(e.target.closest('#navAdd')) return; // click was on the bottom-nav ＋ toggle button itself
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showImportMenu = false;
+      state.showNavAddMenu = false;
       render();
     }, true); // capture phase: fires before the item's own click handler closes it, so this never double-closes-then-reopens
   }
@@ -13180,7 +13207,7 @@ function updateBodyScrollLock(){
   // wired for it too — see the clipboardPickerOverlay handler), but was
   // missed from this list when it was first written, so opening it left the
   // page scrollable underneath it same as the original reported bug.
-  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId);
+  const shouldLock = !!(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showNavAddMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId);
   document.documentElement.classList.toggle('scroll-locked', shouldLock);
 }
 
@@ -14997,11 +15024,16 @@ function applySwipeAssignment(rowId, name){
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  // FIX (2026-10-03): was a direct "add a blank call" shortcut. Now opens
+  // the same two-choice menu the header's "📥 Import" dropdown offers (Add
+  // call / Reschedule), since that header button is hidden on mobile —
+  // this is the only way to reach "Reschedule / Cancel" on a phone now.
   document.getElementById('navAdd').onclick = ()=>{
+    const opening = !state.showNavAddMenu;
     closeAllPanels();
+    state.showNavAddMenu = opening;
     hapticTap();
-    addBlankCallRow();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    render();
   };
   // Tools/More now render as a fixed bottom sheet on mobile (see the
   // .more-menu-dropdown mobile CSS), so they're always fully on-screen
@@ -15188,10 +15220,11 @@ window.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape'){
     // (2026-09-29, part 2) showClipboardPicker added here too — same
     // fixed-overlay pattern as the others, just missed on the first pass.
-    if(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId){
+    if(state.showMoreMenu || state.showToolsMenu || state.showImportMenu || state.showNavAddMenu || state.showQuickSearchModal || state.showSwipeAssignPicker || state.showClipboardPicker || state.quickActionRowId || state.showQuickJump || state.expectClosureRowId){
       state.showMoreMenu = false;
       state.showToolsMenu = false;
       state.showImportMenu = false;
+      state.showNavAddMenu = false;
       state.showQuickSearchModal = false;
       state.showSwipeAssignPicker = false;
       state.pendingSwipeAssignRowId = null;
