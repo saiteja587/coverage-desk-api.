@@ -143,6 +143,8 @@ let state = {
   showDbSettings: false,
   showCandidateProfile: false,
   candidateProfileName: '',
+  candidateProfileCompany: '', // set when opened from Ctrl+K on a specific company's call
+  candidateProfileView: 'whole', // 'company' | 'whole'
   candidateProfileData: null,
   candidateProfileLoading: false,
   showCompanyScorecard: false,
@@ -6889,7 +6891,11 @@ function runQuickJumpSearch(q){
     const qLower = query.toLowerCase();
     let results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower));
     results.sort((a,b)=> b._date.localeCompare(a._date));
-    state.quickJumpResults = results.slice(0,6);
+    // One entry per candidate + company (latest call), with a count — so each company a candidate has
+    // interviewed with is its own clickable result instead of 6 near-identical rows.
+    const seenQj = new Map();
+    results.forEach(r => { const k = normalizeNameKey(r.candidate||'') + '|' + normalizeCompanyKey(r.company||''); const e = seenQj.get(k); if(e) e._qjN++; else { seenQj.set(k, Object.assign({}, r, { _qjN: 1 })); } });
+    state.quickJumpResults = Array.from(seenQj.values()).slice(0,8);
     state.quickJumpLoading = false;
     render();
   }, 250);
@@ -6910,7 +6916,7 @@ function renderQuickJumpOverlay(){
         ${state.quickJumpLoading ? `<div class="hint" style="padding:10px 4px">Searching calls…</div>` : ''}
         ${(state.quickJumpResults && state.quickJumpResults.length) ? `
           <div class="quick-action-status-label">Calls</div>
-          ${state.quickJumpResults.map(r=>`<button class="quick-action-item" data-qj-candidate="${escapeHtml(r.candidate||'')}">📋 ${escapeHtml(r.candidate||'(no name)')}${r.company?' — '+escapeHtml(r.company):''} <span style="opacity:.6">(${escapeHtml(r._date)})</span></button>`).join('')}
+          ${state.quickJumpResults.map(r=>`<button class="quick-action-item" data-qj-candidate="${escapeHtml(r.candidate||'')}" data-qj-company="${escapeHtml(r.company||'')}">📋 ${escapeHtml(r.candidate||'(no name)')}${r.company?' — '+escapeHtml(r.company):''} <span style="opacity:.6">(${escapeHtml(r._date)}${r._qjN>1?' · '+r._qjN+' calls':''})</span></button>`).join('')}
         ` : ''}
         ${(qLower.length>=2 && state.quickJumpResults && !state.quickJumpResults.length && !state.quickJumpLoading) ? `<div class="hint" style="padding:10px 4px">No matching calls found.</div>` : ''}
       </div>
@@ -7006,11 +7012,19 @@ function renderCandidateProfilePanel(){
   // A single merged, chronological timeline — calls by date/time, closures
   // by their own recorded date — rather than two separate lists, since the
   // whole point is seeing the journey in one continuous read.
+  // Opened from Ctrl+K on one company's call -> show just that company's calls/closures first,
+  // with a tab right next to it for the whole timeline.
+  const cpCo = state.candidateProfileCompany || '';
+  const cpView = (cpCo && state.candidateProfileView === 'company') ? 'company' : 'whole';
+  const sameCo = (x) => !!x && fuzzyCompanyKeyMatch(x, cpCo);
+  const cpCalls = cpView === 'company' ? data.calls.filter(c => sameCo(c.company)) : data.calls;
+  const cpClosures = cpView === 'company' ? data.closures.filter(c => sameCo(c.company)) : data.closures;
+  const viewTabs = cpCo ? `<div class="dt-tabs" style="margin-bottom:10px"><button class="dt-tab ${cpView==='company'?'active':''}" data-cp-view="company">🏢 ${escapeHtml(cpCo)} (${data.calls.filter(c => sameCo(c.company)).length})</button><button class="dt-tab ${cpView==='whole'?'active':''}" data-cp-view="whole">📋 Whole timeline (${data.calls.length})</button></div>` : '';
   const events = [
-    ...data.calls.map(c => ({ kind:'call', sortKey: (c._date||'')+' '+String(businessDayMinutes(c.time)).padStart(5,'0'), data:c })),
-    ...data.closures.map(c => ({ kind:'closure', sortKey: (c.createdAt||'9999').slice(0,10)+' 99999', data:c })),
+    ...cpCalls.map(c => ({ kind:'call', sortKey: (c._date||'')+' '+String(businessDayMinutes(c.time)).padStart(5,'0'), data:c })),
+    ...cpClosures.map(c => ({ kind:'closure', sortKey: (c.createdAt||'9999').slice(0,10)+' 99999', data:c })),
   ].sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
-  const firstCallDate = data.calls.length ? data.calls[0]._date : null;
+  const firstCallDate = cpCalls.length ? cpCalls[0]._date : null;
   const hasClosure = data.closures.length > 0;
   const daysBetween = (a,b)=>{
     if(!a||!b) return null;
@@ -7018,11 +7032,11 @@ function renderCandidateProfilePanel(){
     if(isNaN(da)||isNaN(db)) return null;
     return Math.round((db-da)/86400000);
   };
-  const timeToClose = (hasClosure && firstCallDate) ? daysBetween(firstCallDate, data.closures[0].createdAt) : null;
+  const timeToClose = (cpClosures.length && firstCallDate) ? daysBetween(firstCallDate, cpClosures[0].createdAt) : null;
   const summaryChips = [
-    `<span class="notif-chip">${data.calls.length} call${data.calls.length===1?'':'s'}</span>`,
+    `<span class="notif-chip">${cpCalls.length} call${cpCalls.length===1?'':'s'}</span>`,
     firstCallDate ? `<span class="notif-chip">first call ${escapeHtml(firstCallDate)}</span>` : '',
-    hasClosure ? `<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">🏆 ${data.closures.length} closure${data.closures.length===1?'':'s'}</span>` : '',
+    cpClosures.length ? `<span class="notif-chip" style="color:var(--teal);border-color:var(--teal)">🏆 ${cpClosures.length} closure${cpClosures.length===1?'':'s'}</span>` : '',
     (timeToClose !== null && timeToClose >= 0) ? `<span class="notif-chip">${timeToClose} day${timeToClose===1?'':'s'} to close</span>` : '',
   ].filter(Boolean).join(' ');
   const eventsHtml = events.map(ev=>{
@@ -7074,7 +7088,8 @@ function renderCandidateProfilePanel(){
     }
   }
   return `<div class="import-panel">
-    <div class="hint" style="margin-bottom:10px">Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>, oldest first.</div>
+    ${viewTabs}
+    <div class="hint" style="margin-bottom:10px">${cpView==='company' ? `Calls and closures for <b>${escapeHtml(state.candidateProfileName)}</b> at <b>${escapeHtml(cpCo)}</b> only` : `Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>`}, oldest first.</div>
     <div style="margin-bottom:12px">${summaryChips}</div>
     ${closureFormHtml}
     ${eventsHtml}
@@ -7084,6 +7099,8 @@ async function openCandidateProfile(name, opts){
   closeAllPanels();
   state.showCandidateProfile = true;
   state.candidateProfileName = name;
+  state.candidateProfileCompany = (opts && opts.scopeCompany) || '';
+  state.candidateProfileView = state.candidateProfileCompany ? 'company' : 'whole';
   state.candidateProfileLoading = true;
   state.candidateProfileData = null;
   state.candidateProfileClosureForm = null;
@@ -14823,6 +14840,11 @@ function portalMatchSuppressedInfo(row){
 // every other floating overlay in this file, plus a plain `input` listener
 // for the live search-as-you-type box (input events don't bubble through
 // the same click-delegation path, so this needs its own listener).
+document.addEventListener('click', function(e){
+  const t = e.target.closest && e.target.closest('[data-cp-view]'); if(!t) return;
+  state.candidateProfileView = t.getAttribute('data-cp-view') === 'company' ? 'company' : 'whole';
+  render();
+});
 (function setupQuickJump(){
   const appEl = document.getElementById('app');
   if(!appEl) return;
@@ -14877,8 +14899,9 @@ function portalMatchSuppressedInfo(row){
     const candidateBtn = e.target.closest('[data-qj-candidate]');
     if(candidateBtn){
       const name = candidateBtn.dataset.qjCandidate;
+      const co = candidateBtn.dataset.qjCompany || '';
       closeQuickJump();
-      openCandidateProfile(name);
+      openCandidateProfile(name, co ? { scopeCompany: co } : undefined);
       return;
     }
   });
