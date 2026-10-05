@@ -259,6 +259,7 @@ let state = {
   allDatesLoading: false,
   absentIds: [],
   exportedIds: [],
+  exportedSigs: {}, // id -> what the call looked like when last exported (so a later change to an already-exported call, e.g. WOI -> time + assignee, counts as 'updated')
   showStudentsMaster: false,
   showConflicts: false,
   studentsMaster: [],
@@ -1642,14 +1643,40 @@ function syncNotesFromAbsent(){
 // new backend field.
 function syncExportedIdsFromNotes(){
   const entry = (state.notes||[]).find(n => n && n.id === exportedIdsNoteId());
-  try{ state.exportedIds = entry ? (JSON.parse(entry.text)||[]) : []; }
+  state.exportedSigs = {};
+  try{
+    const parsed = entry ? JSON.parse(entry.text) : [];
+    // Older saves hold a plain array of ids; newer ones hold {ids, sigs}.
+    if(Array.isArray(parsed)){ state.exportedIds = parsed; }
+    else if(parsed && Array.isArray(parsed.ids)){ state.exportedIds = parsed.ids; state.exportedSigs = parsed.sigs || {}; }
+    else state.exportedIds = [];
+  }
   catch(e){ state.exportedIds = []; }
+}
+// What appears in the exported text for a call: name/country/1st-interview flag,
+// time, WOI state and assignee. If any of these change after the call was
+// exported, the call has to go out again.
+function exportSignature(r){
+  return [r.candidate||'', r.country||'', r.candidateFirstInterview?1:0, r.time||'', r.woi?1:0, r.assignee||''].join('|');
+}
+// A call needs (re)sending if it was never exported, or if it was exported
+// before and what the text shows for it has since changed. Calls exported
+// before this tracking existed have no stored signature — treated as unchanged.
+function callNeedsExport(r){
+  if(!state.exportedIds.includes(r.id)) return true;
+  const sig = state.exportedSigs && state.exportedSigs[r.id];
+  return sig !== undefined && sig !== exportSignature(r);
+}
+function markAllRowsExported(){
+  state.exportedIds = state.rows.map(r=>r.id);
+  state.exportedSigs = {};
+  state.rows.forEach(r => { state.exportedSigs[r.id] = exportSignature(r); });
 }
 function syncNotesFromExportedIds(){
   state.notes = state.notes || [];
   const idx = state.notes.findIndex(n => n && n.id === exportedIdsNoteId());
   if(state.exportedIds && state.exportedIds.length){
-    const text = JSON.stringify(state.exportedIds);
+    const text = JSON.stringify({ ids: state.exportedIds, sigs: state.exportedSigs || {} });
     if(idx >= 0) state.notes[idx].text = text;
     else state.notes.push({ id:exportedIdsNoteId(), text });
   } else if(idx >= 0){
@@ -5350,11 +5377,12 @@ function renderFinalizeControls(){
   if(!state.finalized){
     return `<button class="btn primary" id="finalizeBtn">✅ Finalize all calls</button>`;
   }
-  const newCount = state.rows.filter(r => !state.exportedIds.includes(r.id)).length;
+  const newCount = state.rows.filter(callNeedsExport).length;
+  const updatedCount = state.rows.filter(r => state.exportedIds.includes(r.id) && callNeedsExport(r)).length;
   if(newCount > 0 && state.exportedIds.length > 0){
     // Some calls were exported before, and more have been added since —
     // offer both: just the new ones (the common case), or the whole list.
-    return `<button class="btn" id="downloadNewTxt" style="color:var(--teal);border-color:#1F4A43">📄 Open .txt (${newCount} new)</button>
+    return `<button class="btn" id="downloadNewTxt" style="color:var(--teal);border-color:#1F4A43">📄 Open .txt (${newCount} new${updatedCount ? ', ' + updatedCount + ' updated' : ''})</button>
       <button class="btn" id="downloadTxt">📋 Open full list (${state.rows.length})</button>
       <button class="btn ghost" id="reopenBtn" style="color:var(--text-faint)">Re-open for editing</button>`;
   }
@@ -10856,18 +10884,18 @@ function attachHandlers(conflictIds){
     // button is used, anything added since now counts as new. Set dirty
     // directly (not markDirty()) since that also un-finalizes the day, which
     // would hide these very buttons right after clicking them.
-    state.exportedIds = state.rows.map(r=>r.id);
+    markAllRowsExported();
     state.dirty = true;
     render();
   };
   const downloadNewBtn = document.getElementById('downloadNewTxt');
   if(downloadNewBtn) downloadNewBtn.onclick = ()=>{
-    const newRows = state.rows.filter(r => !state.exportedIds.includes(r.id));
+    const newRows = state.rows.filter(callNeedsExport);
     const text = buildTeamGroupedExportText(newRows);
     const blob = new Blob([text], {type:'text/plain'});
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
-    state.exportedIds = state.rows.map(r=>r.id);
+    markAllRowsExported();
     state.dirty = true;
     render();
   };
