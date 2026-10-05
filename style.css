@@ -946,3 +946,36 @@ tbody tr[data-id]{touch-action:pan-y;}
 }
 .pull-refresh-indicator.settling{ transition:transform .28s cubic-bezier(.34,1.4,.64,1), opacity .2s ease; }
 .pull-refresh-icon{ font-size:16px; line-height:1; color:var(--teal); display:inline-block; }
+
+/* ===== LIVE FEED (2026-10-05) — Facebook-style pop-up alerts + bell. Separate from the old Notifications panel. ===== */
+.lf-toasts{position:fixed;top:14px;right:14px;z-index:320;display:flex;flex-direction:column;gap:10px;width:min(360px,calc(100vw - 28px));pointer-events:none;}
+.lf-toast{pointer-events:auto;background:var(--surface-2);border:1px solid var(--border);border-left:4px solid var(--teal);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.45);padding:12px 12px 10px;animation:lfSlideIn .28s ease-out;}
+@keyframes lfSlideIn{from{opacity:0;transform:translateX(40px);}to{opacity:1;transform:none;}}
+.lf-item{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;}
+.lf-item-main{flex:1;min-width:0;}
+.lf-title{font-weight:700;font-size:13.5px;color:var(--text);line-height:1.3;}
+.lf-body{font-size:12.5px;color:var(--text-2);margin-top:3px;line-height:1.4;}
+.lf-meta{font-size:11px;color:var(--text-faint);margin-top:4px;}
+.lf-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.lf-actions:empty{display:none;}
+.lf-act{background:var(--surface-3,var(--surface));border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;}
+.lf-act.primary{background:var(--teal);border-color:var(--teal);color:#fff;}
+.lf-x{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 4px;line-height:1;}
+.lf-x:hover{color:var(--text);}
+.lf-bell{position:fixed;right:20px;bottom:78px;z-index:71;width:44px;height:44px;border-radius:50%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:20px;cursor:pointer;box-shadow:var(--shadow-md);display:flex;align-items:center;justify-content:center;}
+.lf-bell.has-unread{border-color:var(--teal);}
+.lf-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:var(--coral,#e5484d);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.lf-panel{position:fixed;right:20px;bottom:130px;z-index:310;width:min(380px,calc(100vw - 28px));max-height:70vh;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;}
+.lf-panel-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap;}
+.lf-head-btns{display:flex;align-items:center;gap:8px;}
+.lf-link{background:none;border:none;color:var(--teal);font-size:12px;font-weight:600;cursor:pointer;padding:2px;}
+.lf-list{overflow-y:auto;flex:1;}
+.lf-list .lf-item{padding:10px 12px;border-bottom:1px solid var(--border);}
+.lf-list .lf-item.unread{background:var(--teal-dim);}
+.lf-empty{padding:18px 14px;font-size:12.5px;color:var(--text-2);line-height:1.5;}
+.lf-foot{padding:8px 12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-faint);}
+@media (max-width:700px){
+  .lf-toasts{top:8px;right:8px;left:8px;width:auto;}
+  .lf-bell{bottom:134px;right:14px;}
+  .lf-panel{right:8px;left:8px;width:auto;bottom:188px;max-height:60vh;}
+}
