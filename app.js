@@ -16135,12 +16135,58 @@ function deskEodText(date, rows, teamNames, extra){
   return lines.join('\n');
 }
 
+
+// ---- Reconcile (Desk Tools): compare the board with a pasted "correct" list ----
+function deskRecRoundKey(r){ const m = String(r || '').toLowerCase().match(/\d/); return m ? m[0] : String(r || '').toLowerCase().trim(); }
+function deskRecDurKey(d){ return String(d || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function deskRecSameTime(a, b){
+  if(!!a.woi !== !!b.woi) return false;
+  if(a.woi) return true;
+  const ta = timeToMinutes(a.time), tb = timeToMinutes(b.time);
+  return ta !== 9999 && ta === tb;
+}
+// Pure: boardRows = state.rows; listRows = parseImportText() output for the pasted list.
+// One-to-one matching, strict first (same person + company + time), then loosened (same person + company, other time).
+// Never deletes anything itself — it only reports.
+function deskReconcile(boardRows, listRows){
+  const warnings = [];
+  const list = [];
+  (listRows || []).forEach(p => {
+    if(!p.time && !p.company && !p.woi){ warnings.push(String(p.raw || p.candidate || '').slice(0, 120)); return; }
+    list.push(p);
+  });
+  const usedB = new Set(), usedL = new Set(), pairs = [];
+  const sameCo = (a, b) => !!(a.company && b.company) && fuzzyCompanyKeyMatch(a.company, b.company);
+  function pass(test, kind){
+    list.forEach((p, li) => {
+      if(usedL.has(li)) return;
+      const bi = boardRows.findIndex((b, i) => !usedB.has(i) && deskTightSameName(b.candidate, p.candidate) && test(b, p));
+      if(bi >= 0){ usedB.add(bi); usedL.add(li); pairs.push({ b: boardRows[bi], p, kind }); }
+    });
+  }
+  pass((b, p) => sameCo(b, p) && deskRecSameTime(b, p), 'exact');
+  pass((b, p) => sameCo(b, p), 'time');
+  const extras = boardRows.filter((b, i) => !usedB.has(i));
+  const missing = list.filter((p, i) => !usedL.has(i));
+  const differ = [];
+  pairs.forEach(x => {
+    const d = [];
+    if(x.kind === 'time') d.push('time: board ' + (x.b.woi ? 'WOI' : (x.b.time || '—')) + ' → list ' + (x.p.woi ? 'WOI' : (x.p.time || '—')));
+    if(deskRecRoundKey(x.b.round) !== deskRecRoundKey(x.p.round)) d.push('round: board ' + (x.b.round || '—') + ' → list ' + (x.p.round || '—'));
+    if(x.b.duration && x.p.duration && deskRecDurKey(x.b.duration) !== deskRecDurKey(x.p.duration)) d.push('duration: board ' + x.b.duration + ' → list ' + x.p.duration);
+    if(d.length) differ.push({ b: x.b, p: x.p, diffs: d });
+  });
+  const byTime = (a, b) => timeToMinutes(a.time) - timeToMinutes(b.time);
+  extras.sort(byTime); missing.sort(byTime);
+  return { extras, missing, differ, warnings, listCount: list.length, matched: pairs.length };
+}
+
 (function setupDeskTools(){
-  const dt = { tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
+  const dt = { recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
   window._deskTools = dt;
   const teamNames = () => new Set(state.roster.map(p => p.team));
   const esc = escapeHtml;
-  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message']];
+  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile']];
 
   function toast(html, ms){
     const box = document.getElementById('liveFeedToasts'); if(!box) return;
@@ -16164,6 +16210,39 @@ function deskEodText(date, rows, teamNames, extra){
     if(dt.loading) return '<div class="lf-empty"><span class="spinner"></span> Loading call history…</div>';
     if(dt.error) return '<div class="lf-empty">⚠ Couldn\'t load call history: ' + esc(dt.error) + ' <button class="lf-link" data-dt-reload>Retry</button></div>';
     const hist = allRows();
+    if(dt.tab === 'rec'){
+      const can = CURRENT_ROLE === 'admin';
+      const rowLine = r => esc((r.woi ? 'WOI' : (r.time || '—')) + ' · ' + (r.candidate || '') + ' — ' + (r.company || '(no company)')) + (r.assignee ? ' <span class="dt-sub" style="display:inline">· ' + esc(r.assignee) + '</span>' : '');
+      let h = '<div class="dt-note">Paste the <b>complete correct list</b> for <b>' + esc(state.date) + '</b> (the board you have open: ' + state.rows.length + ' calls). Nothing is changed until you tick calls and press Delete — a backup is saved first.</div>' +
+        '<textarea id="dtRecText" class="sa-in" rows="7" style="width:100%;font-family:inherit" placeholder="Paste the master list here…">' + esc(dt.recText) + '</textarea>' +
+        '<div style="margin:8px 0"><button class="lf-act primary" data-dt-recrun>Compare with board</button></div>';
+      if(dt.recMsg) h += '<div class="dt-ok">' + esc(dt.recMsg) + '</div>';
+      const rec = dt.rec;
+      if(!rec) return h;
+      if(rec.date !== state.date) return h + '<div class="dt-issue">⚠ The open day changed since you compared. Press Compare again.</div>';
+      h += '<div class="dt-note">Your list: <b>' + rec.listCount + '</b> calls · board: <b>' + state.rows.length + '</b> · matched: <b>' + rec.matched + '</b></div>';
+      if(rec.listCount && rec.listCount < state.rows.length * 0.5) h += '<div class="dt-issue">⚠ Your list has far fewer calls than the board — make sure you pasted the whole list, otherwise real calls will show up below as "not in your list".</div>';
+      if(rec.warnings.length) h += '<div class="dt-issue">⚠ ' + rec.warnings.length + ' line' + (rec.warnings.length > 1 ? 's' : '') + ' in your list could not be read as a call (check them by hand):<br>' + rec.warnings.map(w => esc(w)).join('<br>') + '</div>';
+      const ex = rec.extras.filter(r => state.rows.some(x => x.id === r.id));
+      h += '<h4 class="dt-h">On the board but not in your list (' + ex.length + ')</h4>';
+      if(!ex.length) h += '<div class="dt-ok">✅ Nothing extra on the board.</div>';
+      else {
+        h += '<div class="dt-note"><button class="lf-link" data-dt-recall="1">Tick all</button> · <button class="lf-link" data-dt-recall="0">Untick all</button> · ticked: <b>' + ex.filter(r => dt.recSel.has(r.id)).length + '</b></div>';
+        h += ex.map(r => '<label class="dt-row" style="cursor:pointer"><input type="checkbox" data-dt-recsel="' + esc(r.id) + '" ' + (dt.recSel.has(r.id) ? 'checked' : '') + (can ? '' : ' disabled') + '> <div class="dt-main" style="margin-left:8px">' + rowLine(r) + (r.status ? '<div class="dt-sub">status: ' + esc(r.status) + '</div>' : '') + '</div></label>').join('');
+        if(can) h += '<div style="margin:8px 0"><button class="lf-act primary" data-dt-recdel ' + (dt.recSel.size ? '' : 'disabled') + '>Delete ticked calls</button></div>';
+        else h += '<div class="dt-note">Only an admin can delete.</div>';
+      }
+      h += '<h4 class="dt-h">In your list but missing on the board (' + rec.missing.length + ')</h4>';
+      if(!rec.missing.length) h += '<div class="dt-ok">✅ Every call in your list is on the board.</div>';
+      else {
+        h += rec.missing.map((p, i) => '<div class="dt-row"><div class="dt-main">' + rowLine(p) + '<div class="dt-sub">' + esc(p.round || '') + (p.duration ? ' · ' + esc(p.duration) : '') + '</div></div>' + (can ? '<button class="lf-act" data-dt-recadd="' + i + '">Add</button>' : '') + '</div>').join('');
+        if(can && rec.missing.length > 1) h += '<div style="margin:8px 0"><button class="lf-act primary" data-dt-recadd="all">Add all ' + rec.missing.length + '</button></div>';
+      }
+      h += '<h4 class="dt-h">Same call, different details (' + rec.differ.length + ')</h4>';
+      if(!rec.differ.length) h += '<div class="dt-ok">✅ No differences in matched calls.</div>';
+      else h += '<div class="dt-note">Listed only — fix these on the board yourself if the list is right.</div>' + rec.differ.map(x => '<div class="dt-row"><div class="dt-main">' + rowLine(x.b) + '<div class="dt-sub">' + x.diffs.map(esc).join(' · ') + '</div></div></div>').join('');
+      return h;
+    }
     if(dt.tab === 'suggest'){
       if(state.date !== today) return '<div class="lf-empty">Suggestions are for today\'s board. Switch to today\'s date first.</div>';
       const sug = deskSuggestAssignees(state.rows, hist, state.roster, state.absentIds, today, tn, resolver().keyOf);
@@ -16289,6 +16368,52 @@ function deskEodText(date, rows, teamNames, extra){
       if(n){ state.dirty = true; if(state.finalized) state.finalized = false; render(); toast('<div class="lf-title">Removed list numbers from ' + n + ' name' + (n > 1 ? 's' : '') + '</div><div class="lf-body">Press Save to keep the change.</div>', 8000); }
       paint(); return;
     }
+    if(t.closest('[data-dt-recrun]')){
+      const ta = document.getElementById('dtRecText'); if(ta) dt.recText = ta.value;
+      dt.recMsg = ''; dt.recSel = new Set();
+      if(!dt.recText.trim()){ dt.rec = null; dt.recMsg = 'Paste the list first.'; paint(); return; }
+      let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){ dt.rec = null; dt.recMsg = 'Could not read the list: ' + (err && err.message || err); paint(); return; }
+      dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint(); return;
+    }
+    const ra = t.closest('[data-dt-recall]'); if(ra && dt.rec){ dt.recSel = ra.getAttribute('data-dt-recall') === '1' ? new Set(dt.rec.extras.map(r => r.id)) : new Set(); paint(); return; }
+    if(t.closest('[data-dt-recdel]') && CURRENT_ROLE === 'admin' && dt.rec && dt.rec.date === state.date){
+      const ids = new Set(Array.from(dt.recSel).filter(id => state.rows.some(r => r.id === id)));
+      if(!ids.size) return;
+      if(!confirm('Delete ' + ids.size + ' call(s) from ' + state.date + '? A backup is saved first, so this can be undone from 🕐 Backups.')) return;
+      (async () => {
+        try{ await createBackup('pre-reconcile-delete', state.date, state.rows); }
+        catch(err){ dt.recMsg = '⚠ Backup failed, so nothing was deleted: ' + (err && err.message || err); paint(); return; }
+        const before = state.rows.length;
+        state.rows = state.rows.filter(r => !ids.has(r.id));
+        const removed = before - state.rows.length;
+        state.selectedIds.clear(); dt.recSel = new Set();
+        markDirty(); render();
+        try{ await saveAllChanges(); }catch(err){}
+        dt.recMsg = (state.dirty || state.saveError) ? '⚠ Removed ' + removed + ' call(s) on screen, but SAVING FAILED. Press Save changes (top) before leaving.' : '✅ Deleted ' + removed + ' call(s) and saved. Board now has ' + state.rows.length + '.';
+        let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){}
+        dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint();
+      })();
+      return;
+    }
+    const rad = t.closest('[data-dt-recadd]');
+    if(rad && CURRENT_ROLE === 'admin' && dt.rec && dt.rec.date === state.date){
+      const which = rad.getAttribute('data-dt-recadd');
+      const picks = which === 'all' ? dt.rec.missing.slice() : [dt.rec.missing[Number(which)]].filter(Boolean);
+      if(!picks.length) return;
+      (async () => {
+        try{ await createBackup('pre-import', state.date, state.rows); }
+        catch(err){ dt.recMsg = '⚠ Backup failed, so nothing was added: ' + (err && err.message || err); paint(); return; }
+        const newRows = picks.map(p => { const r = Object.assign({}, p, { id: uid() }); delete r._targetDate; return autoRouteByCountry(r); });
+        state.rows = [...state.rows, ...newRows];
+        state.lastImportedIds = newRows.map(r => r.id); state.lastImportedCount = newRows.length; state.lastImportMergedCount = 0; state.recentImportIds = new Set(newRows.map(r => r.id));
+        markDirty(); render();
+        try{ await saveAllChanges(); }catch(err){}
+        dt.recMsg = (state.dirty || state.saveError) ? '⚠ Added ' + newRows.length + ' call(s) on screen, but SAVING FAILED. Press Save changes (top) before leaving.' : '✅ Added ' + newRows.length + ' call(s) and saved. Board now has ' + state.rows.length + '.';
+        let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){}
+        dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint();
+      })();
+      return;
+    }
     const gd = t.closest('[data-dt-gotodate]'); if(gd){ gotoDate(gd.getAttribute('data-dt-gotodate')); return; }
     const pk = t.closest('[data-dt-pick]'); if(pk){ dt.selKey = pk.getAttribute('data-dt-pick'); dt.extra = new Set(); paint(); return; }
     const ex = t.closest('[data-dt-extra]'); if(ex){ const k = ex.getAttribute('data-dt-extra'); if(dt.extra.has(k)) dt.extra.delete(k); else dt.extra.add(k); paint(); return; }
@@ -16298,7 +16423,8 @@ function deskEodText(date, rows, teamNames, extra){
     if(t.closest('[data-dt-csv]')){ const rep = deskWeeklyReport(allRows(), dt.weekStart || deskMonday(todayDateString()), teamNames()); download('weekly-report-' + rep.start + '.csv', deskWeeklyCsv(rep)); return; }
   });
   document.addEventListener('change', function(e){ if(e.target && e.target.matches && e.target.matches('[data-dt-showdone]')){ dt.showDone = e.target.checked; paint(); } });
-  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'dtCandQuery'){ dt.query = e.target.value; dt.selKey = ''; dt.extra = new Set(); paint(); } });
+  document.addEventListener('change', function(e){ const el = e.target; if(el && el.matches && el.matches('[data-dt-recsel]')){ const id = el.getAttribute('data-dt-recsel'); if(el.checked) dt.recSel.add(id); else dt.recSel.delete(id); paint(); } });
+  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'dtRecText'){ dt.recText = e.target.value; return; } if(e.target && e.target.id === 'dtCandQuery'){ dt.query = e.target.value; dt.selKey = ''; dt.extra = new Set(); paint(); } });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && document.getElementById('deskToolsOverlay')){ close(); } });
 
   // Pre-save heads-up (never blocks the save): called at the start of saveAllChanges.
