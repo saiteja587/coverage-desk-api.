@@ -1668,6 +1668,7 @@ function markDirty(){
   if(state.finalized) state.finalized = false;
 }
 async function saveAllChanges(){
+  try{ if(window.deskPreSaveCheck) window.deskPreSaveCheck(); }catch(e){} // non-blocking heads-up toast
   state.saving = true;
   state.saveError = '';
   render();
@@ -5829,6 +5830,7 @@ function render(){
             ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
+            <button class="more-menu-item" id="openDeskTools" title="Suggest assignees, workload checks, loose ends, reschedule tracker, candidate timeline, weekly report and an end-of-day message — in one window">🧰 Desk Tools</button>
             <button class="more-menu-item" id="toggleEodWrapup" title="How today went — handled vs. slipped, plus a peek at tomorrow. The evening-facing counterpart to Today's Briefing">🌙 End-of-Day Wrap-Up</button>
             <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A notification when an unassigned call is close to its start time — fires in the open tab/app immediately, and as a real background push to every device that's subscribed (needs the server-side check set up — see the deploy notes) even once closed.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'}</button>
             <div class="more-menu-section-label">Look up</div>
@@ -15312,7 +15314,66 @@ function livefeedDayDiff(a, b){ // b - a, in whole days, both 'YYYY-MM-DD'
 
 // Pure rule engine — no DOM, no state; takes every call across dates (rows
 // carry `_date`) and today's date string, returns the alerts that apply.
-function computeSmartAlerts(allRows, today){
+
+// ---- Tolerant name matching for LOOKUPS and informational alerts (2026-10-05) ----
+// Names arrive typed many ways ("Sai Prassana" / "Sai Prasana", "Singh Abhishek",
+// "Sushmitha B"). Exact keys miss those. "Tight" = very probably the same person
+// (same words in any order, tiny spelling slips on long words, or the existing
+// First-L./typo rules). "Loose" = the query is just part of the name — only ever
+// used to LIST candidates for a human to choose from. Nothing here auto-assigns,
+// auto-merges or auto-adds anything.
+function deskNameTokens(n){ return String(n || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean); }
+function deskTokenNear(a, b){
+  if(a === b) return true;
+  if(Math.min(a.length, b.length) < 5) return false;
+  const lim = Math.max(a.length, b.length) >= 9 ? 2 : 1;
+  return Math.abs(a.length - b.length) <= lim && levenshteinDistance(a, b) <= lim;
+}
+function deskTightSameName(a, b){
+  const ta = deskNameTokens(a), tb = deskNameTokens(b);
+  if(!ta.length || !tb.length) return false;
+  if(ta.join('') === tb.join('') || ta.slice().sort().join(' ') === tb.slice().sort().join(' ')) return true;
+  if(firstNameLastInitialFuzzyMatch(a, b)) return true; // 'Sushmitha B' vs 'Sushmitha Basavaraju'
+  // (deliberately NOT the whole-name edit-distance-2 rule: 'Prasanna' vs 'Prasanth' are different people)
+  if(ta.length < 2 || ta.length !== tb.length) return false;
+  const used = new Set();
+  return ta.every(x => { const j = tb.findIndex((y, i) => !used.has(i) && deskTokenNear(x, y)); if(j < 0) return false; used.add(j); return true; });
+}
+function deskLooseNameMatch(query, name){
+  const q = deskNameTokens(query), n = deskNameTokens(name);
+  if(!q.length || !n.length) return false;
+  if(normalizeNameKey(name).includes(normalizeNameKey(query))) return true;
+  return q.every(x => n.some(y => y === x || (x.length >= 3 && y.startsWith(x)) || (x.length === 1 && y[0] === x) || deskTokenNear(x, y)));
+}
+// Groups every distinct typed name into "probably the same person" clusters.
+function deskBuildPersonResolver(rows){
+  const count = new Map(), last = new Map();
+  (rows || []).forEach(r => { const nm = String(r.candidate || '').replace(/\s+/g, ' ').trim(); if(!nm) return; count.set(nm, (count.get(nm) || 0) + 1); if((r._date || '') > (last.get(nm) || '')) last.set(nm, r._date || ''); });
+  const names = Array.from(count.keys());
+  const parent = names.map((_, i) => i);
+  const find = i => { while(parent[i] !== i){ parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const blocks = new Map();
+  names.forEach((nm, i) => { const t = deskNameTokens(nm); const b = t.map(x => x[0]).sort().join('') + t.length; const b2 = t.map(x => x[0]).sort().join('') + 'x'; [b, b2].forEach(k => { if(!blocks.has(k)) blocks.set(k, []); blocks.get(k).push(i); }); });
+  blocks.forEach(list => { for(let i = 0; i < list.length; i++) for(let j = i + 1; j < list.length; j++){ const a = list[i], b = list[j]; if(find(a) !== find(b) && deskTightSameName(names[a], names[b])) parent[find(a)] = find(b); } });
+  const groups = new Map();
+  names.forEach((nm, i) => { const r = find(i); if(!groups.has(r)) groups.set(r, []); groups.get(r).push(nm); });
+  const keyByName = new Map(), clusters = new Map();
+  groups.forEach(list => {
+    list.sort((a, b) => count.get(b) - count.get(a) || b.length - a.length);
+    const key = normalizeNameKey(list[0]) || list[0];
+    const c = { key, name: list[0], variants: list.slice(), n: 0, last: '' };
+    list.forEach(nm => { keyByName.set(nm, key); c.n += count.get(nm); if(last.get(nm) > c.last) c.last = last.get(nm); });
+    clusters.set(key, c);
+  });
+  return { keyOf: nm => keyByName.get(String(nm || '').replace(/\s+/g, ' ').trim()) || normalizeNameKey(nm), clusters };
+}
+
+function computeSmartAlerts(allRows, today, opts){
+  const teamNames = (opts && opts.teamNames) || new Set();
+  const pkey = (opts && opts.personKey) || normalizeNameKey; // candidate identity (tolerant when the caller passes a resolver)
+  // a team name (e.g. 'HYD Team') is NOT a person — treat it as 'not assigned to anyone yet'
+  const akey = a => (a && !teamNames.has(String(a))) ? normalizeNameKey(a) : '';
+  const pn = a => akey(a) ? a : '';
   const alerts = [];
   const rows = (allRows || []).filter(r => r && r._date && r.candidate && String(r.candidate).trim());
   const todayRows = rows.filter(r => r._date === today);
@@ -15322,13 +15383,13 @@ function computeSmartAlerts(allRows, today){
   // ---- Rule A: candidate returns after a long gap ----
   const lastPriorByCand = new Map(); // key -> {date,row}
   priorRows.forEach(r => {
-    const k = normalizeNameKey(r.candidate); if(!k) return;
+    const k = pkey(r.candidate); if(!k) return;
     const cur = lastPriorByCand.get(k);
     if(!cur || r._date > cur.date) lastPriorByCand.set(k, { date: r._date, row: r });
   });
   const seenA = new Set();
   todayRows.forEach(r => {
-    const k = normalizeNameKey(r.candidate);
+    const k = pkey(r.candidate);
     if(!k || seenA.has(k)) return;
     const prev = lastPriorByCand.get(k); if(!prev) return;
     const gap = livefeedDayDiff(prev.date, today);
@@ -15340,8 +15401,8 @@ function computeSmartAlerts(allRows, today){
       gapDays: gap, lastDate: prev.date, lastCompany: prev.row.company || '', lastAssignee: prev.row.assignee || '',
       title: '⏳ ' + r.candidate + ' is back after ' + gap + ' days',
       body: 'Last call was ' + prev.date + (prev.row.company ? ' (' + prev.row.company + ')' : '') +
-            (prev.row.assignee ? ', handled by ' + prev.row.assignee : '') +
-            '. Today: ' + (r.company || 'a new call') + (r.assignee ? ' → ' + r.assignee : ' (unassigned)') + '.'
+            (pn(prev.row.assignee) ? ', handled by ' + prev.row.assignee : '') +
+            '. Today: ' + (r.company || 'a new call') + (pn(r.assignee) ? ' → ' + r.assignee : ' (unassigned)') + '.'
     });
   });
 
@@ -15350,7 +15411,7 @@ function computeSmartAlerts(allRows, today){
   const histByCompany = new Map();
   priorRows.forEach(r => {
     if(r._date < cutoff) return;
-    const ck = normalizeCompanyKey(r.company); const ak = normalizeNameKey(r.assignee);
+    const ck = normalizeCompanyKey(r.company); const ak = akey(r.assignee);
     if(!ck || !ak) return;
     if(!histByCompany.has(ck)) histByCompany.set(ck, []);
     histByCompany.get(ck).push(r);
@@ -15364,14 +15425,14 @@ function computeSmartAlerts(allRows, today){
   todayByCompany.forEach((tRows, ck) => {
     const hist = histByCompany.get(ck);
     if(!hist || hist.length < LIVEFEED_COMPANY_MIN_CALLS) return;
-    const handlers = new Set(hist.map(r => normalizeNameKey(r.assignee)));
+    const handlers = new Set(hist.map(r => akey(r.assignee)));
     if(handlers.size !== 1) return;
     const handlerKey = Array.from(handlers)[0];
     const handlerName = hist[0].assignee;
-    const needing = tRows.filter(r => normalizeNameKey(r.assignee) !== handlerKey);
+    const needing = tRows.filter(r => akey(r.assignee) !== handlerKey);
     if(!needing.length) return; // today's calls already with the usual person — nothing to flag
-    const unassigned = needing.filter(r => !normalizeNameKey(r.assignee));
-    const others = needing.filter(r => normalizeNameKey(r.assignee));
+    const unassigned = needing.filter(r => !akey(r.assignee));
+    const others = needing.filter(r => akey(r.assignee));
     const days = new Set(hist.map(r => r._date)).size;
     const company = tRows[0].company;
     const parts = [];
@@ -15392,12 +15453,12 @@ function computeSmartAlerts(allRows, today){
   const badByCand = new Map();
   priorRows.forEach(r => {
     if(!LF_BAD.includes(r.status)) return;
-    const k = normalizeNameKey(r.candidate); if(!k) return;
+    const k = pkey(r.candidate); if(!k) return;
     badByCand.set(k, (badByCand.get(k) || 0) + 1);
   });
   const seenC = new Set();
   todayRows.forEach(r => {
-    const k = normalizeNameKey(r.candidate);
+    const k = pkey(r.candidate);
     if(!k || seenC.has(k) || LF_BAD.includes(r.status)) return;
     const n = badByCand.get(k) || 0;
     if(n < LIVEFEED_REPEAT_NOSHOW_MIN) return;
@@ -15413,7 +15474,7 @@ function computeSmartAlerts(allRows, today){
   // ---- Rule D: later round — earlier round at the same company was handled by someone ----
   const prevByCandCo = new Map(); // cand|company -> latest earlier row that had an assignee
   priorRows.forEach(r => {
-    const ck = normalizeCompanyKey(r.company), k = normalizeNameKey(r.candidate), ak = normalizeNameKey(r.assignee);
+    const ck = normalizeCompanyKey(r.company), k = pkey(r.candidate), ak = akey(r.assignee);
     if(!ck || !k || !ak || LF_BAD.includes(r.status)) return;
     const key = k + '|' + ck; const cur = prevByCandCo.get(key);
     if(!cur || r._date > cur._date) prevByCandCo.set(key, r);
@@ -15421,18 +15482,18 @@ function computeSmartAlerts(allRows, today){
   const seenD = new Set();
   todayRows.forEach(r => {
     if(!isAdvancedRound(r.round) || r.woi) return;
-    const k = normalizeNameKey(r.candidate), ck = normalizeCompanyKey(r.company);
+    const k = pkey(r.candidate), ck = normalizeCompanyKey(r.company);
     if(!k || !ck) return;
     const key = k + '|' + ck; if(seenD.has(key)) return;
     const prev = prevByCandCo.get(key); if(!prev) return;
-    if(normalizeNameKey(r.assignee) === normalizeNameKey(prev.assignee)) return; // already with the same person
+    if(akey(r.assignee) === akey(prev.assignee)) return; // already with the same person
     seenD.add(key);
     alerts.push({
       id: 'D|' + today + '|' + key, type: 'round-continuity', date: today,
       candidate: r.candidate, company: r.company, handler: prev.assignee, rowId: r.id,
       title: '🔁 ' + r.candidate + ' — earlier round was with ' + prev.assignee,
       body: (prev.round || 'Earlier round') + ' at ' + r.company + ' on ' + prev._date + ' was handled by ' + prev.assignee +
-            '. Today\'s ' + (r.round || 'next round') + ' is ' + (r.assignee ? 'with ' + r.assignee : 'unassigned') + '.'
+            '. Today\'s ' + (r.round || 'next round') + ' is ' + (pn(r.assignee) ? 'with ' + r.assignee : 'unassigned') + '.'
     });
   });
   return alerts;
@@ -15476,6 +15537,7 @@ function computeSmartAlerts(allRows, today){
     const h = Math.round(m / 60); if(h < 24) return h + 'h ago';
     return Math.round(h / 24) + 'd ago';
   }
+  function lfNeedsPerson(row){ const a = String(row.assignee || '').trim(); return !a || (state.roster || []).some(p => p.team === a); }
   function liveRow(item){
     if(item.date !== state.date) return null;
     return (state.rows || []).find(r => r.id === item.rowId) || null;
@@ -15483,7 +15545,7 @@ function computeSmartAlerts(allRows, today){
   function actionsHtml(item){
     const out = [];
     const row = liveRow(item);
-    if((item.type === 'company-handler' || item.type === 'round-continuity') && CURRENT_ROLE === 'admin' && row && !String(row.assignee||'').trim() && item.handler){
+    if((item.type === 'company-handler' || item.type === 'round-continuity') && CURRENT_ROLE === 'admin' && row && lfNeedsPerson(row) && item.handler){
       out.push('<button class="lf-act primary" data-lf-assign="' + escapeHtml(item.id) + '">Assign to ' + escapeHtml(item.handler) + '</button>');
     }
     if(item.date === state.date) out.push('<button class="lf-act" data-lf-show="' + escapeHtml(item.id) + '">Show ' + (item.type==='company-handler' ? 'calls' : 'call') + '</button>');
@@ -15540,7 +15602,9 @@ function computeSmartAlerts(allRows, today){
     lf.running = true;
     try{
       const all = await fetchAllRowsAcrossDates(!!force);
-      const alerts = computeSmartAlerts(all, today);
+      const resolver = deskBuildPersonResolver(all);
+      const alerts = computeSmartAlerts(all, today, { teamNames: new Set((state.roster || []).map(p => p.team)), personKey: resolver.keyOf });
+      try{ if(window.deskOnAllRows) window.deskOnAllRows(all, today); }catch(e){}
       // `seen` remembers every alert ever raised — Clear / mark-read / expiry never make it fire again
       lf.items.forEach(i => { if(!lf.seen[i.id]) lf.seen[i.id] = i.ts || Date.now(); });
       const known = new Set(Object.keys(lf.seen));
@@ -15595,7 +15659,7 @@ function computeSmartAlerts(allRows, today){
   }
   function doAssign(item){
     if(CURRENT_ROLE !== 'admin') return;
-    const row = item && liveRow(item); if(!row || String(row.assignee||'').trim()) return;
+    const row = item && liveRow(item); if(!row || !lfNeedsPerson(row)) return;
     row.assignee = item.handler; markDirty(); render();
     const t = toastBox.querySelector('[data-lf-toast-id="' + CSS.escape(item.id) + '"]'); removeToast(t);
     evaluate(false);
@@ -15812,6 +15876,415 @@ function classifyNewStudentCandidates(rows, lookup){
     }finally{ sa.running = false; }
   }
   window.studentAutoAddAfterSave = run;
+})();
+
+// ===========================================================================
+// DESK TOOLS (2026-10-05) — one window (Reports ▸ 🧰 Desk Tools) with seven
+// helpers: Suggest assignees, Checks (workload / duplicates / overlaps),
+// Loose ends, Reschedules, Candidate timeline, Weekly report, EOD message.
+// Everything below the pure functions is read-only except the explicit
+// "Accept" buttons in Suggest (which set an assignee like the dropdown does
+// and mark the day dirty — you still press Save). Team isolation is kept:
+// first-round calls are only ever suggested to the call's own team,
+// advanced rounds only to ★ advanced people. People are matched by exact
+// name key only (never fuzzy); only company names get the fuzzy key.
+// ===========================================================================
+const DESK_LOOSE_END_LOOKBACK_DAYS = 7;
+const DESK_RESCHEDULE_LOOKBACK_DAYS = 45;
+const DESK_IMBALANCE_SPREAD = 4;          // max-min calls within one team to warn
+const DESK_BAD_STATUSES = ['rescheduled','cancelled','not_responded','no_invite'];
+
+function deskIsTeamName(a, teamNames){ return !!(a && teamNames && teamNames.has(String(a))); }
+function deskNeedsPerson(row, teamNames){ const a = String(row.assignee || '').trim(); return !a || deskIsTeamName(a, teamNames); }
+function deskDateAdd(dateStr, n){ const p = dateStr.split('-').map(Number); return new Date(Date.UTC(p[0], p[1]-1, p[2]+n)).toISOString().slice(0,10); }
+function deskMonday(dateStr){ const p = dateStr.split('-').map(Number); const d = new Date(Date.UTC(p[0], p[1]-1, p[2])); const dow = (d.getUTCDay() + 6) % 7; return deskDateAdd(dateStr, -dow); }
+
+// ---- 1. Suggest assignees -------------------------------------------------
+function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, teamNames, pkey){
+  pkey = pkey || normalizeNameKey;
+  const out = [];
+  const prior = (allRows || []).filter(r => r._date && r._date < today);
+  const loadOf = {}; const busy = {}; // name -> [{s,e}]
+  const interval = r => { const s = timeToMinutes(r.time); const d = parseDurationMinutes(r.duration) || 60; return { s, e: s + d }; };
+  (todayRows || []).forEach(r => { if(r.woi || deskNeedsPerson(r, teamNames)) return; loadOf[r.assignee] = (loadOf[r.assignee] || 0) + 1; (busy[r.assignee] = busy[r.assignee] || []).push(interval(r)); });
+  const needing = (todayRows || []).filter(r => !r.woi && r.candidate && deskNeedsPerson(r, teamNames))
+    .sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+  needing.forEach(r => {
+    const adv = isAdvancedRound(r.round);
+    let team = '';
+    let pool;
+    if(adv){ pool = roster.filter(p => p.advanced && !absentIds.includes(p.id)); team = 'advanced (★) people'; }
+    else {
+      team = deskIsTeamName(r.assignee, teamNames) ? r.assignee : (isHydCountry(r.country) ? 'HYD Team' : 'Pradeep Anna Team');
+      pool = roster.filter(p => p.team === team && !absentIds.includes(p.id));
+    }
+    if(!pool.length){ out.push({ rowId: r.id, name: '', reason: 'No available people in ' + team + ' today.' }); return; }
+    const ck = normalizeCompanyKey(r.company), nk = pkey(r.candidate);
+    const iv = interval(r);
+    const cutoff14 = deskDateAdd(today, -14);
+    const compHist = prior.filter(x => normalizeCompanyKey(x.company) === ck && ck && x._date >= cutoff14 && x.assignee && !deskIsTeamName(x.assignee, teamNames));
+    const sameCandCo = prior.filter(x => pkey(x.candidate) === nk && normalizeCompanyKey(x.company) === ck && ck && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status))
+      .sort((a, b) => b._date.localeCompare(a._date));
+    const sameCand = prior.filter(x => pkey(x.candidate) === nk && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status))
+      .sort((a, b) => b._date.localeCompare(a._date));
+    let best = null;
+    pool.forEach((p, idx) => {
+      const clash = (busy[p.name] || []).some(b => iv.s < b.e && b.s < iv.e);
+      if(clash) return;
+      let score = 0, why = '';
+      if(sameCandCo[0] && normalizeNameKey(sameCandCo[0].assignee) === normalizeNameKey(p.name)){ score += 60; why = 'handled ' + r.candidate + '\'s earlier round at ' + r.company + ' (' + sameCandCo[0]._date + ')'; }
+      if(compHist.length >= 2){
+        const mine = compHist.filter(x => normalizeNameKey(x.assignee) === normalizeNameKey(p.name)).length;
+        const share = mine / compHist.length;
+        if(share >= 0.6){ score += 40 * share; if(!why) why = 'handled ' + mine + ' of ' + compHist.length + ' recent ' + r.company + ' calls'; }
+      }
+      if(sameCand[0] && normalizeNameKey(sameCand[0].assignee) === normalizeNameKey(p.name)){ score += 25; if(!why) why = 'handled ' + r.candidate + ' before (' + sameCand[0]._date + ')'; }
+      score -= 4 * (loadOf[p.name] || 0);
+      score -= idx * 0.01; // stable tie-break by roster order
+      if(!best || score > best.score) best = { p, score, why };
+    });
+    if(!best){ out.push({ rowId: r.id, name: '', reason: 'Everyone available in ' + team + ' is already booked at ' + (r.time || 'that time') + '.' }); return; }
+    const load = loadOf[best.p.name] || 0;
+    const reason = best.why ? (best.p.name + ' ' + best.why + '. Load today: ' + load + '.') : ('Lightest load in ' + team + ' (' + load + ' call' + (load === 1 ? '' : 's') + ' today), free at ' + (r.time || 'that time') + '.');
+    out.push({ rowId: r.id, name: best.p.name, reason, strong: !!best.why });
+    loadOf[best.p.name] = load + 1; (busy[best.p.name] = busy[best.p.name] || []).push(iv);
+  });
+  return out;
+}
+
+// ---- 2. Checks: workload / duplicates / overlaps ---------------------------
+function deskChecks(rows, roster, absentIds, teamNames){
+  const issues = []; const perPerson = [];
+  const count = {};
+  (rows || []).forEach(r => { if(r.woi || deskNeedsPerson(r, teamNames)) return; count[r.assignee] = (count[r.assignee] || 0) + 1; });
+  const teams = {};
+  roster.forEach(p => { (teams[p.team] = teams[p.team] || []).push(p); });
+  Object.keys(teams).forEach(t => {
+    const avail = teams[t].filter(p => !absentIds.includes(p.id));
+    const totals = avail.map(p => ({ name: p.name, n: count[p.name] || 0 }));
+    teams[t].forEach(p => perPerson.push({ name: p.name, team: t, n: count[p.name] || 0, absent: absentIds.includes(p.id) }));
+    const teamTotal = teams[t].reduce((s, p) => s + (count[p.name] || 0), 0);
+    if(avail.length >= 2 && teamTotal >= DESK_IMBALANCE_SPREAD){
+      const mx = totals.reduce((a, b) => b.n > a.n ? b : a), mn = totals.reduce((a, b) => b.n < a.n ? b : a);
+      if(mx.n - mn.n >= DESK_IMBALANCE_SPREAD) issues.push({ type: 'imbalance', text: t + ': ' + mx.name + ' has ' + mx.n + ' calls, ' + mn.name + ' has ' + mn.n + '.' });
+    }
+  });
+  const absentNames = new Set(roster.filter(p => absentIds.includes(p.id)).map(p => p.name));
+  Object.keys(count).forEach(n => { if(absentNames.has(n)) issues.push({ type: 'absent', text: n + ' is marked absent but holds ' + count[n] + ' call' + (count[n] > 1 ? 's' : '') + '.' }); });
+  const conflicts = computeConflicts(rows || []);
+  if(conflicts.size) issues.push({ type: 'overlap', text: conflicts.size + ' call' + (conflicts.size > 1 ? 's' : '') + ' overlap with the same person\'s other call (see the red ⚠ rows).' });
+  const needPerson = (rows || []).filter(r => !r.woi && r.candidate && deskNeedsPerson(r, teamNames)).length;
+  if(needPerson) issues.push({ type: 'unassigned', text: needPerson + ' call' + (needPerson > 1 ? 's' : '') + ' still need a named person (open Suggest).' });
+  // duplicates: same time+round (existing detector) and same candidate+company at different times
+  const dupes = [];
+  findDuplicateCallGroups(rows || []).forEach(g => dupes.push(g[0].candidate + ' — listed ' + g.length + '× at ' + (g[0].time || '?') + ' (' + (g[0].round || 'round n/a') + ')'));
+  const byCC = {};
+  (rows || []).forEach(r => { const k = normalizeNameKey(r.candidate) + '|' + normalizeCompanyKey(r.company); if(!normalizeNameKey(r.candidate) || !normalizeCompanyKey(r.company)) return; (byCC[k] = byCC[k] || []).push(r); });
+  Object.values(byCC).forEach(g => {
+    if(g.length < 2) return;
+    const times = new Set(g.map(r => (r.time || '').replace(/\s+/g, '').toUpperCase()));
+    const rounds = new Set(g.map(r => (r.round || '').trim().toLowerCase()));
+    if(times.size > 1 && rounds.size === 1) dupes.push(g[0].candidate + ' — ' + g.length + ' calls with ' + g[0].company + ' today in the same round at different times (' + g.map(r => r.time).join(', ') + ')');
+  });
+  dupes.forEach(d => issues.push({ type: 'duplicate', text: 'Possible duplicate: ' + d }));
+  return { issues, perPerson };
+}
+
+// ---- 3. Loose ends --------------------------------------------------------
+function deskLooseEnds(allRows, today, teamNames){
+  const from = deskDateAdd(today, -DESK_LOOSE_END_LOOKBACK_DAYS);
+  return (allRows || []).filter(r => r._date && r._date < today && r._date >= from && !r.woi && r.candidate && !r.status && deskNeedsPerson(r, teamNames))
+    .map(r => ({ date: r._date, time: r.time || '', candidate: r.candidate, company: r.company || '', round: r.round || '', kind: String(r.assignee || '').trim() ? 'team-only' : 'unassigned', team: String(r.assignee || '').trim() }))
+    .sort((a, b) => b.date.localeCompare(a.date) || timeToMinutes(a.time) - timeToMinutes(b.time));
+}
+
+// ---- 4. Reschedules -------------------------------------------------------
+const DESK_MONTHS = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12 };
+function deskMonthNum(s){ const l = String(s).toLowerCase(); const keys = Object.keys(DESK_MONTHS).sort((a, b) => b.length - a.length); const k = keys.find(k => l.startsWith(k)); return k ? DESK_MONTHS[k] : 0; }
+function deskParseLooseDate(value, refDate){
+  const v = String(value || '').trim(); if(!v) return '';
+  const refY = Number((refDate || todayDateString()).slice(0, 4));
+  let y, m, d, mm;
+  if((mm = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(v))){ y = +mm[1]; m = +mm[2]; d = +mm[3]; }
+  else if((mm = /^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/.exec(v))){ m = +mm[1]; d = +mm[2]; y = mm[3] ? (+mm[3] < 100 ? 2000 + +mm[3] : +mm[3]) : refY; if(m > 12 && d <= 12){ const t = m; m = d; d = t; } }
+  else if((mm = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/.exec(v)) && deskMonthNum(mm[1])){ m = deskMonthNum(mm[1]); d = +mm[2]; y = mm[3] ? +mm[3] : refY; }
+  else if((mm = /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?(?:,?\s+(\d{4}))?/.exec(v)) && deskMonthNum(mm[2])){ d = +mm[1]; m = deskMonthNum(mm[2]); y = mm[3] ? +mm[3] : refY; }
+  else return '';
+  if(!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return '';
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+function deskReschedules(allRows, today, pkey){
+  pkey = pkey || normalizeNameKey;
+  const from = deskDateAdd(today, -DESK_RESCHEDULE_LOOKBACK_DAYS);
+  const rows = allRows || [];
+  const out = [];
+  rows.filter(r => r._date && r._date >= from && r.status === 'rescheduled' && r.candidate).forEach(r => {
+    const f = (r.statusFields || []).find(x => /new\s*date/i.test(x.label || ''));
+    const t = (r.statusFields || []).find(x => /new\s*time/i.test(x.label || ''));
+    let nd = f ? deskParseLooseDate(f.value, r._date) : '';
+    if(nd && nd < deskDateAdd(r._date, -1)) { const y = Number(nd.slice(0, 4)); nd = (y + 1) + nd.slice(4); } // "Jan 3" typed in December
+    const nk = pkey(r.candidate), ck = normalizeCompanyKey(r.company);
+    const later = rows.some(x => x !== r && x._date && pkey(x.candidate) === nk && normalizeCompanyKey(x.company) === ck && !DESK_BAD_STATUSES.includes(x.status) && (nd ? x._date >= nd : x._date > r._date));
+    let state = later ? 'done' : (!nd ? 'nodate' : (nd < today ? 'overdue' : (nd === today ? 'today' : 'upcoming')));
+    out.push({ candidate: r.candidate, company: r.company || '', originalDate: r._date, newDate: nd, newTime: t ? t.value : '', rawNewDate: f ? f.value : '', assignee: r.assignee || '', state });
+  });
+  const order = { overdue: 0, today: 1, nodate: 2, upcoming: 3, done: 4 };
+  return out.sort((a, b) => order[a.state] - order[b.state] || (a.newDate || '').localeCompare(b.newDate || ''));
+}
+
+// ---- 5. Candidate timeline ------------------------------------------------
+function deskCandidateSearch(allRows, query, resolver){
+  resolver = resolver || deskBuildPersonResolver(allRows);
+  if(deskNameTokens(query).join('').length < 2) return [];
+  const q = normalizeNameKey(query);
+  const out = [];
+  resolver.clusters.forEach(c => { if(c.variants.some(v => deskLooseNameMatch(query, v))) out.push(c); });
+  const rank = c => (c.variants.some(v => normalizeNameKey(v) === q) ? 0 : (c.variants.some(v => normalizeNameKey(v).startsWith(q)) ? 1 : 2));
+  return out.sort((a, b) => rank(a) - rank(b) || b.last.localeCompare(a.last)).slice(0, 12);
+}
+// Other clusters that merely CONTAIN this person's name (e.g. "Abhishek Singh" vs "Abhishek Singh Hazari") — offered as optional extras, never merged automatically.
+function deskRelatedClusters(resolver, key){
+  const base = resolver.clusters.get(key); if(!base) return [];
+  const out = [];
+  resolver.clusters.forEach(c => { if(c.key !== key && (c.variants.some(v => base.variants.some(bv => deskLooseNameMatch(bv, v) || deskLooseNameMatch(v, bv))))) out.push(c); });
+  return out.sort((a, b) => b.n - a.n).slice(0, 8);
+}
+function deskCandidateTimeline(allRows, keys, resolver){
+  resolver = resolver || deskBuildPersonResolver(allRows);
+  const set = new Set([].concat(keys));
+  return (allRows || []).filter(r => r.candidate && set.has(resolver.keyOf(r.candidate)))
+    .map(r => ({ date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', assignee: r.assignee || '', status: r.status || '', woi: !!r.woi, typedAs: r.candidate, clusterKey: resolver.keyOf(r.candidate), reason: (r.statusFields || []).map(f => f.label + ': ' + f.value).filter(x => !/: $/.test(x)).join(', ') }))
+    .sort((a, b) => b.date.localeCompare(a.date) || timeToMinutes(b.time) - timeToMinutes(a.time));
+}
+
+// ---- 6. Weekly report -----------------------------------------------------
+function deskWeeklyReport(allRows, weekStart, teamNames){
+  const end = deskDateAdd(weekStart, 6);
+  const per = {}; let woi = 0;
+  const bucket = n => per[n] || (per[n] = { name: n, total: 0, first: 0, adv: 0, resched: 0, cancelled: 0, noresp: 0 });
+  (allRows || []).filter(r => r._date && r._date >= weekStart && r._date <= end && r.candidate).forEach(r => {
+    if(r.woi){ woi++; return; }
+    const who = deskNeedsPerson(r, teamNames) ? (String(r.assignee || '').trim() ? 'Team-level: ' + r.assignee : 'Unassigned') : r.assignee;
+    const b = bucket(who); b.total++;
+    if(isAdvancedRound(r.round)) b.adv++; else b.first++;
+    if(r.status === 'rescheduled') b.resched++; else if(r.status === 'cancelled') b.cancelled++; else if(r.status === 'not_responded' || r.status === 'no_invite') b.noresp++;
+  });
+  const rows = Object.values(per).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  const tot = rows.reduce((t, r) => { Object.keys(r).forEach(k => { if(k !== 'name') t[k] = (t[k] || 0) + r[k]; }); return t; }, {});
+  return { start: weekStart, end, rows, totals: tot, woi };
+}
+function deskWeeklyText(rep){
+  const l = ['Coverage Desk — week ' + rep.start + ' to ' + rep.end, 'Calls: ' + (rep.totals.total || 0) + ' | WOI: ' + rep.woi, ''];
+  rep.rows.forEach(r => l.push(r.name + ': ' + r.total + ' calls (' + r.first + ' 1st, ' + r.adv + ' advanced)' + (r.resched || r.cancelled || r.noresp ? ' — ' + [r.resched ? r.resched + ' resched' : '', r.cancelled ? r.cancelled + ' cancelled' : '', r.noresp ? r.noresp + ' no response' : ''].filter(Boolean).join(', ') : '')));
+  return l.join('\n');
+}
+function deskWeeklyCsv(rep){
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  return ['Person,Total,1st round,Advanced,Rescheduled,Cancelled,No response'].concat(rep.rows.map(r => [q(r.name), r.total, r.first, r.adv, r.resched, r.cancelled, r.noresp].join(','))).join('\n');
+}
+
+// ---- 7. End-of-day message --------------------------------------------------
+function deskEodText(date, rows, teamNames, extra){
+  extra = extra || {};
+  const live = (rows || []).filter(r => !r.woi && r.candidate);
+  const woi = (rows || []).filter(r => r.woi).length;
+  const handled = live.filter(r => !deskNeedsPerson(r, teamNames) || r.status).length;
+  const slipped = live.filter(r => deskNeedsPerson(r, teamNames) && !r.status);
+  const cnt = s => live.filter(r => r.status === s).length;
+  const per = {};
+  live.forEach(r => { if(!deskNeedsPerson(r, teamNames)) per[r.assignee] = (per[r.assignee] || 0) + 1; });
+  const lines = ['📋 Coverage Desk — ' + date, 'Calls: ' + live.length + ' | Handled: ' + handled + ' | Still open: ' + slipped.length + (woi ? ' | WOI: ' + woi : '')];
+  const oc = [cnt('rescheduled') ? cnt('rescheduled') + ' rescheduled' : '', cnt('cancelled') ? cnt('cancelled') + ' cancelled' : '', (cnt('not_responded') + cnt('no_invite')) ? (cnt('not_responded') + cnt('no_invite')) + ' no response' : ''].filter(Boolean);
+  if(oc.length) lines.push('Outcomes: ' + oc.join(', '));
+  if(typeof extra.closures === 'number') lines.push('🏆 Closures today: ' + extra.closures);
+  const names = Object.keys(per).sort((a, b) => per[b] - per[a]);
+  if(names.length){ lines.push('', 'By person:'); names.forEach(n => lines.push('• ' + n + ' — ' + per[n])); }
+  if(slipped.length){ lines.push('', '⚠ Still open (' + slipped.length + '):'); slipped.slice(0, 10).forEach(r => lines.push('• ' + (r.time || '') + ' ' + r.candidate + (r.company ? ' (' + r.company + ')' : ''))); if(slipped.length > 10) lines.push('…and ' + (slipped.length - 10) + ' more'); }
+  if(extra.tomorrow) lines.push('', '📅 Tomorrow: ' + extra.tomorrow.total + ' scheduled' + (extra.tomorrow.woi ? ', ' + extra.tomorrow.woi + ' WOI' : ''));
+  return lines.join('\n');
+}
+
+(function setupDeskTools(){
+  const dt = { tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
+  window._deskTools = dt;
+  const teamNames = () => new Set(state.roster.map(p => p.team));
+  const esc = escapeHtml;
+  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message']];
+
+  function toast(html, ms){
+    const box = document.getElementById('liveFeedToasts'); if(!box) return;
+    const el = document.createElement('div'); el.className = 'lf-toast';
+    el.innerHTML = '<div class="lf-item"><div class="lf-item-main">' + html + '</div><button class="lf-x" data-sa-close aria-label="Dismiss">✕</button></div>';
+    box.appendChild(el); if(ms) setTimeout(() => { if(el.parentNode) el.parentNode.removeChild(el); }, ms);
+  }
+
+  async function ensureData(force){
+    dt.loading = !dt.all; dt.error = ''; paint();
+    try{ dt.all = await fetchAllRowsAcrossDates(!!force); }
+    catch(e){ dt.error = String(e && e.message || e); }
+    dt.loading = false; paint();
+  }
+  const resolver = () => { const rows = allRows(); if(dt._resFor !== rows || !dt._res){ dt._res = deskBuildPersonResolver(rows); dt._resFor = rows; } return dt._res; };
+  const allRows = () => dt.all || (state.rows || []).map(r => Object.assign({}, r, { _date: state.date }));
+
+  function chip(t, c){ return '<span class="dt-chip ' + (c || '') + '">' + esc(t) + '</span>'; }
+  function body(){
+    const today = todayDateString(); const tn = teamNames();
+    if(dt.loading) return '<div class="lf-empty"><span class="spinner"></span> Loading call history…</div>';
+    if(dt.error) return '<div class="lf-empty">⚠ Couldn\'t load call history: ' + esc(dt.error) + ' <button class="lf-link" data-dt-reload>Retry</button></div>';
+    const hist = allRows();
+    if(dt.tab === 'suggest'){
+      if(state.date !== today) return '<div class="lf-empty">Suggestions are for today\'s board. Switch to today\'s date first.</div>';
+      const sug = deskSuggestAssignees(state.rows, hist, state.roster, state.absentIds, today, tn, resolver().keyOf);
+      if(!sug.length) return '<div class="lf-empty">✅ Every call today already has a named person.</div>';
+      const byId = Object.fromEntries(state.rows.map(r => [r.id, r]));
+      const can = CURRENT_ROLE === 'admin';
+      return '<div class="dt-note">' + sug.length + ' call' + (sug.length > 1 ? 's' : '') + ' need a person. Suggestions use: who handled this candidate/company before, who is free at that time, and today\'s load — within the call\'s own team only.</div>' +
+        (can && sug.some(s => s.name) ? '<button class="lf-act primary" data-dt-acceptall style="margin-bottom:8px">Accept all suggestions</button>' : '') +
+        sug.map(s => { const r = byId[s.rowId]; if(!r) return ''; return '<div class="dt-row"><div class="dt-main"><b>' + esc(r.time || '') + '</b> ' + esc(r.candidate) + (r.company ? ' — ' + esc(r.company) : '') + ' ' + chip(r.round || '1st') + '<div class="dt-sub">' + (s.name ? '→ <b>' + esc(s.name) + '</b> · ' : '') + esc(s.reason) + '</div></div>' + (can && s.name ? '<button class="lf-act primary" data-dt-accept="' + esc(s.rowId) + '" data-name="' + esc(s.name) + '">Accept</button>' : '') + '</div>'; }).join('') +
+        (can ? '' : '<div class="dt-note">Read-only role — suggestions are for reference.</div>');
+    }
+    if(dt.tab === 'checks'){
+      const c = deskChecks(state.rows, state.roster, state.absentIds, tn);
+      const maxN = Math.max(1, ...c.perPerson.map(p => p.n));
+      return (c.issues.length ? c.issues.map(i => '<div class="dt-issue">⚠ ' + esc(i.text) + '</div>').join('') : '<div class="dt-ok">✅ No workload, overlap or duplicate problems on ' + esc(state.date) + '.</div>') +
+        '<div class="dt-note" style="margin-top:10px">Calls per person (' + esc(state.date) + ')</div>' +
+        c.perPerson.filter(p => p.n || !p.absent).sort((a, b) => b.n - a.n).map(p => '<div class="dt-bar"><span class="dt-bar-name">' + esc(p.name) + '</span><span class="dt-bar-track"><span class="dt-bar-fill" style="width:' + Math.round(p.n / maxN * 100) + '%"></span></span><span class="dt-bar-n">' + p.n + '</span></div>').join('');
+    }
+    if(dt.tab === 'loose'){
+      const items = deskLooseEnds(hist, today, tn);
+      if(!items.length) return '<div class="dt-ok">✅ No loose ends in the last ' + DESK_LOOSE_END_LOOKBACK_DAYS + ' days.</div>';
+      return '<div class="dt-note">Past calls (last ' + DESK_LOOSE_END_LOOKBACK_DAYS + ' days) with no named person and no outcome tag — these may never have been handled or recorded.</div>' +
+        items.map(i => '<div class="dt-row"><div class="dt-main"><b>' + esc(i.date) + '</b> ' + esc(i.time) + ' ' + esc(i.candidate) + (i.company ? ' — ' + esc(i.company) : '') + '<div class="dt-sub">' + (i.kind === 'team-only' ? 'Only assigned to ' + esc(i.team) + ' (no person)' : 'Unassigned') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(i.date) + '">Open day</button></div>').join('');
+    }
+    if(dt.tab === 'resched'){
+      const items = deskReschedules(hist, today, resolver().keyOf);
+      const shown = items.filter(i => dt.showDone || i.state !== 'done');
+      const label = { overdue: ['Overdue', 'bad'], today: ['Due today', 'warn'], nodate: ['No new date', 'warn'], upcoming: ['Upcoming', ''], done: ['Happened ✓', 'ok'] };
+      return '<div class="dt-note">Rescheduled calls from the last ' + DESK_RESCHEDULE_LOOKBACK_DAYS + ' days. "Happened" means the same candidate has a later call at that company. <label style="margin-left:8px"><input type="checkbox" data-dt-showdone ' + (dt.showDone ? 'checked' : '') + '> show happened</label></div>' +
+        (shown.length ? shown.map(i => '<div class="dt-row"><div class="dt-main"><b>' + esc(i.candidate) + '</b>' + (i.company ? ' — ' + esc(i.company) : '') + ' ' + chip(label[i.state][0], label[i.state][1]) + '<div class="dt-sub">Was ' + esc(i.originalDate) + ' → ' + (i.newDate ? esc(i.newDate) + (i.newTime ? ' ' + esc(i.newTime) : '') : 'new date not recorded' + (i.rawNewDate ? ' ("' + esc(i.rawNewDate) + '")' : '')) + (i.assignee ? ' · ' + esc(i.assignee) : '') + '</div></div>' + (i.newDate ? '<button class="lf-act" data-dt-gotodate="' + esc(i.newDate) + '">Open ' + esc(i.newDate.slice(5)) + '</button>' : '') + '</div>').join('') : '<div class="dt-ok">✅ Nothing waiting on a reschedule.</div>');
+    }
+    if(dt.tab === 'cand'){
+      const R = resolver();
+      let html = '<input class="sa-in" id="dtCandQuery" placeholder="Type any part of a name — spelling and word order don\'t have to match" value="' + esc(dt.query) + '" style="width:100%;margin-bottom:8px">';
+      const res = deskCandidateSearch(hist, dt.query, R);
+      if(dt.query && !res.length) html += '<div class="dt-note">No candidate found for "' + esc(dt.query) + '".</div>';
+      html += res.map(r => '<button class="lf-act' + (r.key === dt.selKey ? ' primary' : '') + '" data-dt-pick="' + esc(r.key) + '" style="margin:0 6px 6px 0" title="' + esc(r.variants.join(' / ')) + '">' + esc(r.name) + ' · ' + r.n + (r.variants.length > 1 ? ' · ' + r.variants.length + ' spellings' : '') + '</button>').join('');
+      if(dt.selKey && R.clusters.get(dt.selKey)){
+        const base = R.clusters.get(dt.selKey);
+        const keys = [dt.selKey].concat(Array.from(dt.extra).filter(k => R.clusters.has(k)));
+        const tl = deskCandidateTimeline(hist, keys, R);
+        const cos = new Set(tl.map(t => normalizeCompanyKey(t.company)).filter(Boolean));
+        const names = new Set(); keys.forEach(k => R.clusters.get(k).variants.forEach(v => names.add(v)));
+        const closed = (state.closures || []).filter(c => names.has(String(c.candidate || '').replace(/\s+/g, ' ').trim()) || keys.includes(R.keyOf(c.candidate)));
+        const rel = deskRelatedClusters(R, dt.selKey);
+        html += '<div class="dt-note" style="margin-top:8px"><b>' + tl.length + ' call' + (tl.length > 1 ? 's' : '') + '</b> across <b>' + cos.size + '</b> compan' + (cos.size === 1 ? 'y' : 'ies') + (closed.length ? ' · 🏆 ' + closed.length + ' closure' + (closed.length > 1 ? 's' : '') + ' (' + closed.map(c => esc(c.company)).join(', ') + ')' : '') +
+          (names.size > 1 ? '<br>Includes these spellings: ' + Array.from(names).map(n => esc(n)).join(' · ') : '') + '</div>' +
+          (rel.length ? '<div class="dt-note">Could also be the same person? Tap to include / exclude: ' + rel.map(c => '<button class="lf-act' + (dt.extra.has(c.key) ? ' primary' : '') + '" data-dt-extra="' + esc(c.key) + '" style="margin:2px 4px 2px 0">' + esc(c.name) + ' · ' + c.n + '</button>').join('') + '</div>' : '') +
+          tl.map(t => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + ' ' + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
+      }
+      return html;
+    }
+    if(dt.tab === 'weekly'){
+      if(!dt.weekStart) dt.weekStart = deskMonday(today);
+      const rep = deskWeeklyReport(hist, dt.weekStart, tn);
+      return '<div class="dt-weeknav"><button class="lf-act" data-dt-week="-1">‹ Prev</button><b>' + esc(rep.start) + ' → ' + esc(rep.end) + '</b><button class="lf-act" data-dt-week="1">Next ›</button></div>' +
+        (rep.rows.length ? '<div class="table-scroll"><table class="dt-table"><thead><tr><th>Person</th><th>Calls</th><th>1st</th><th>Adv</th><th>Resch</th><th>Canc</th><th>No resp</th></tr></thead><tbody>' +
+          rep.rows.map(r => '<tr><td>' + esc(r.name) + '</td><td><b>' + r.total + '</b></td><td>' + r.first + '</td><td>' + r.adv + '</td><td>' + r.resched + '</td><td>' + r.cancelled + '</td><td>' + r.noresp + '</td></tr>').join('') +
+          '</tbody><tfoot><tr><td>Total</td><td>' + (rep.totals.total || 0) + '</td><td>' + (rep.totals.first || 0) + '</td><td>' + (rep.totals.adv || 0) + '</td><td>' + (rep.totals.resched || 0) + '</td><td>' + (rep.totals.cancelled || 0) + '</td><td>' + (rep.totals.noresp || 0) + '</td></tr></tfoot></table></div>' +
+          '<div class="dt-note">' + rep.woi + ' WOI call' + (rep.woi === 1 ? '' : 's') + ' not counted.</div>' +
+          '<div style="display:flex;gap:8px;margin-top:8px"><button class="lf-act primary" data-dt-copy="weekly">Copy as text</button><button class="lf-act" data-dt-csv>Download CSV</button></div>'
+          : '<div class="dt-note">No calls recorded for that week.</div>');
+    }
+    if(dt.tab === 'eod'){
+      const extra = {};
+      if(state.closuresLoaded) extra.closures = (state.closures || []).filter(c => String(c.createdAt || '').slice(0, 10) === state.date).length;
+      if(state.tomorrowPreview) extra.tomorrow = state.tomorrowPreview;
+      const text = deskEodText(state.date, state.rows, tn, extra);
+      return '<div class="dt-note">Ready to paste into WhatsApp. Edit it here if you like.</div><textarea id="dtEodText" class="sa-in" rows="14" style="width:100%;font-family:inherit">' + esc(text) + '</textarea><div style="margin-top:8px"><button class="lf-act primary" data-dt-copy="eod">Copy message</button></div>';
+    }
+    return '';
+  }
+  function paint(){
+    const o = document.getElementById('deskToolsOverlay'); if(!o) return;
+    const card = o.querySelector('.dt-card'); const sc = card ? card.scrollTop : 0;
+    const q = document.getElementById('dtCandQuery'); const hadFocus = q && document.activeElement === q; const pos = q ? q.selectionStart : 0;
+    o.innerHTML = '<div class="my-name-picker-card dt-card"><div class="dt-head"><strong>🧰 Desk Tools</strong><button class="lf-x" data-dt-close aria-label="Close">✕</button></div>' +
+      '<div class="dt-tabs">' + TABS.map(t => '<button class="dt-tab' + (dt.tab === t[0] ? ' active' : '') + '" data-dt-tab="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
+      '<div class="dt-body">' + body() + '</div></div>';
+    const c2 = o.querySelector('.dt-card'); if(c2) c2.scrollTop = sc;
+    if(hadFocus){ const q2 = document.getElementById('dtCandQuery'); if(q2){ q2.focus(); try{ q2.setSelectionRange(pos, pos); }catch(e){} } }
+  }
+  function open(tab){
+    if(tab) dt.tab = tab;
+    let o = document.getElementById('deskToolsOverlay');
+    if(!o){ o = document.createElement('div'); o.id = 'deskToolsOverlay'; o.className = 'my-name-picker-overlay dt-overlay'; document.body.appendChild(o); }
+    paint();
+    if(!dt.loading) ensureData(false);
+  }
+  function close(){ const o = document.getElementById('deskToolsOverlay'); if(o) o.remove(); }
+  window.openDeskTools = open;
+
+  function copy(text, btn){
+    const done = () => { if(btn){ const t = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = t; }, 1500); } };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done).catch(() => fallback()); } else fallback();
+    function fallback(){ const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); done(); }catch(e){} ta.remove(); }
+  }
+  function download(name, text){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  async function gotoDate(d){
+    if(state.dirty && CURRENT_ROLE === 'admin'){ try{ await saveAllChanges(); }catch(e){} if(state.dirty) { toast('<div class="lf-title">Save first</div><div class="lf-body">You have unsaved changes — save them before switching day.</div>', 8000); return; } }
+    close(); closeAllPanels(); state.date = d; await loadDay(d); render(); window.scrollTo({ top: 0 });
+  }
+
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    const op = t.closest('#openDeskTools'); if(op){ state.showMoreMenu = false; render(); open(); return; }
+    const od = t.closest('[data-dt-open]'); if(od){ const tt = od.closest('.lf-toast'); if(tt) tt.remove(); open(od.getAttribute('data-dt-open')); return; }
+    if(t.id === 'deskToolsOverlay' || t.closest('[data-dt-close]')){ close(); return; }
+    const ov = t.closest('#deskToolsOverlay'); if(!ov) return;
+    const tab = t.closest('[data-dt-tab]'); if(tab){ dt.tab = tab.getAttribute('data-dt-tab'); paint(); return; }
+    if(t.closest('[data-dt-reload]')){ ensureData(true); return; }
+    const acc = t.closest('[data-dt-accept]');
+    if(acc && CURRENT_ROLE === 'admin'){ const row = state.rows.find(r => r.id === acc.getAttribute('data-dt-accept')); if(row && deskNeedsPerson(row, teamNames())){ row.assignee = acc.getAttribute('data-name'); markDirty(); render(); paint(); } return; }
+    if(t.closest('[data-dt-acceptall]') && CURRENT_ROLE === 'admin'){
+      const sug = deskSuggestAssignees(state.rows, allRows(), state.roster, state.absentIds, todayDateString(), teamNames(), resolver().keyOf);
+      let n = 0; sug.forEach(s => { const row = state.rows.find(r => r.id === s.rowId); if(row && s.name && deskNeedsPerson(row, teamNames())){ row.assignee = s.name; n++; } });
+      if(n){ markDirty(); render(); } paint(); return;
+    }
+    const gd = t.closest('[data-dt-gotodate]'); if(gd){ gotoDate(gd.getAttribute('data-dt-gotodate')); return; }
+    const pk = t.closest('[data-dt-pick]'); if(pk){ dt.selKey = pk.getAttribute('data-dt-pick'); dt.extra = new Set(); paint(); return; }
+    const ex = t.closest('[data-dt-extra]'); if(ex){ const k = ex.getAttribute('data-dt-extra'); if(dt.extra.has(k)) dt.extra.delete(k); else dt.extra.add(k); paint(); return; }
+    const wk = t.closest('[data-dt-week]'); if(wk){ dt.weekStart = deskDateAdd(dt.weekStart || deskMonday(todayDateString()), 7 * Number(wk.getAttribute('data-dt-week'))); paint(); return; }
+    const cp = t.closest('[data-dt-copy]');
+    if(cp){ const k = cp.getAttribute('data-dt-copy'); const text = k === 'eod' ? document.getElementById('dtEodText').value : deskWeeklyText(deskWeeklyReport(allRows(), dt.weekStart || deskMonday(todayDateString()), teamNames())); copy(text, cp); return; }
+    if(t.closest('[data-dt-csv]')){ const rep = deskWeeklyReport(allRows(), dt.weekStart || deskMonday(todayDateString()), teamNames()); download('weekly-report-' + rep.start + '.csv', deskWeeklyCsv(rep)); return; }
+  });
+  document.addEventListener('change', function(e){ if(e.target && e.target.matches && e.target.matches('[data-dt-showdone]')){ dt.showDone = e.target.checked; paint(); } });
+  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'dtCandQuery'){ dt.query = e.target.value; dt.selKey = ''; dt.extra = new Set(); paint(); } });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && document.getElementById('deskToolsOverlay')){ close(); } });
+
+  // Pre-save heads-up (never blocks the save): called at the start of saveAllChanges.
+  window.deskPreSaveCheck = function(){
+    if(CURRENT_ROLE !== 'admin' || state.date !== todayDateString()) return;
+    const c = deskChecks(state.rows, state.roster, state.absentIds, teamNames());
+    const hard = c.issues.filter(i => ['imbalance', 'absent', 'overlap', 'duplicate'].includes(i.type));
+    if(!hard.length) return;
+    const sig = state.date + '|' + hard.map(i => i.text).join('|');
+    if(sig === dt.lastWarnSig) return; dt.lastWarnSig = sig;
+    toast('<div class="lf-title">⚖️ Saving — but heads-up</div><div class="lf-body">' + hard.slice(0, 3).map(i => esc(i.text)).join('<br>') + (hard.length > 3 ? '<br>+' + (hard.length - 3) + ' more' : '') + '</div><div class="lf-actions"><button class="lf-act" data-dt-open="checks">Open checks</button></div>', 15000);
+  };
+  // Morning nudge: called by the Live Feed after it loads call history (no extra fetch).
+  window.deskOnAllRows = function(all, today){
+    dt.all = all;
+    try{
+      const key = 'cd_desk_morning_' + today; if(localStorage.getItem(key)) return;
+      const n = deskLooseEnds(all, today, teamNames()).length;
+      localStorage.setItem(key, '1');
+      if(n) toast('<div class="lf-title">☀️ ' + n + ' loose end' + (n > 1 ? 's' : '') + ' from the last ' + DESK_LOOSE_END_LOOKBACK_DAYS + ' days</div><div class="lf-body">Calls that never got a named person or an outcome.</div><div class="lf-actions"><button class="lf-act" data-dt-open="loose">Review</button></div>', 20000);
+    }catch(e){}
+  };
 })();
 
 (async function init(){
