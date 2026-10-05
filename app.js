@@ -2899,6 +2899,52 @@ function exportClosuresToExcel(){
   }
   XLSX.writeFile(wb, `Coverage-Desk-Closures-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
+// Candidate Activity -> Excel. Exports exactly what the panel is showing (month / stale-only / search filters applied).
+function candidateActivityVisibleList(){
+  const showAll = state.candidateActivityShowAll !== false;
+  const month = state.candidateActivityMonth || currentMonthKey();
+  const data = state.candidateLastStatusData || [];
+  const monthScoped = showAll ? data : data.filter(s => s.monthKey === month);
+  const staleScoped = state.candidateActivityStaleOnly ? monthScoped.filter(s => s.isStale) : monthScoped;
+  const q = (state.notifSearchLastStatus||'').trim().toLowerCase();
+  return q ? staleScoped.filter(s => (s.candidate||'').toLowerCase().includes(q) || (s.company||'').toLowerCase().includes(q)) : staleScoped;
+}
+function exportCandidateActivityToExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('The Excel library did not load (probably a network/ad-blocker issue) — try refreshing the page.');
+    return;
+  }
+  const list = candidateActivityVisibleList();
+  if(!list.length){ alert('There are no candidates in the current view to export.'); return; }
+  const stLabel = (st, woi) => st ? statusBadgeInfo(st).label : (woi ? 'Waiting on Invite' : '');
+  const showAll = state.candidateActivityShowAll !== false;
+  const scope = showAll ? 'All-months' : (state.candidateActivityMonth || currentMonthKey());
+  const summary = list.map(s => ({
+    'Candidate': s.candidate || '',
+    'Last company': s.company || '',
+    'Total calls': s.totalCalls,
+    'Last call date': s.lastDate || '',
+    'Last round': s.lastRound || '',
+    'Last status': stLabel(s.lastStatus, s.lastWoi),
+    'Handler': s.assignee || '',
+    'Days since last call': s.daysSince === null ? '' : s.daysSince,
+    ['Stale (' + CANDIDATE_ACTIVITY_STALE_DAYS + '+ days)']: s.isStale ? 'Yes' : '',
+    'Month of last call': s.monthKey || '',
+  }));
+  const calls = [];
+  list.forEach(s => (s.calls || []).forEach((c, i) => calls.push({
+    'Candidate': s.candidate || '', 'Call #': i + 1, 'Date': c.date || '', 'Time': c.woi ? 'WOI' : (c.time || ''),
+    'Company': c.company || '', 'Round': c.round || '', 'Status': stLabel(c.status, c.woi),
+  })));
+  const wb = XLSX.utils.book_new();
+  const sh1 = XLSX.utils.json_to_sheet(summary);
+  sh1['!cols'] = [{wch:28},{wch:26},{wch:11},{wch:14},{wch:14},{wch:20},{wch:18},{wch:18},{wch:16},{wch:16}];
+  XLSX.utils.book_append_sheet(wb, sh1, 'Candidates');
+  const sh2 = XLSX.utils.json_to_sheet(calls);
+  sh2['!cols'] = [{wch:28},{wch:8},{wch:12},{wch:12},{wch:26},{wch:14},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, sh2, 'All calls');
+  XLSX.writeFile(wb, `Coverage-Desk-Candidate-Activity-${scope}-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
   if(teamNames.has(assignee)) return assignee;
@@ -7921,6 +7967,7 @@ function renderNotificationsPanel(){
         <div style="font-weight:700;font-size:14px;min-width:150px;text-align:center">${candidateActivityShowAll ? 'All months' : escapeHtml(monthKeyLabel(candidateActivityMonth))}</div>
         <button class="btn ghost" id="candidateActivityNextMonth" title="Next month" ${candidateActivityShowAll?'disabled':''}>▶</button>
         <button class="btn ghost" id="candidateActivityToggleAll" style="margin-left:auto">${candidateActivityShowAll ? '📅 Show one month at a time' : '📋 Show all months'}</button>
+        <button class="btn ghost" id="candidateActivityExcel" title="Download exactly what is shown here (month, stale and search filters applied) as an Excel file">⬇ Excel</button>
       </div>`;
       // Clicking the 🔴 stale count filters down to just those candidates —
       // click again (the button relabels to say so) to clear the filter
@@ -11094,6 +11141,8 @@ function attachHandlers(conflictIds){
   if(candidateActivityNextBtn) candidateActivityNextBtn.onclick = ()=>{ state.candidateActivityMonth = shiftMonthKey(state.candidateActivityMonth || currentMonthKey(), 1); state.candidateActivityShowAll = false; render(); };
   const candidateActivityToggleAllBtn = document.getElementById('candidateActivityToggleAll');
   if(candidateActivityToggleAllBtn) candidateActivityToggleAllBtn.onclick = ()=>{ state.candidateActivityShowAll = !state.candidateActivityShowAll; render(); };
+  const candidateActivityExcelBtn = document.getElementById('candidateActivityExcel');
+  if(candidateActivityExcelBtn) candidateActivityExcelBtn.onclick = ()=>{ try{ exportCandidateActivityToExcel(); }catch(e){ alert('Excel download failed: ' + (e && e.message || e)); } };
   const candidateActivityStaleOnlyBtn = document.getElementById('candidateActivityStaleOnlyToggle');
   if(candidateActivityStaleOnlyBtn) candidateActivityStaleOnlyBtn.onclick = ()=>{ state.candidateActivityStaleOnly = !state.candidateActivityStaleOnly; render(); };
 
