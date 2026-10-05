@@ -15277,6 +15277,288 @@ window.addEventListener('keydown', (e)=>{
     render();
   }
 });
+// ===========================================================================
+// LIVE FEED (2026-10-05) — Facebook-style smart alerts. Completely separate
+// from the existing 🔔 Notifications panel / ⏰ Alerts (nothing there is
+// touched). Lives OUTSIDE #app (like the bottom nav) so render() never wipes
+// it. Two rules, both evaluated from the app's own call history:
+//   A) "Back after a long gap" — a candidate whose previous call was 14+ days
+//      ago gets a call today.
+//   B) "Company handled by one person" — a company whose recent calls were
+//      all handled by the same person gets a new call today that is
+//      unassigned or goes to someone else.
+// Delivery: slide-in toast top-right (auto-hides) + 🛎️ bell with unread
+// badge + a feed list that keeps the history.
+// ===========================================================================
+const LIVEFEED_LONG_GAP_DAYS = 14;      // Rule A threshold
+const LIVEFEED_COMPANY_LOOKBACK_DAYS = 7; // Rule B window
+const LIVEFEED_COMPANY_MIN_CALLS = 2;     // Rule B: min earlier assigned calls
+const LIVEFEED_STORE_KEY = 'coveragedesk_livefeed_v1';
+const LIVEFEED_MAX_ITEMS = 60;
+const LIVEFEED_MAX_TOASTS = 3;
+const LIVEFEED_TOAST_MS = 10000;
+
+function livefeedDayDiff(a, b){ // b - a, in whole days, both 'YYYY-MM-DD'
+  const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
+  if(pa.length<3 || pb.length<3 || pa.some(isNaN) || pb.some(isNaN)) return NaN;
+  return Math.round((Date.UTC(pb[0],pb[1]-1,pb[2]) - Date.UTC(pa[0],pa[1]-1,pa[2])) / 86400000);
+}
+
+// Pure rule engine — no DOM, no state; takes every call across dates (rows
+// carry `_date`) and today's date string, returns the alerts that apply.
+function computeSmartAlerts(allRows, today){
+  const alerts = [];
+  const rows = (allRows || []).filter(r => r && r._date && r.candidate && String(r.candidate).trim());
+  const todayRows = rows.filter(r => r._date === today);
+  const priorRows = rows.filter(r => r._date < today);
+  if(!todayRows.length) return alerts;
+
+  // ---- Rule A: candidate returns after a long gap ----
+  const lastPriorByCand = new Map(); // key -> {date,row}
+  priorRows.forEach(r => {
+    const k = normalizeNameKey(r.candidate); if(!k) return;
+    const cur = lastPriorByCand.get(k);
+    if(!cur || r._date > cur.date) lastPriorByCand.set(k, { date: r._date, row: r });
+  });
+  const seenA = new Set();
+  todayRows.forEach(r => {
+    const k = normalizeNameKey(r.candidate);
+    if(!k || seenA.has(k)) return;
+    const prev = lastPriorByCand.get(k); if(!prev) return;
+    const gap = livefeedDayDiff(prev.date, today);
+    if(!(gap >= LIVEFEED_LONG_GAP_DAYS)) return;
+    seenA.add(k);
+    alerts.push({
+      id: 'A|' + today + '|' + k, type: 'long-gap', date: today,
+      candidate: r.candidate, company: r.company || '', rowId: r.id,
+      gapDays: gap, lastDate: prev.date, lastCompany: prev.row.company || '', lastAssignee: prev.row.assignee || '',
+      title: '⏳ ' + r.candidate + ' is back after ' + gap + ' days',
+      body: 'Last call was ' + prev.date + (prev.row.company ? ' (' + prev.row.company + ')' : '') +
+            (prev.row.assignee ? ', handled by ' + prev.row.assignee : '') +
+            '. Today: ' + (r.company || 'a new call') + (r.assignee ? ' → ' + r.assignee : ' (unassigned)') + '.'
+    });
+  });
+
+  // ---- Rule B: company's recent calls all handled by one person ----
+  const cutoff = (function(){ const p = today.split('-').map(Number); const d = new Date(Date.UTC(p[0],p[1]-1,p[2]-LIVEFEED_COMPANY_LOOKBACK_DAYS)); return d.toISOString().slice(0,10); })();
+  const histByCompany = new Map();
+  priorRows.forEach(r => {
+    if(r._date < cutoff) return;
+    const ck = normalizeCompanyKey(r.company); const ak = normalizeNameKey(r.assignee);
+    if(!ck || !ak) return;
+    if(!histByCompany.has(ck)) histByCompany.set(ck, []);
+    histByCompany.get(ck).push(r);
+  });
+  const todayByCompany = new Map();
+  todayRows.forEach(r => {
+    const ck = normalizeCompanyKey(r.company); if(!ck) return;
+    if(!todayByCompany.has(ck)) todayByCompany.set(ck, []);
+    todayByCompany.get(ck).push(r);
+  });
+  todayByCompany.forEach((tRows, ck) => {
+    const hist = histByCompany.get(ck);
+    if(!hist || hist.length < LIVEFEED_COMPANY_MIN_CALLS) return;
+    const handlers = new Set(hist.map(r => normalizeNameKey(r.assignee)));
+    if(handlers.size !== 1) return;
+    const handlerKey = Array.from(handlers)[0];
+    const handlerName = hist[0].assignee;
+    const needing = tRows.filter(r => normalizeNameKey(r.assignee) !== handlerKey);
+    if(!needing.length) return; // today's calls already with the usual person — nothing to flag
+    const unassigned = needing.filter(r => !normalizeNameKey(r.assignee));
+    const others = needing.filter(r => normalizeNameKey(r.assignee));
+    const days = new Set(hist.map(r => r._date)).size;
+    const company = tRows[0].company;
+    const parts = [];
+    if(unassigned.length) parts.push(unassigned.length + ' unassigned');
+    if(others.length) parts.push(others.length + ' with ' + Array.from(new Set(others.map(r => r.assignee))).join(', '));
+    alerts.push({
+      id: 'B|' + today + '|' + ck, type: 'company-handler', date: today,
+      company, handler: handlerName, rowId: (unassigned[0] || needing[0]).id,
+      priorCalls: hist.length, priorDays: days,
+      title: '🏢 ' + company + ' — previously handled by ' + handlerName,
+      body: hist.length + ' earlier call' + (hist.length>1?'s':'') + ' over the last ' + days + ' day' + (days>1?'s':'') +
+            ' all went to ' + handlerName + '. Today ' + needing.length + ' new call' + (needing.length>1?'s are':' is') + ' not with them (' + parts.join(', ') + ').'
+    });
+  });
+  return alerts;
+}
+
+(function setupLiveFeed(){
+  const lf = { items: [], muted: false, open: false, lastError: null, lastCheckedAt: 0, lastSig: '', timer: null, running: false };
+  window._liveFeed = lf;
+
+  function load(){
+    try{
+      const raw = localStorage.getItem(LIVEFEED_STORE_KEY);
+      if(raw){ const o = JSON.parse(raw); lf.items = Array.isArray(o.items) ? o.items : []; lf.muted = !!o.muted; }
+    }catch(e){}
+  }
+  function save(){
+    try{ localStorage.setItem(LIVEFEED_STORE_KEY, JSON.stringify({ items: lf.items.slice(0, LIVEFEED_MAX_ITEMS), muted: lf.muted })); }catch(e){}
+  }
+  load();
+
+  // ----- DOM (outside #app) -----
+  const toastBox = document.createElement('div');
+  toastBox.id = 'liveFeedToasts'; toastBox.className = 'lf-toasts'; toastBox.setAttribute('aria-live','polite');
+  const bell = document.createElement('button');
+  bell.id = 'liveFeedBell'; bell.className = 'lf-bell'; bell.type = 'button';
+  bell.title = 'Live Feed — smart alerts about returning candidates and company handlers'; bell.setAttribute('aria-label','Live Feed');
+  const panel = document.createElement('div');
+  panel.id = 'liveFeedPanel'; panel.className = 'lf-panel'; panel.style.display = 'none';
+  document.body.appendChild(toastBox); document.body.appendChild(bell); document.body.appendChild(panel);
+
+  function unread(){ return lf.items.filter(i => !i.read).length; }
+  function paintBell(){
+    const n = unread();
+    bell.innerHTML = (lf.muted ? '🔕' : '🛎️') + (n ? '<span class="lf-badge">' + (n > 9 ? '9+' : n) + '</span>' : '');
+    bell.classList.toggle('has-unread', n > 0);
+  }
+
+  function ago(ts){
+    const m = Math.round((Date.now() - ts) / 60000);
+    if(m < 1) return 'just now'; if(m < 60) return m + 'm ago';
+    const h = Math.round(m / 60); if(h < 24) return h + 'h ago';
+    return Math.round(h / 24) + 'd ago';
+  }
+  function liveRow(item){
+    if(item.date !== state.date) return null;
+    return (state.rows || []).find(r => r.id === item.rowId) || null;
+  }
+  function actionsHtml(item){
+    const out = [];
+    const row = liveRow(item);
+    if(item.type === 'company-handler' && CURRENT_ROLE === 'admin' && row && !String(row.assignee||'').trim() && item.handler){
+      out.push('<button class="lf-act primary" data-lf-assign="' + escapeHtml(item.id) + '">Assign to ' + escapeHtml(item.handler) + '</button>');
+    }
+    if(item.date === state.date) out.push('<button class="lf-act" data-lf-show="' + escapeHtml(item.id) + '">Show ' + (item.type==='long-gap' ? 'call' : 'calls') + '</button>');
+    return out.join('');
+  }
+  function itemHtml(item, inToast){
+    return '<div class="lf-item ' + (item.read ? '' : 'unread') + '" data-lf-id="' + escapeHtml(item.id) + '">' +
+      '<div class="lf-item-main"><div class="lf-title">' + escapeHtml(item.title) + '</div>' +
+      '<div class="lf-body">' + escapeHtml(item.body) + '</div>' +
+      '<div class="lf-meta">' + escapeHtml(ago(item.ts)) + '</div>' +
+      '<div class="lf-actions">' + actionsHtml(item) + '</div></div>' +
+      (inToast ? '<button class="lf-x" data-lf-dismiss="' + escapeHtml(item.id) + '" aria-label="Dismiss">✕</button>' : '') + '</div>';
+  }
+  function paintPanel(){
+    if(!lf.open){ panel.style.display = 'none'; return; }
+    panel.style.display = 'flex';
+    panel.innerHTML =
+      '<div class="lf-panel-head"><strong>🛎️ Live Feed</strong><span class="lf-head-btns">' +
+      '<button class="lf-link" id="lfMute">' + (lf.muted ? '🔕 Pop-ups off' : '🔔 Pop-ups on') + '</button>' +
+      '<button class="lf-link" id="lfReadAll">Mark read</button>' +
+      '<button class="lf-link" id="lfClear">Clear</button>' +
+      '<button class="lf-x" id="lfClose" aria-label="Close">✕</button></span></div>' +
+      '<div class="lf-list">' + (lf.items.length ? lf.items.map(i => itemHtml(i, false)).join('') :
+        '<div class="lf-empty">Nothing yet. You\'ll be alerted when a candidate comes back after ' + LIVEFEED_LONG_GAP_DAYS + '+ days, or when a company whose recent calls all went to one person gets a new call.</div>') + '</div>' +
+      '<div class="lf-foot">' + (lf.lastError ? '⚠️ Last check failed: ' + escapeHtml(lf.lastError) + ' — will retry. ' : (lf.lastCheckedAt ? 'Checked ' + ago(lf.lastCheckedAt) + '. ' : '')) +
+      '<button class="lf-link" id="lfRecheck">Check now</button></div>';
+  }
+  function setOpen(v){
+    lf.open = v;
+    if(v){ lf.items.forEach(i => { i._seenOpen = true; }); }
+    paintPanel();
+    if(!v){ lf.items.forEach(i => { if(i._seenOpen){ i.read = true; delete i._seenOpen; } }); save(); paintBell(); }
+  }
+
+  // ----- toasts -----
+  function removeToast(el){ if(el && el.parentNode) el.parentNode.removeChild(el); }
+  function showToast(item){
+    if(lf.muted) return;
+    while(toastBox.children.length >= LIVEFEED_MAX_TOASTS) removeToast(toastBox.firstChild);
+    const el = document.createElement('div');
+    el.className = 'lf-toast'; el.setAttribute('role','status'); el.dataset.lfToastId = item.id;
+    el.innerHTML = itemHtml(item, true);
+    toastBox.appendChild(el);
+    let t = setTimeout(() => removeToast(el), LIVEFEED_TOAST_MS);
+    el.addEventListener('mouseenter', () => clearTimeout(t));
+    el.addEventListener('mouseleave', () => { t = setTimeout(() => removeToast(el), 4000); });
+  }
+
+  // ----- evaluation -----
+  async function evaluate(force){
+    if(lf.running) return;
+    const today = todayDateString();
+    if(state.needsLogin || state.date !== today || !(state.rows||[]).length) return;
+    lf.running = true;
+    try{
+      const all = await fetchAllRowsAcrossDates(!!force);
+      const alerts = computeSmartAlerts(all, today);
+      const known = new Set(lf.items.map(i => i.id));
+      const fresh = alerts.filter(a => !known.has(a.id));
+      fresh.forEach(a => { lf.items.unshift(Object.assign({ ts: Date.now(), read: false }, a)); });
+      // refresh the text of existing items for today (counts can change as calls are assigned)
+      alerts.forEach(a => { const ex = lf.items.find(i => i.id === a.id); if(ex){ ex.body = a.body; ex.title = a.title; ex.rowId = a.rowId; ex.handler = a.handler; } });
+      const cutoffTs = Date.now() - 14*86400000;
+      lf.items = lf.items.filter(i => i.ts >= cutoffTs).slice(0, LIVEFEED_MAX_ITEMS);
+      lf.lastError = null; lf.lastCheckedAt = Date.now();
+      save(); paintBell(); if(lf.open) paintPanel();
+      const shown = fresh.slice(0, LIVEFEED_MAX_TOASTS);
+      shown.forEach(showToast);
+      if(fresh.length > shown.length && !lf.muted) showToast({ id:'more', type:'more', date:'', rowId:'', ts:Date.now(), read:false, title:'+' + (fresh.length - shown.length) + ' more alerts', body:'Open the 🛎️ Live Feed to see them all.' });
+    }catch(e){
+      lf.lastError = String(e && e.message || e); console.warn('[LiveFeed] check failed', e);
+      if(lf.open) paintPanel();
+    }finally{ lf.running = false; }
+  }
+  function scheduleCheck(){
+    if(lf.timer) clearTimeout(lf.timer);
+    lf.timer = setTimeout(() => { lf.timer = null; evaluate(false); }, 2000);
+  }
+  function signature(){
+    return state.date + '#' + (state.rows||[]).map(r => (r.id||'') + '|' + (r.candidate||'') + '|' + (r.company||'') + '|' + (r.assignee||'')).join(';');
+  }
+  window.livefeedEvaluateNow = evaluate;
+
+  // re-check only when today's rows actually changed (cheap signature compare)
+  const prevRender = window.render;
+  window.render = function(...args){
+    const result = prevRender.apply(this, args);
+    try{
+      if(state.date === todayDateString() && !state.needsLogin && (state.rows||[]).length){
+        const sig = signature();
+        if(sig !== lf.lastSig){ lf.lastSig = sig; scheduleCheck(); }
+      }
+    }catch(e){}
+    return result;
+  };
+
+  // ----- interactions (event delegation; survives everything) -----
+  function findItem(id){ return lf.items.find(i => i.id === id); }
+  function doShow(item){
+    if(!item) return;
+    closeAllPanels();
+    state.filter = 'all'; state.view = 'all';
+    if(item.type === 'company-handler'){ state.search = ''; state.clientFilter = item.company; }
+    else { state.clientFilter = ''; state.search = item.candidate; }
+    render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function doAssign(item){
+    if(CURRENT_ROLE !== 'admin') return;
+    const row = item && liveRow(item); if(!row || String(row.assignee||'').trim()) return;
+    row.assignee = item.handler; markDirty(); render();
+    const t = toastBox.querySelector('[data-lf-toast-id="' + CSS.escape(item.id) + '"]'); removeToast(t);
+    evaluate(false);
+  }
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    if(t.closest('#liveFeedBell')){ setOpen(!lf.open); return; }
+    const as = t.closest('[data-lf-assign]'); if(as){ doAssign(findItem(as.getAttribute('data-lf-assign'))); if(lf.open) paintPanel(); return; }
+    const sh = t.closest('[data-lf-show]'); if(sh){ doShow(findItem(sh.getAttribute('data-lf-show'))); const tt = sh.closest('.lf-toast'); removeToast(tt); if(lf.open) setOpen(false); return; }
+    const dm = t.closest('[data-lf-dismiss]'); if(dm){ removeToast(dm.closest('.lf-toast')); return; }
+    if(t.closest('#lfClose')){ setOpen(false); return; }
+    if(t.closest('#lfMute')){ lf.muted = !lf.muted; save(); paintBell(); paintPanel(); if(lf.muted) toastBox.innerHTML=''; return; }
+    if(t.closest('#lfReadAll')){ lf.items.forEach(i => i.read = true); save(); paintBell(); paintPanel(); return; }
+    if(t.closest('#lfClear')){ lf.items = []; save(); paintBell(); paintPanel(); return; }
+    if(t.closest('#lfRecheck')){ evaluate(true); return; }
+    if(lf.open && !t.closest('#liveFeedPanel')) setOpen(false);
+  });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && lf.open) setOpen(false); });
+  paintBell();
+})();
+
 (async function init(){
   // Login temporarily disabled — app opens directly, no password gate.
   // To turn it back on later, restore: if(!CLIENT_AUTHED){ renderClientLoginScreen(); return; }
