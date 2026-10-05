@@ -16148,7 +16148,7 @@ function deskRecSameTime(a, b){
 // Pure: boardRows = state.rows; listRows = parseImportText() output for the pasted list.
 // One-to-one matching, strict first (same person + company + time), then loosened (same person + company, other time).
 // Never deletes anything itself — it only reports.
-function deskReconcile(boardRows, listRows){
+function deskReconcile(boardRows, listRows, teamNames){
   const warnings = [];
   const list = [];
   (listRows || []).forEach(p => {
@@ -16160,7 +16160,13 @@ function deskReconcile(boardRows, listRows){
   function pass(test, kind){
     list.forEach((p, li) => {
       if(usedL.has(li)) return;
-      const bi = boardRows.findIndex((b, i) => !usedB.has(i) && deskTightSameName(b.candidate, p.candidate) && test(b, p));
+      // When several board rows match (duplicates), keep the one that already has a named person / status, so no assignment is lost.
+      let bi = -1, best = -1;
+      boardRows.forEach((b, i) => {
+        if(usedB.has(i) || !deskTightSameName(b.candidate, p.candidate) || !test(b, p)) return;
+        const sc = (b.assignee && !(teamNames && teamNames.has(b.assignee)) ? 2 : (b.assignee ? 1 : 0)) * 10 + (b.status ? 1 : 0);
+        if(sc > best){ best = sc; bi = i; }
+      });
       if(bi >= 0){ usedB.add(bi); usedL.add(li); pairs.push({ b: boardRows[bi], p, kind }); }
     });
   }
@@ -16373,7 +16379,7 @@ function deskReconcile(boardRows, listRows){
       dt.recMsg = ''; dt.recSel = new Set();
       if(!dt.recText.trim()){ dt.rec = null; dt.recMsg = 'Paste the list first.'; paint(); return; }
       let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){ dt.rec = null; dt.recMsg = 'Could not read the list: ' + (err && err.message || err); paint(); return; }
-      dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint(); return;
+      dt.rec = Object.assign(deskReconcile(state.rows, parsed, teamNames()), { date: state.date }); paint(); return;
     }
     const ra = t.closest('[data-dt-recall]'); if(ra && dt.rec){ dt.recSel = ra.getAttribute('data-dt-recall') === '1' ? new Set(dt.rec.extras.map(r => r.id)) : new Set(); paint(); return; }
     if(t.closest('[data-dt-recdel]') && CURRENT_ROLE === 'admin' && dt.rec && dt.rec.date === state.date){
@@ -16391,7 +16397,7 @@ function deskReconcile(boardRows, listRows){
         try{ await saveAllChanges(); }catch(err){}
         dt.recMsg = (state.dirty || state.saveError) ? '⚠ Removed ' + removed + ' call(s) on screen, but SAVING FAILED. Press Save changes (top) before leaving.' : '✅ Deleted ' + removed + ' call(s) and saved. Board now has ' + state.rows.length + '.';
         let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){}
-        dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint();
+        dt.rec = Object.assign(deskReconcile(state.rows, parsed, teamNames()), { date: state.date }); paint();
       })();
       return;
     }
@@ -16410,7 +16416,7 @@ function deskReconcile(boardRows, listRows){
         try{ await saveAllChanges(); }catch(err){}
         dt.recMsg = (state.dirty || state.saveError) ? '⚠ Added ' + newRows.length + ' call(s) on screen, but SAVING FAILED. Press Save changes (top) before leaving.' : '✅ Added ' + newRows.length + ' call(s) and saved. Board now has ' + state.rows.length + '.';
         let parsed = []; try{ parsed = parseImportText(dt.recText, state.date, '1st'); }catch(err){}
-        dt.rec = Object.assign(deskReconcile(state.rows, parsed), { date: state.date }); paint();
+        dt.rec = Object.assign(deskReconcile(state.rows, parsed, teamNames()), { date: state.date }); paint();
       })();
       return;
     }
