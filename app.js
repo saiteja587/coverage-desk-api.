@@ -15292,6 +15292,7 @@ window.addEventListener('keydown', (e)=>{
 // ===========================================================================
 const LIVEFEED_LONG_GAP_DAYS = 14;      // Rule A threshold
 const LIVEFEED_COMPANY_LOOKBACK_DAYS = 7; // Rule B window
+const LIVEFEED_REPEAT_NOSHOW_MIN = 2;     // Rule C: earlier rescheduled/cancelled/no-response outcomes
 const LIVEFEED_COMPANY_MIN_CALLS = 2;     // Rule B: min earlier assigned calls
 const LIVEFEED_STORE_KEY = 'coveragedesk_livefeed_v1';
 const LIVEFEED_MAX_ITEMS = 60;
@@ -15380,21 +15381,70 @@ function computeSmartAlerts(allRows, today){
             ' all went to ' + handlerName + '. Today ' + needing.length + ' new call' + (needing.length>1?'s are':' is') + ' not with them (' + parts.join(', ') + ').'
     });
   });
+
+  // ---- Rule C: repeat no-show / reschedule history ----
+  const LF_BAD = ['rescheduled','cancelled','not_responded','no_invite'];
+  const badByCand = new Map();
+  priorRows.forEach(r => {
+    if(!LF_BAD.includes(r.status)) return;
+    const k = normalizeNameKey(r.candidate); if(!k) return;
+    badByCand.set(k, (badByCand.get(k) || 0) + 1);
+  });
+  const seenC = new Set();
+  todayRows.forEach(r => {
+    const k = normalizeNameKey(r.candidate);
+    if(!k || seenC.has(k) || LF_BAD.includes(r.status)) return;
+    const n = badByCand.get(k) || 0;
+    if(n < LIVEFEED_REPEAT_NOSHOW_MIN) return;
+    seenC.add(k);
+    alerts.push({
+      id: 'C|' + today + '|' + k, type: 'repeat-noshow', date: today,
+      candidate: r.candidate, company: r.company || '', rowId: r.id,
+      title: '⚠️ ' + r.candidate + ' — ' + n + ' earlier rescheduled/cancelled/no-response calls',
+      body: 'Has a call today' + (r.company ? ' with ' + r.company : '') + ' at ' + (r.time || 'time n/a') + '. Worth a quick confirmation before assuming it goes ahead.'
+    });
+  });
+
+  // ---- Rule D: later round — earlier round at the same company was handled by someone ----
+  const prevByCandCo = new Map(); // cand|company -> latest earlier row that had an assignee
+  priorRows.forEach(r => {
+    const ck = normalizeCompanyKey(r.company), k = normalizeNameKey(r.candidate), ak = normalizeNameKey(r.assignee);
+    if(!ck || !k || !ak || LF_BAD.includes(r.status)) return;
+    const key = k + '|' + ck; const cur = prevByCandCo.get(key);
+    if(!cur || r._date > cur._date) prevByCandCo.set(key, r);
+  });
+  const seenD = new Set();
+  todayRows.forEach(r => {
+    if(!isAdvancedRound(r.round) || r.woi) return;
+    const k = normalizeNameKey(r.candidate), ck = normalizeCompanyKey(r.company);
+    if(!k || !ck) return;
+    const key = k + '|' + ck; if(seenD.has(key)) return;
+    const prev = prevByCandCo.get(key); if(!prev) return;
+    if(normalizeNameKey(r.assignee) === normalizeNameKey(prev.assignee)) return; // already with the same person
+    seenD.add(key);
+    alerts.push({
+      id: 'D|' + today + '|' + key, type: 'round-continuity', date: today,
+      candidate: r.candidate, company: r.company, handler: prev.assignee, rowId: r.id,
+      title: '🔁 ' + r.candidate + ' — earlier round was with ' + prev.assignee,
+      body: (prev.round || 'Earlier round') + ' at ' + r.company + ' on ' + prev._date + ' was handled by ' + prev.assignee +
+            '. Today\'s ' + (r.round || 'next round') + ' is ' + (r.assignee ? 'with ' + r.assignee : 'unassigned') + '.'
+    });
+  });
   return alerts;
 }
 
 (function setupLiveFeed(){
-  const lf = { items: [], muted: false, open: false, lastError: null, lastCheckedAt: 0, lastSig: '', timer: null, running: false };
+  const lf = { items: [], seen: {}, muted: false, open: false, lastError: null, lastCheckedAt: 0, lastSig: '', timer: null, running: false };
   window._liveFeed = lf;
 
   function load(){
     try{
       const raw = localStorage.getItem(LIVEFEED_STORE_KEY);
-      if(raw){ const o = JSON.parse(raw); lf.items = Array.isArray(o.items) ? o.items : []; lf.muted = !!o.muted; }
+      if(raw){ const o = JSON.parse(raw); lf.items = Array.isArray(o.items) ? o.items : []; lf.muted = !!o.muted; lf.seen = (o.seen && typeof o.seen === 'object') ? o.seen : {}; }
     }catch(e){}
   }
   function save(){
-    try{ localStorage.setItem(LIVEFEED_STORE_KEY, JSON.stringify({ items: lf.items.slice(0, LIVEFEED_MAX_ITEMS), muted: lf.muted })); }catch(e){}
+    try{ localStorage.setItem(LIVEFEED_STORE_KEY, JSON.stringify({ items: lf.items.slice(0, LIVEFEED_MAX_ITEMS), seen: lf.seen, muted: lf.muted })); }catch(e){}
   }
   load();
 
@@ -15428,10 +15478,10 @@ function computeSmartAlerts(allRows, today){
   function actionsHtml(item){
     const out = [];
     const row = liveRow(item);
-    if(item.type === 'company-handler' && CURRENT_ROLE === 'admin' && row && !String(row.assignee||'').trim() && item.handler){
+    if((item.type === 'company-handler' || item.type === 'round-continuity') && CURRENT_ROLE === 'admin' && row && !String(row.assignee||'').trim() && item.handler){
       out.push('<button class="lf-act primary" data-lf-assign="' + escapeHtml(item.id) + '">Assign to ' + escapeHtml(item.handler) + '</button>');
     }
-    if(item.date === state.date) out.push('<button class="lf-act" data-lf-show="' + escapeHtml(item.id) + '">Show ' + (item.type==='long-gap' ? 'call' : 'calls') + '</button>');
+    if(item.date === state.date) out.push('<button class="lf-act" data-lf-show="' + escapeHtml(item.id) + '">Show ' + (item.type==='company-handler' ? 'calls' : 'call') + '</button>');
     return out.join('');
   }
   function itemHtml(item, inToast){
@@ -15486,13 +15536,16 @@ function computeSmartAlerts(allRows, today){
     try{
       const all = await fetchAllRowsAcrossDates(!!force);
       const alerts = computeSmartAlerts(all, today);
-      const known = new Set(lf.items.map(i => i.id));
+      // `seen` remembers every alert ever raised — Clear / mark-read / expiry never make it fire again
+      lf.items.forEach(i => { if(!lf.seen[i.id]) lf.seen[i.id] = i.ts || Date.now(); });
+      const known = new Set(Object.keys(lf.seen));
       const fresh = alerts.filter(a => !known.has(a.id));
-      fresh.forEach(a => { lf.items.unshift(Object.assign({ ts: Date.now(), read: false }, a)); });
+      fresh.forEach(a => { lf.seen[a.id] = Date.now(); lf.items.unshift(Object.assign({ ts: Date.now(), read: false }, a)); });
       // refresh the text of existing items for today (counts can change as calls are assigned)
       alerts.forEach(a => { const ex = lf.items.find(i => i.id === a.id); if(ex){ ex.body = a.body; ex.title = a.title; ex.rowId = a.rowId; ex.handler = a.handler; } });
       const cutoffTs = Date.now() - 14*86400000;
       lf.items = lf.items.filter(i => i.ts >= cutoffTs).slice(0, LIVEFEED_MAX_ITEMS);
+      Object.keys(lf.seen).forEach(k => { if(lf.seen[k] < Date.now() - 45*86400000) delete lf.seen[k]; });
       lf.lastError = null; lf.lastCheckedAt = Date.now();
       save(); paintBell(); if(lf.open) paintPanel();
       const shown = fresh.slice(0, LIVEFEED_MAX_TOASTS);
