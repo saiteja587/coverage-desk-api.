@@ -1719,6 +1719,11 @@ async function saveAllChanges(){
   }
   state.saving = false;
   render();
+  // 2026-10-05: after a clean save, add brand-new candidates to Students Master
+  // (doubtful ones go to a review window). Never blocks or fails the save itself.
+  if(CURRENT_ROLE === 'admin' && !state.saveError && !state.dirty && sentDate === state.date){
+    try{ if(window.studentAutoAddAfterSave) window.studentAutoAddAfterSave(state.rows.map(r => ({ candidate: r.candidate, country: r.country, doubts: r.doubts }))); }catch(e){ console.warn('[StudentAutoAdd] hook failed', e); }
+  }
 }
 // ---------- Offline resilience (added 2026-09-30) ----------
 // A dead connection mid-edit used to just mean a failed save and a red
@@ -15610,6 +15615,203 @@ function computeSmartAlerts(allRows, today){
   });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && lf.open) setOpen(false); });
   paintBell();
+})();
+
+// ===========================================================================
+// STUDENTS MASTER AUTO-ADD (2026-10-05) — after a successful Save, any
+// candidate on that date who is clearly NOT in Students Master is added
+// automatically. Anything doubtful (a fuzzy "maybe the same person" match,
+// an odd-looking name, a call carrying doubts) is NOT added — it goes to a
+// small review window for the admin to decide. People are never fuzzy-
+// matched silently: the existing exact/confirmed logic decides "known".
+// Students Master is saved as a full replace server-side, so every write
+// re-reads the live list first and merges, and verifies afterwards.
+// ===========================================================================
+const STUDENT_AUTOADD_SKIP_KEY = 'cd_student_autoadd_skipped_v1';
+function studentCountryForMaster(c){
+  const t = String(c || '').trim();
+  if(!t) return '';
+  if(/^(usa|us|u\.s\.a?\.?)$/i.test(t)) return 'United States';
+  if(/^(uk|u\.k\.)$/i.test(t)) return 'United Kingdom';
+  return t;
+}
+// Pure classifier. `lookup(name)` returns {kind:'known'} | {kind:'new'} | {kind:'maybe', student}.
+function classifyNewStudentCandidates(rows, lookup){
+  const out = { autoAdd: [], review: [] };
+  const seen = new Set();
+  (rows || []).forEach(r => {
+    const name = String(r && r.candidate || '').replace(/\s+/g, ' ').trim();
+    const key = normalizeNameKey(name);
+    if(!name || !key || seen.has(key)) return;
+    seen.add(key);
+    if(/^(tbd|tba|unknown|n\/?a|none|test|dummy)$/i.test(name)) return;
+    const hit = lookup(name);
+    if(!hit || hit.kind === 'known') return;
+    const country = studentCountryForMaster(r.country);
+    if(hit.kind === 'maybe'){
+      out.review.push({ kind: 'maybe', name, key, country, student: hit.student, pairKey: hit.pairKey || '' });
+      return;
+    }
+    // kind === 'new' — decide whether the name itself is clean enough to add unattended
+    const tokens = name.split(' ');
+    let doubt = '';
+    if(!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.'’\- ]*$/.test(name)) doubt = 'The name has unusual characters, digits or separators.';
+    else if(tokens.length < 2) doubt = 'Only one word — could be a partial name.';
+    else if(tokens.some(t => t.replace(/[.'’\-]/g, '').length < 2)) doubt = 'Contains a single-letter part — could be an abbreviation of someone already listed.';
+    else if(Array.isArray(r.doubts) && r.doubts.length) doubt = 'This call was flagged with a doubt when it was imported.';
+    if(doubt) out.review.push({ kind: 'doubt', name, key, country, reason: doubt });
+    else out.autoAdd.push({ name, key, country });
+  });
+  return out;
+}
+
+(function setupStudentAutoAdd(){
+  const sa = { running: false, pendingReview: [], undo: null };
+  window._studentAutoAdd = sa;
+  const lookupFromBadge = name => {
+    const b = studentMatchBadgeInfo(name);
+    if(!b) return { kind: 'known' };
+    if(b.kind === 'confirm') return { kind: 'maybe', student: b.student, pairKey: b.pairKey };
+    return { kind: 'new' };
+  };
+  function skipped(){ try{ return JSON.parse(localStorage.getItem(STUDENT_AUTOADD_SKIP_KEY) || '{}'); }catch(e){ return {}; } }
+  function markSkipped(key){ try{ const s = skipped(); s[key] = Date.now(); localStorage.setItem(STUDENT_AUTOADD_SKIP_KEY, JSON.stringify(s)); }catch(e){} }
+
+  // Re-read the live list, merge, write, verify. Throws on any problem and leaves state as it was.
+  async function persistNewStudents(list){
+    const before = state.studentsMaster || [];
+    let base = before;
+    if(API_BASE_URL){
+      const fresh = await apiCall('students', {});
+      base = Array.isArray(fresh.rows) ? fresh.rows : [];
+      if(!base.length && before.length) throw new Error('Students Master came back empty from the server — not saving, to avoid wiping the list.');
+    }
+    const have = new Set(base.map(s => normalizeNameKey(s.name)));
+    const toAdd = [];
+    list.forEach(n => { const k = normalizeNameKey(n.name); if(k && !have.has(k)){ have.add(k); toAdd.push({ id: uid(), name: n.name, country: n.country || '' }); } });
+    if(!toAdd.length){ state.studentsMaster = base; invalidateStudentMatchCache(); return []; }
+    const next = [...base, ...toAdd];
+    try{
+      if(API_BASE_URL){
+        await apiCall('students', { method: 'POST', body: { rows: next } });
+        const check = await apiCall('students', {});
+        if(!Array.isArray(check.rows) || check.rows.length < next.length) throw new Error('Verification failed: server shows ' + (check.rows ? check.rows.length : '?') + ' students, expected ' + next.length + '.');
+      } else {
+        await storageAdapter.set('students-master', JSON.stringify(next), false);
+      }
+    }catch(e){
+      state.studentsMaster = before; invalidateStudentMatchCache();
+      throw e;
+    }
+    state.studentsMaster = next; invalidateStudentMatchCache();
+    return toAdd;
+  }
+  async function removeStudentIds(ids){
+    const idset = new Set(ids);
+    let base = state.studentsMaster || [];
+    if(API_BASE_URL){ const fresh = await apiCall('students', {}); base = fresh.rows || []; if(!base.length) throw new Error('Students Master came back empty — not changing it.'); }
+    const next = base.filter(s => !idset.has(s.id));
+    if(API_BASE_URL) await apiCall('students', { method: 'POST', body: { rows: next } });
+    else await storageAdapter.set('students-master', JSON.stringify(next), false);
+    state.studentsMaster = next; invalidateStudentMatchCache();
+  }
+
+  // ----- UI: toast (re-uses Live Feed's toast stack) + review window -----
+  function toast(html, ms){
+    const box = document.getElementById('liveFeedToasts'); if(!box) return null;
+    const el = document.createElement('div'); el.className = 'lf-toast'; el.setAttribute('role', 'status');
+    el.innerHTML = '<div class="lf-item"><div class="lf-item-main">' + html + '</div><button class="lf-x" data-sa-close aria-label="Dismiss">✕</button></div>';
+    box.appendChild(el);
+    if(ms) setTimeout(() => { if(el.parentNode) el.parentNode.removeChild(el); }, ms);
+    return el;
+  }
+  function closeReview(){ const o = document.getElementById('studentReviewOverlay'); if(o) o.remove(); }
+  function openReview(){
+    closeReview();
+    const items = sa.pendingReview;
+    if(!items.length) return;
+    const o = document.createElement('div'); o.id = 'studentReviewOverlay'; o.className = 'my-name-picker-overlay'; o.style.zIndex = '330';
+    o.innerHTML = '<div class="my-name-picker-card" style="max-width:520px;width:94vw;max-height:80vh;overflow-y:auto">' +
+      '<div class="my-name-picker-title">🎓 ' + items.length + ' candidate' + (items.length > 1 ? 's' : '') + ' need your decision</div>' +
+      '<div class="my-name-picker-sub">Not added automatically — Coverage Desk wasn\'t sure.</div>' +
+      items.map((it, i) => '<div class="sa-card" data-sa-i="' + i + '">' +
+        '<div class="sa-name">' + escapeHtml(it.name) + '</div>' +
+        (it.kind === 'maybe'
+          ? '<div class="sa-why">Looks similar to <b>' + escapeHtml(it.student.name) + '</b> already in Students Master.</div>' +
+            '<div class="lf-actions"><button class="lf-act primary" data-sa-act="same">Same person</button><button class="lf-act" data-sa-act="different">Different — add as new</button><button class="lf-act" data-sa-act="skip">Skip</button></div>'
+          : '<div class="sa-why">' + escapeHtml(it.reason) + '</div>' +
+            '<div class="sa-edit"><input class="sa-in" data-sa-name value="' + escapeHtml(it.name) + '" aria-label="Full name"><input class="sa-in" data-sa-country value="' + escapeHtml(it.country) + '" placeholder="Country" aria-label="Country"></div>' +
+            '<div class="lf-actions"><button class="lf-act primary" data-sa-act="add">Add to Students Master</button><button class="lf-act" data-sa-act="skip">Skip</button></div>') +
+        '<div class="sa-msg" data-sa-msg></div></div>').join('') +
+      '<button class="btn ghost" id="saReviewClose" style="width:100%;margin-top:10px">Close</button></div>';
+    document.body.appendChild(o);
+  }
+  async function handleReviewAction(card, act){
+    const it = sa.pendingReview[Number(card.getAttribute('data-sa-i'))]; if(!it) return;
+    const msg = card.querySelector('[data-sa-msg]');
+    const done = text => { card.innerHTML = '<div class="sa-name">' + escapeHtml(it.name) + '</div><div class="sa-why">' + text + '</div>'; it._done = true; };
+    try{
+      if(act === 'skip'){ markSkipped(it.key); done('Skipped — it won\'t be asked again. You can still add it from Students Master.'); return; }
+      if(act === 'same'){
+        const pair = it.pairKey || (it.key + '|' + it.student.id);
+        state.confirmedStudentMatches.add(pair); invalidateStudentMatchCache();
+        if(API_BASE_URL) await apiCall('student_match_decisions', { method: 'POST', body: { candidateKey: it.key, candidateName: it.name, studentId: it.student.id, decision: 'confirmed' } });
+        done('✓ Marked as the same person as ' + escapeHtml(it.student.name) + '.'); render(); return;
+      }
+      let name = it.name, country = it.country;
+      if(act === 'add'){ name = card.querySelector('[data-sa-name]').value.trim(); country = card.querySelector('[data-sa-country]').value.trim(); if(!name){ msg.textContent = 'Type a name first.'; return; } }
+      if(act === 'different'){
+        const pair = it.pairKey || (it.key + '|' + it.student.id);
+        state.rejectedStudentMatches.add(pair);
+        if(API_BASE_URL){ try{ await apiCall('student_match_decisions', { method: 'POST', body: { candidateKey: it.key, candidateName: it.name, studentId: it.student.id, decision: 'rejected' } }); }catch(e){} }
+      }
+      const added = await persistNewStudents([{ name, country }]);
+      done(added.length ? '✓ Added to Students Master.' : 'Already in Students Master — nothing to add.'); render();
+    }catch(e){ if(msg) msg.textContent = '⚠ Failed: ' + (e && e.message || e) + ' — nothing was changed.'; }
+  }
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    const cl = t.closest('[data-sa-close]'); if(cl){ const tt = cl.closest('.lf-toast'); if(tt) tt.remove(); return; }
+    if(t.closest('[data-sa-review]')){ openReview(); return; }
+    if(t.closest('[data-sa-undo]') && sa.undo){
+      const u = sa.undo; sa.undo = null; const tt = t.closest('.lf-toast');
+      removeStudentIds(u.ids).then(() => { if(tt) tt.innerHTML = '<div class="lf-item"><div class="lf-item-main"><div class="lf-body">Undone — removed ' + u.ids.length + ' student' + (u.ids.length > 1 ? 's' : '') + ' again.</div></div></div>'; render(); })
+        .catch(err => { toast('<div class="lf-title">⚠ Undo failed</div><div class="lf-body">' + escapeHtml(err.message || String(err)) + '</div>', 12000); });
+      return;
+    }
+    if(t.id === 'saReviewClose' || (t.id === 'studentReviewOverlay')){ closeReview(); return; }
+    const b = t.closest('[data-sa-act]'); if(b){ const card = b.closest('.sa-card'); if(card) handleReviewAction(card, b.getAttribute('data-sa-act')); }
+  });
+
+  // ----- entry point, called after a successful Save -----
+  async function run(rows){
+    if(sa.running || CURRENT_ROLE !== 'admin') return;
+    sa.running = true;
+    try{
+      if(!state.studentsMasterLoaded) await loadStudentsMaster();
+      if(!state.studentsMasterLoaded || (API_BASE_URL && state.studentsMasterBackendMissing)){
+        toast('<div class="lf-title">🎓 New students not checked</div><div class="lf-body">Couldn\'t reach Students Master just now — your calls are saved. It will check again on the next save.</div>', 12000);
+        return;
+      }
+      const sk = skipped();
+      const result = classifyNewStudentCandidates(rows, lookupFromBadge);
+      const review = result.review.filter(it => !sk[it.key]);
+      let added = [];
+      if(result.autoAdd.length) added = await persistNewStudents(result.autoAdd);
+      if(added.length){
+        sa.undo = { ids: added.map(s => s.id) };
+        const names = added.slice(0, 6).map(s => escapeHtml(s.name)).join(', ') + (added.length > 6 ? ' +' + (added.length - 6) + ' more' : '');
+        toast('<div class="lf-title">🎓 ' + added.length + ' new student' + (added.length > 1 ? 's' : '') + ' added to Students Master</div><div class="lf-body">' + names + '</div><div class="lf-actions"><button class="lf-act" data-sa-undo>Undo</button></div>', 20000);
+        render();
+      }
+      sa.pendingReview = review;
+      if(review.length) openReview();
+    }catch(e){
+      console.warn('[StudentAutoAdd] failed', e);
+      toast('<div class="lf-title">⚠ Couldn\'t add new students</div><div class="lf-body">' + escapeHtml(e && e.message || String(e)) + ' Your calls were saved; Students Master was not changed.</div>', 15000);
+    }finally{ sa.running = false; }
+  }
+  window.studentAutoAddAfterSave = run;
 })();
 
 (async function init(){
