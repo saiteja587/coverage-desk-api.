@@ -979,3 +979,12 @@ tbody tr[data-id]{touch-action:pan-y;}
   .lf-bell{bottom:134px;right:14px;}
   .lf-panel{right:8px;left:8px;width:auto;bottom:188px;max-height:60vh;}
 }
+
+/* ===== Students Master auto-add review window (2026-10-05) ===== */
+.sa-card{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:10px 0;background:var(--surface-2);}
+.sa-name{font-weight:700;font-size:14px;color:var(--text);}
+.sa-why{font-size:12.5px;color:var(--text-2);margin-top:3px;line-height:1.4;}
+.sa-edit{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.sa-in{flex:1;min-width:130px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:7px;font-size:13px;}
+.sa-msg{font-size:12px;color:var(--coral,#e5484d);margin-top:6px;}
+.sa-msg:empty{display:none;}
