@@ -2279,7 +2279,7 @@ function isTechnicalPOCName(name){
   return !!(person && person.team === 'Development Team');
 }
 function parseDetailedLine(line, defaultRound){
-  let clean = line.replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
+  let clean = line.replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '');
 
   // split off the assignment chain at the first arrow
   const arrowIdx = clean.search(/->|→/);
@@ -2328,7 +2328,7 @@ function parseDetailedLine(line, defaultRound){
   // Defensive second pass: catches stray leading numbering the first strip
   // missed (different punctuation, extra spaces, etc.) so no "1. " ever
   // survives into the candidate name shown in the table.
-  name = name.replace(/^\s*\d{1,3}\s*[\.\):\-]?\s+/, '').trim();
+  name = name.replace(/^\s*\d{1,3}\s*(?:[\.\):](?!\d)\s*|\-\s+|\s+)(?=\S)/, '').trim();
   name = name.replace(/[-–—]+\s*$/, '').trim();
   let timeIdx = segs.findIndex(s=>timeRegex.test(s));
 
@@ -2630,7 +2630,7 @@ function parseImportText(text, baseDate, defaultRound){
     // detailed-format lines (with company/duration/round text) never match here.
     const m = line.match(/^(.+?)\s+-\s+([0-9]{1,2}(?:[.:]\d{1,2})?(?:\s*[AaPp][Mm])?)\s*(\(([^)]*)\))?$/);
     if(m){
-      let name = m[1].trim().replace(/^\s*\d{1,3}\s*[\.\):\-]?\s+/, '').trim();
+      let name = m[1].trim().replace(/^\s*\d{1,3}\s*(?:[\.\):](?!\d)\s*|\-\s+|\s+)(?=\S)/, '').trim();
       const timeRaw = m[2];
       const assigneeRaw = m[4];
       let country = 'USA';
@@ -3110,7 +3110,7 @@ function parseRescheduleText(text){
     if(!looksLikeRescheduleLine(full)) return; // not a reschedule/cancel/no-response message — skip
 
     const timeLine = (blockLines.find(l=>timeRe.test(l)) || full)
-      .replace(/^\s*\d{1,3}[\.\)]?\s+/, ''); // strip a leading list number ("89. Name ...")
+      .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, ''); // strip a leading list number ("89. Name ...")
     // Handles a name followed directly by a dash-time ("Name - 7:30 PM"),
     // a name with a parenthetical country tag before the dash
     // ("Name (UK) - 7:30 PM"), or a name followed by a possessive time
@@ -3213,7 +3213,7 @@ function parseRescheduleText(text){
         if(!timeM) return; // no time in this block — not a real call entry
 
         const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull)
-          .replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
+          .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '');
         const nameM = lineForName.match(/^([A-Za-z][A-Za-z .]+?)\s*[–\-]/);
         const candidate = nameM ? nameM[1].trim() : null;
         if(!candidate) return;
@@ -3248,7 +3248,7 @@ function parseRescheduleText(text){
     const hasStatusHere = /\b(reschedul\w*|cancel\w*|(?:not|no)\s+(?:\w+\s+){0,2}respon\w*)\b/i.test(blockFull);
     if(!hasTimeHere || hasStatusHere) continue; // only "time but no status word yet" blocks
 
-    const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull).replace(/^\s*\d{1,3}[\.\)]?\s+/, '');
+    const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull).replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '');
     let candidate = null;
     let nm = lineForName.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/);
     if(nm) candidate = nm[1].trim();
@@ -3374,7 +3374,7 @@ function parseClosureText(text){
   const results = [];
   blocks.forEach(blockLines=>{
     const full = blockLines.join(' ')
-      .replace(/^\s*\d{1,3}[\.\)]?\s+/, '')  // strip a leading list number
+      .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '')  // strip a leading list number
       .replace(/^\s*sir\s*[,:]?\s+/i, '');   // strip a leading "Sir," greeting
     const closureMatch = matchClosureLine(full);
     if(closureMatch && closureMatch.candidate && closureMatch.company){
@@ -15922,6 +15922,7 @@ const DESK_RESCHEDULE_LOOKBACK_DAYS = 45;
 const DESK_IMBALANCE_SPREAD = 4;          // max-min calls within one team to warn
 const DESK_BAD_STATUSES = ['rescheduled','cancelled','not_responded','no_invite'];
 
+const DESK_SERIAL_PREFIX_RE = /^\s*\d{1,3}\s*(?:[\.\):](?!\d)\s*|\-\s+|\s+)(?=\S)/; // '89.Sakshi Goud' / '89. Sakshi' / '89) Sakshi'
 function deskIsTeamName(a, teamNames){ return !!(a && teamNames && teamNames.has(String(a))); }
 function deskNeedsPerson(row, teamNames){ const a = String(row.assignee || '').trim(); return !a || deskIsTeamName(a, teamNames); }
 function deskDateAdd(dateStr, n){ const p = dateStr.split('-').map(Number); return new Date(Date.UTC(p[0], p[1]-1, p[2]+n)).toISOString().slice(0,10); }
@@ -16001,6 +16002,8 @@ function deskChecks(rows, roster, absentIds, teamNames){
   Object.keys(count).forEach(n => { if(absentNames.has(n)) issues.push({ type: 'absent', text: n + ' is marked absent but holds ' + count[n] + ' call' + (count[n] > 1 ? 's' : '') + '.' }); });
   const conflicts = computeConflicts(rows || []);
   if(conflicts.size) issues.push({ type: 'overlap', text: conflicts.size + ' call' + (conflicts.size > 1 ? 's' : '') + ' overlap with the same person\'s other call (see the red ⚠ rows).' });
+  const serialRows = (rows || []).filter(r => DESK_SERIAL_PREFIX_RE.test(String(r.candidate || '')));
+  if(serialRows.length) issues.push({ type: 'serial', text: serialRows.length + ' candidate name' + (serialRows.length > 1 ? 's start' : ' starts') + ' with a list number (e.g. "' + serialRows[0].candidate + '").' });
   const needPerson = (rows || []).filter(r => !r.woi && r.candidate && deskNeedsPerson(r, teamNames)).length;
   if(needPerson) issues.push({ type: 'unassigned', text: needPerson + ' call' + (needPerson > 1 ? 's' : '') + ' still need a named person (open Suggest).' });
   // duplicates: same time+round (existing detector) and same candidate+company at different times
@@ -16175,7 +16178,7 @@ function deskEodText(date, rows, teamNames, extra){
     if(dt.tab === 'checks'){
       const c = deskChecks(state.rows, state.roster, state.absentIds, tn);
       const maxN = Math.max(1, ...c.perPerson.map(p => p.n));
-      return (c.issues.length ? c.issues.map(i => '<div class="dt-issue">⚠ ' + esc(i.text) + '</div>').join('') : '<div class="dt-ok">✅ No workload, overlap or duplicate problems on ' + esc(state.date) + '.</div>') +
+      return (c.issues.length ? c.issues.map(i => '<div class="dt-issue">⚠ ' + esc(i.text) + (i.type === 'serial' && CURRENT_ROLE === 'admin' ? ' <button class="lf-act primary" data-dt-fixserial style="margin-left:6px">Remove the numbers</button>' : '') + '</div>').join('') : '<div class="dt-ok">✅ No workload, overlap or duplicate problems on ' + esc(state.date) + '.</div>') +
         '<div class="dt-note" style="margin-top:10px">Calls per person (' + esc(state.date) + ')</div>' +
         c.perPerson.filter(p => p.n || !p.absent).sort((a, b) => b.n - a.n).map(p => '<div class="dt-bar"><span class="dt-bar-name">' + esc(p.name) + '</span><span class="dt-bar-track"><span class="dt-bar-fill" style="width:' + Math.round(p.n / maxN * 100) + '%"></span></span><span class="dt-bar-n">' + p.n + '</span></div>').join('');
     }
@@ -16280,6 +16283,11 @@ function deskEodText(date, rows, teamNames, extra){
       const sug = deskSuggestAssignees(state.rows, allRows(), state.roster, state.absentIds, todayDateString(), teamNames(), resolver().keyOf);
       let n = 0; sug.forEach(s => { const row = state.rows.find(r => r.id === s.rowId); if(row && s.name && deskNeedsPerson(row, teamNames())){ row.assignee = s.name; n++; } });
       if(n){ markDirty(); render(); } paint(); return;
+    }
+    if(t.closest('[data-dt-fixserial]') && CURRENT_ROLE === 'admin'){
+      let n = 0; state.rows.forEach(r => { const c = String(r.candidate || ''); const f = c.replace(DESK_SERIAL_PREFIX_RE, '').trim(); if(f && f !== c){ r.candidate = f; n++; } });
+      if(n){ state.dirty = true; if(state.finalized) state.finalized = false; render(); toast('<div class="lf-title">Removed list numbers from ' + n + ' name' + (n > 1 ? 's' : '') + '</div><div class="lf-body">Press Save to keep the change.</div>', 8000); }
+      paint(); return;
     }
     const gd = t.closest('[data-dt-gotodate]'); if(gd){ gotoDate(gd.getAttribute('data-dt-gotodate')); return; }
     const pk = t.closest('[data-dt-pick]'); if(pk){ dt.selKey = pk.getAttribute('data-dt-pick'); dt.extra = new Set(); paint(); return; }
