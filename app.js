@@ -15596,6 +15596,33 @@ function computeSmartAlerts(allRows, today, opts){
             '. Today\'s ' + (r.round || 'next round') + ' is ' + (pn(r.assignee) ? 'with ' + r.assignee : 'unassigned') + '.'
     });
   });
+
+  // ---- Rule E: candidate's FIRST time in a 2nd+ (technical / advanced) round ----
+  // "Has been in an advanced round before" = an earlier-dated, non-WOI advanced-round call that did not fall through
+  // (rescheduled / cancelled / no-response / no-invite don't count). Raised once per candidate (id has no date).
+  const advBefore = new Set();
+  priorRows.forEach(r => {
+    if(!isAdvancedRound(r.round) || r.woi || LF_BAD.includes(r.status)) return;
+    const k = pkey(r.candidate); if(k) advBefore.add(k);
+  });
+  const priorByCand = new Map();
+  priorRows.forEach(r => { const k = pkey(r.candidate); if(!k) return; if(!priorByCand.has(k)) priorByCand.set(k, []); priorByCand.get(k).push(r); });
+  const seenE = new Set();
+  todayRows.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time)).forEach(r => {
+    if(!isAdvancedRound(r.round) || r.woi) return;
+    const k = pkey(r.candidate); if(!k || seenE.has(k) || advBefore.has(k)) return;
+    seenE.add(k);
+    const earlier = (priorByCand.get(k) || []).filter(x => !x.woi);
+    const cos = Array.from(new Set(earlier.map(x => x.company).filter(Boolean))).slice(0, 3);
+    alerts.push({
+      id: 'E|' + k, type: 'first-advanced', date: today,
+      candidate: r.candidate, company: r.company || '', rowId: r.id,
+      title: '🎯 ' + r.candidate + ' — first time in a ' + (r.round || '2nd+') + ' round',
+      body: 'Has never been in a 2nd+ round on file before. Today: ' + (r.round || 'advanced round') + (r.company ? ' at ' + r.company : '') + ' at ' + (r.time || 'time n/a') +
+            (pn(r.assignee) ? ' → ' + r.assignee : ' (unassigned)') + '. ' +
+            (earlier.length ? 'Earlier: ' + earlier.length + ' call' + (earlier.length > 1 ? 's' : '') + (cos.length ? ' (' + cos.join(', ') + ')' : '') + ', all 1st round or not completed.' : 'No earlier calls on file.')
+    });
+  });
   return alerts;
 }
 
@@ -15669,7 +15696,7 @@ function computeSmartAlerts(allRows, today, opts){
       '<button class="lf-link" id="lfClear">Clear</button>' +
       '<button class="lf-x" id="lfClose" aria-label="Close">✕</button></span></div>' +
       '<div class="lf-list">' + (lf.items.length ? lf.items.map(i => itemHtml(i, false)).join('') :
-        '<div class="lf-empty">Nothing yet. You\'ll be alerted when a candidate comes back after ' + LIVEFEED_LONG_GAP_DAYS + '+ days, or when a company whose recent calls all went to one person gets a new call.</div>') + '</div>' +
+        '<div class="lf-empty">Nothing yet. You\'ll be alerted when a candidate comes back after ' + LIVEFEED_LONG_GAP_DAYS + '+ days, or when a company whose recent calls all went to one person gets a new call, or when a candidate reaches a 2nd+ round for the first time.</div>') + '</div>' +
       '<div class="lf-foot">' + (lf.lastError ? '⚠️ Last check failed: ' + escapeHtml(lf.lastError) + ' — will retry. ' : (lf.lastCheckedAt ? 'Checked ' + ago(lf.lastCheckedAt) + '. ' : '')) +
       '<button class="lf-link" id="lfRecheck">Check now</button></div>';
   }
@@ -16208,6 +16235,36 @@ function deskEodText(date, rows, teamNames, extra){
 }
 
 
+
+// ---- First time in a 2nd+ round, over ALL saved history (Desk Tools ▸ 🎯 First 2nd+) ----
+// Same definition as Live Feed rule E: the candidate's earliest advanced-round call that actually counts
+// (not WOI, not rescheduled/cancelled/no-response/no-invite). Pure.
+function deskFirstAdvanced(allRows, personKey){
+  const BAD = ['rescheduled','cancelled','not_responded','no_invite'];
+  const pk = personKey || normalizeNameKey;
+  const byCand = new Map();
+  (allRows || []).forEach(r => {
+    if(!r || !r._date || !r.candidate || !String(r.candidate).trim()) return;
+    const k = pk(r.candidate); if(!k) return;
+    if(!byCand.has(k)) byCand.set(k, []);
+    byCand.get(k).push(r);
+  });
+  const out = [];
+  byCand.forEach(rows => {
+    const sorted = rows.slice().sort((a, b) => a._date.localeCompare(b._date) || timeToMinutes(a.time) - timeToMinutes(b.time));
+    const first = sorted.find(r => isAdvancedRound(r.round) && !r.woi && !BAD.includes(r.status));
+    if(!first) return;
+    const before = sorted.filter(r => r._date < first._date && !r.woi);
+    const cos = Array.from(new Set(before.map(x => x.company).filter(Boolean)));
+    out.push({
+      candidate: first.candidate, date: first._date, round: first.round || '', company: first.company || '', time: first.time || '',
+      assignee: first.drivingPerson || first.assignee || '', earlierCalls: before.length, earlierCompanies: cos,
+      totalCalls: sorted.length, firstSeen: sorted[0]._date,
+    });
+  });
+  out.sort((a, b) => b.date.localeCompare(a.date) || a.candidate.localeCompare(b.candidate));
+  return out;
+}
 // ---- Reconcile (Desk Tools): compare the board with a pasted "correct" list ----
 function deskRecRoundKey(r){ const m = String(r || '').toLowerCase().match(/\d/); return m ? m[0] : String(r || '').toLowerCase().trim(); }
 function deskRecDurKey(d){ return String(d || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -16260,11 +16317,11 @@ function deskReconcile(boardRows, listRows, teamNames){
 }
 
 (function setupDeskTools(){
-  const dt = { recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
+  const dt = { faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
   window._deskTools = dt;
   const teamNames = () => new Set(state.roster.map(p => p.team));
   const esc = escapeHtml;
-  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile']];
+  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+']];
 
   function toast(html, ms){
     const box = document.getElementById('liveFeedToasts'); if(!box) return;
@@ -16288,6 +16345,19 @@ function deskReconcile(boardRows, listRows, teamNames){
     if(dt.loading) return '<div class="lf-empty"><span class="spinner"></span> Loading call history…</div>';
     if(dt.error) return '<div class="lf-empty">⚠ Couldn\'t load call history: ' + esc(dt.error) + ' <button class="lf-link" data-dt-reload>Retry</button></div>';
     const hist = allRows();
+    if(dt.tab === 'first'){
+      const list = deskFirstAdvanced(hist, resolver().keyOf);
+      const cut = dt.faRange === 'all' ? '' : deskDateAdd(today, -Number(dt.faRange));
+      const q = (dt.faQuery || '').trim().toLowerCase();
+      const vis = list.filter(x => (!cut || x.date >= cut) && (!q || x.candidate.toLowerCase().includes(q) || x.company.toLowerCase().includes(q)));
+      let h = '<div class="dt-note">Candidates who reached a <b>2nd or later round for the first time</b>, using all saved history (' + list.length + ' candidates overall). A rescheduled / cancelled / no-response / waiting-for-invite round does not count as having happened. History only goes back to your earliest saved date, so the oldest entries may be candidates who already had earlier rounds before the app was used.</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time']].map(r => '<button class="lf-act' + (dt.faRange === r[0] ? ' primary' : '') + '" data-dt-farange="' + r[0] + '">' + r[1] + '</button>').join('') + '</div>' +
+        '<input class="sa-in" id="dtFaQuery" placeholder="Filter by candidate or company…" value="' + esc(dt.faQuery) + '" style="width:100%;margin-bottom:8px">';
+      if(!vis.length) return h + '<div class="lf-empty">No first-time 2nd+ round candidates in this view.</div>';
+      h += '<div class="dt-note"><b>' + vis.length + '</b> candidate' + (vis.length > 1 ? 's' : '') + (vis.length > 200 ? ' (showing the latest 200 — the Excel file has all)' : '') + ' <button class="lf-act" data-dt-fadl style="margin-left:8px">⬇ Excel</button></div>';
+      h += vis.slice(0, 200).map(x => '<div class="dt-row"><div class="dt-main"><b>' + esc(x.date) + '</b> · ' + esc(x.candidate) + ' — ' + esc(x.round || 'advanced round') + (x.company ? ' at ' + esc(x.company) : '') + '<div class="dt-sub">' + (x.assignee ? esc(x.assignee) + ' · ' : '') + (x.earlierCalls ? x.earlierCalls + ' earlier call' + (x.earlierCalls > 1 ? 's' : '') + (x.earlierCompanies.length ? ' (' + esc(x.earlierCompanies.slice(0, 3).join(', ')) + ')' : '') : 'no earlier calls on file') + '</div></div><button class="lf-act" data-dt-fatl="' + esc(x.candidate) + '">Timeline</button></div>').join('');
+      return h;
+    }
     if(dt.tab === 'rec'){
       const can = CURRENT_ROLE === 'admin';
       const rowLine = r => esc((r.woi ? 'WOI' : (r.time || '—')) + ' · ' + (r.candidate || '') + ' — ' + (r.company || '(no company)')) + (r.assignee ? ' <span class="dt-sub" style="display:inline">· ' + esc(r.assignee) + '</span>' : '');
@@ -16396,12 +16466,12 @@ function deskReconcile(boardRows, listRows, teamNames){
   function paint(){
     const o = document.getElementById('deskToolsOverlay'); if(!o) return;
     const card = o.querySelector('.dt-card'); const sc = card ? card.scrollTop : 0;
-    const q = document.getElementById('dtCandQuery'); const hadFocus = q && document.activeElement === q; const pos = q ? q.selectionStart : 0;
+    const act = document.activeElement; const focusId = (act && (act.id === 'dtCandQuery' || act.id === 'dtFaQuery')) ? act.id : ''; const q = focusId ? act : null; const hadFocus = !!q; const pos = q ? q.selectionStart : 0;
     o.innerHTML = '<div class="my-name-picker-card dt-card"><div class="dt-head"><strong>🧰 Desk Tools</strong><button class="lf-x" data-dt-close aria-label="Close">✕</button></div>' +
       '<div class="dt-tabs">' + TABS.map(t => '<button class="dt-tab' + (dt.tab === t[0] ? ' active' : '') + '" data-dt-tab="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
       '<div class="dt-body">' + body() + '</div></div>';
     const c2 = o.querySelector('.dt-card'); if(c2) c2.scrollTop = sc;
-    if(hadFocus){ const q2 = document.getElementById('dtCandQuery'); if(q2){ q2.focus(); try{ q2.setSelectionRange(pos, pos); }catch(e){} } }
+    if(hadFocus){ const q2 = document.getElementById(focusId); if(q2){ q2.focus(); try{ q2.setSelectionRange(pos, pos); }catch(e){} } }
   }
   function open(tab){
     if(tab) dt.tab = tab;
@@ -16492,6 +16562,22 @@ function deskReconcile(boardRows, listRows, teamNames){
       })();
       return;
     }
+    const fr = t.closest('[data-dt-farange]'); if(fr){ dt.faRange = fr.getAttribute('data-dt-farange'); paint(); return; }
+    const ftl = t.closest('[data-dt-fatl]'); if(ftl){ const nm = ftl.getAttribute('data-dt-fatl'); close(); closeAllPanels(); openCandidateProfile(nm); return; }
+    if(t.closest('[data-dt-fadl]')){
+      if(typeof XLSX === 'undefined'){ alert('The Excel library did not load (probably a network/ad-blocker issue) — try refreshing the page.'); return; }
+      const cut = dt.faRange === 'all' ? '' : deskDateAdd(todayDateString(), -Number(dt.faRange)); const q = (dt.faQuery || '').trim().toLowerCase();
+      const vis = deskFirstAdvanced(allRows(), resolver().keyOf).filter(x => (!cut || x.date >= cut) && (!q || x.candidate.toLowerCase().includes(q) || x.company.toLowerCase().includes(q)));
+      if(!vis.length){ alert('Nothing to export in this view.'); return; }
+      try{
+        const wb = XLSX.utils.book_new();
+        const sh = XLSX.utils.json_to_sheet(vis.map(x => ({ 'Candidate': x.candidate, 'First 2nd+ round date': x.date, 'Round': x.round, 'Company': x.company, 'Time': x.time, 'Handler': x.assignee, 'Earlier calls': x.earlierCalls, 'Earlier companies': x.earlierCompanies.join(', '), 'Total calls on file': x.totalCalls, 'First call on file': x.firstSeen })));
+        sh['!cols'] = [{wch:28},{wch:20},{wch:14},{wch:26},{wch:12},{wch:18},{wch:13},{wch:32},{wch:16},{wch:16}];
+        XLSX.utils.book_append_sheet(wb, sh, 'First 2nd+ round');
+        XLSX.writeFile(wb, 'Coverage-Desk-First-Advanced-Round-' + (dt.faRange === 'all' ? 'all-time' : 'last-' + dt.faRange + '-days') + '-' + todayDateString() + '.xlsx');
+      }catch(err){ alert('Excel download failed: ' + (err && err.message || err)); }
+      return;
+    }
     const gd = t.closest('[data-dt-gotodate]'); if(gd){ gotoDate(gd.getAttribute('data-dt-gotodate')); return; }
     const pk = t.closest('[data-dt-pick]'); if(pk){ dt.selKey = pk.getAttribute('data-dt-pick'); dt.extra = new Set(); paint(); return; }
     const ex = t.closest('[data-dt-extra]'); if(ex){ const k = ex.getAttribute('data-dt-extra'); if(dt.extra.has(k)) dt.extra.delete(k); else dt.extra.add(k); paint(); return; }
@@ -16502,7 +16588,7 @@ function deskReconcile(boardRows, listRows, teamNames){
   });
   document.addEventListener('change', function(e){ if(e.target && e.target.matches && e.target.matches('[data-dt-showdone]')){ dt.showDone = e.target.checked; paint(); } });
   document.addEventListener('change', function(e){ const el = e.target; if(el && el.matches && el.matches('[data-dt-recsel]')){ const id = el.getAttribute('data-dt-recsel'); if(el.checked) dt.recSel.add(id); else dt.recSel.delete(id); paint(); } });
-  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'dtRecText'){ dt.recText = e.target.value; return; } if(e.target && e.target.id === 'dtCandQuery'){ dt.query = e.target.value; dt.selKey = ''; dt.extra = new Set(); paint(); } });
+  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'dtRecText'){ dt.recText = e.target.value; return; } if(e.target && e.target.id === 'dtFaQuery'){ dt.faQuery = e.target.value; paint(); return; } if(e.target && e.target.id === 'dtCandQuery'){ dt.query = e.target.value; dt.selKey = ''; dt.extra = new Set(); paint(); } });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && document.getElementById('deskToolsOverlay')){ close(); } });
 
   // Pre-save heads-up (never blocks the save): called at the start of saveAllChanges.
