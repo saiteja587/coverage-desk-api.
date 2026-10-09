@@ -5907,6 +5907,7 @@ function render(){
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
             <button class="more-menu-item" id="openDeskTools" title="Suggest assignees, workload checks, loose ends, reschedule tracker, candidate timeline, weekly report and an end-of-day message — in one window">🧰 Desk Tools</button>
+            <button class="more-menu-item" id="openAskDesk" title="Ask a question in plain words — last call for a candidate, who handled a company, calls per person, first-time 2nd rounds. Read-only.">💬 Ask Desk</button>
             <button class="more-menu-item" id="toggleEodWrapup" title="How today went — handled vs. slipped, plus a peek at tomorrow. The evening-facing counterpart to Today's Briefing">🌙 End-of-Day Wrap-Up</button>
             <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A notification when an unassigned call is close to its start time — fires in the open tab/app immediately, and as a real background push to every device that's subscribed (needs the server-side check set up — see the deploy notes) even once closed.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'}</button>
             <div class="more-menu-section-label">Look up</div>
@@ -6870,6 +6871,7 @@ function renderQuickSearchModal(){
 // candidate/company search, debounced and capped at 6 results so it never
 // turns into a second full search panel.
 const QUICK_JUMP_COMMANDS = [
+  { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
@@ -16315,6 +16317,465 @@ function deskReconcile(boardRows, listRows, teamNames){
   extras.sort(byTime); missing.sort(byTime);
   return { extras, missing, differ, warnings, listCount: list.length, matched: pairs.length };
 }
+
+// =====================================================================
+// Ask Desk (2026-10-09) — a read-only chat over the saved calls.
+// Two modes, same tools:
+//   * Exact answers (always works, no AI, nothing leaves the app): a keyword router maps a question to a tool.
+//   * AI mode (when the server has GROQ_API_KEY): the model picks the tools; this file runs them HERE on the
+//     browser's own data and sends back only small results with candidate names replaced by Candidate_N tokens.
+//     The server (api/_ask-desk-chat.js) fixes the system prompt and tool list and enforces a daily limit.
+// Nothing here can change data. Tools never write, assign, delete or save anything.
+// =====================================================================
+const ASK_MAX_JSON = 1800;
+function askRange(a, today){
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  a = a || {};
+  if(iso.test(String(a.date_from || '')) || iso.test(String(a.date_to || ''))){
+    return { from: iso.test(String(a.date_from || '')) ? a.date_from : '', to: iso.test(String(a.date_to || '')) ? a.date_to : '', label: (a.date_from || '…') + ' → ' + (a.date_to || '…') };
+  }
+  const mon = deskMonday(today), y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7));
+  const pad = n => String(n).padStart(2, '0');
+  const monthEnd = (yy, mm) => yy + '-' + pad(mm) + '-' + pad(new Date(Date.UTC(yy, mm, 0)).getUTCDate());
+  switch(a.period){
+    case 'today': return { from: today, to: today, label: 'today' };
+    case 'yesterday': { const d = deskDateAdd(today, -1); return { from: d, to: d, label: 'yesterday' }; }
+    case 'this_week': return { from: mon, to: deskDateAdd(mon, 6), label: 'this week' };
+    case 'last_week': return { from: deskDateAdd(mon, -7), to: deskDateAdd(mon, -1), label: 'last week' };
+    case 'this_month': return { from: y + '-' + pad(m) + '-01', to: monthEnd(y, m), label: 'this month' };
+    case 'last_month': { const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1; return { from: py + '-' + pad(pm) + '-01', to: monthEnd(py, pm), label: 'last month' }; }
+    case 'last_7_days': return { from: deskDateAdd(today, -6), to: today, label: 'last 7 days' };
+    case 'last_30_days': return { from: deskDateAdd(today, -29), to: today, label: 'last 30 days' };
+    default: return { from: '', to: '', label: 'all time' };
+  }
+}
+const askInRange = (d, rg) => (!rg.from || d >= rg.from) && (!rg.to || d <= rg.to);
+const askHandler = r => String(r.drivingPerson || r.assignee || '').trim();
+const askRoundGroup = r => isAdvancedRound(r.round) ? '2nd+' : '1st';
+const askStatusLabel = s => s ? statusBadgeInfo(s).label : '';
+function askCompanyMatch(rowCo, q){
+  const rk = normalizeCompanyKey(rowCo), qk = normalizeCompanyKey(q);
+  if(!rk || !qk) return false;
+  return rk === qk || rk.includes(qk) || (rk.length >= 4 && qk.includes(rk)) || fuzzyCompanyKeyMatch(rowCo, q);
+}
+function askPersonMatch(h, q){
+  const a = String(h || '').toLowerCase().trim(), b = String(q || '').toLowerCase().trim();
+  if(!a || !b) return false;
+  return a === b || a.split(/\s+/)[0] === b || (b.length >= 3 && a.includes(b));
+}
+// Names of people are matched tolerantly but only to *find* them; if more than one person fits, we list the choices.
+function askResolveCandidate(q, ctx){
+  q = String(q || '').trim();
+  const tk = q.match(/^candidate[_ ]?(\d+)$/i);
+  if(tk && ctx.mask){ const real = ctx.mask.name('Candidate_' + tk[1]); if(real) q = real; }
+  if(!q) return { status: 'none', clusters: [] };
+  const clusters = Array.from(ctx.resolver.clusters.values());
+  const tight = clusters.filter(c => c.variants.some(v => deskTightSameName(v, q)));
+  if(tight.length === 1) return { status: 'ok', clusters: tight };
+  if(tight.length > 1) return { status: 'ambiguous', clusters: tight.sort((a, b) => b.n - a.n) };
+  const loose = clusters.filter(c => c.variants.some(v => deskLooseNameMatch(q, v)));
+  if(loose.length === 1) return { status: 'ok', clusters: loose };
+  if(loose.length > 1) return { status: 'ambiguous', clusters: loose.sort((a, b) => b.n - a.n) };
+  return { status: 'none', clusters: [] };
+}
+function askFilter(rows, a, ctx){
+  a = a || {};
+  const rg = askRange(a, ctx.today); let keys = null;
+  if(a.candidate){
+    const rc = askResolveCandidate(a.candidate, ctx);
+    if(rc.status === 'ambiguous') return { ambiguous: { ambiguous: true, note: 'More than one candidate matches that name. Ask the user which one.', choices: rc.clusters.slice(0, 8).map(c => c.name) } };
+    if(rc.status === 'none') return { none: true };
+    keys = new Set(rc.clusters.map(c => c.key));
+  }
+  const rnd = a.round ? (/^\s*1/.test(String(a.round)) ? '1st' : '2nd+') : '';
+  const st = String(a.status || '').toLowerCase().trim();
+  const out = (rows || []).filter(r => r && r._date && askInRange(r._date, rg)
+    && (!keys || keys.has(ctx.resolver.keyOf(r.candidate)))
+    && (!a.company || askCompanyMatch(r.company, a.company))
+    && (!a.assignee || askPersonMatch(askHandler(r), a.assignee))
+    && (!rnd || askRoundGroup(r) === rnd)
+    && (!st || String(r.status || '').toLowerCase() === st || askStatusLabel(r.status).toLowerCase().includes(st)));
+  return { rows: out, range: rg };
+}
+const askCallLine = r => ({ date: r._date, time: r.woi ? 'WOI' : (r.time || ''), candidate: r.candidate, company: r.company || '', round: r.round || '', handler: askHandler(r), status: askStatusLabel(r.status) });
+const askByDateDesc = (x, y) => y._date.localeCompare(x._date) || timeToMinutes(y.time) - timeToMinutes(x.time);
+function askTopCounts(map, n){ return Array.from(map.entries()).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, n); }
+
+async function askRunTool(name, args, ctx){
+  args = (args && typeof args === 'object') ? args : {};
+  const f = (name === 'candidate_summary' || name === 'company_summary' || name === 'count_calls' || name === 'search_calls') ? askFilter(ctx.rows, args, ctx) : null;
+  if(f && f.ambiguous) return f.ambiguous;
+  if(f && f.none) return { found: false, note: 'No candidate on file matches that name.' };
+  switch(name){
+    case 'search_calls': {
+      const list = f.rows.slice().sort(askByDateDesc);
+      return { period: f.range.label, total: list.length, shown: Math.min(10, list.length), calls: list.slice(0, 10).map(askCallLine) };
+    }
+    case 'candidate_summary': {
+      const rc = askResolveCandidate(args.candidate, ctx);
+      const keys = new Set(rc.clusters.map(c => c.key));
+      const mine = ctx.rows.filter(r => r && r._date && keys.has(ctx.resolver.keyOf(r.candidate))).sort((a, b) => a._date.localeCompare(b._date) || timeToMinutes(a.time) - timeToMinutes(b.time));
+      if(!mine.length) return { found: false, note: 'No calls on file for that candidate.' };
+      const byCo = new Map();
+      mine.forEach(r => { const k = normalizeCompanyKey(r.company) || '(none)'; const e = byCo.get(k) || { company: r.company || '(no company)', calls: 0, last_date: '', rounds: new Set() }; e.calls++; if(r._date > e.last_date) e.last_date = r._date; e.rounds.add(r.round || ''); byCo.set(k, e); });
+      const spell = Array.from(new Set(rc.clusters.flatMap(c => c.variants)));
+      const fa = deskFirstAdvanced(mine, ctx.resolver.keyOf)[0];
+      const last = mine[mine.length - 1];
+      return {
+        found: true, candidate: rc.clusters[0].name, spellings: spell, total_calls: mine.length, first_call: mine[0]._date, last_call: last._date,
+        days_since_last_call: livefeedDayDiff(last._date, ctx.today),
+        rounds: { '1st': mine.filter(r => askRoundGroup(r) === '1st').length, '2nd+': mine.filter(r => askRoundGroup(r) === '2nd+').length },
+        first_2nd_plus: fa ? { date: fa.date, round: fa.round, company: fa.company } : null,
+        companies: Array.from(byCo.values()).sort((a, b) => b.calls - a.calls).slice(0, 8).map(e => ({ company: e.company, calls: e.calls, last_date: e.last_date })),
+        closures: (ctx.closures || []).filter(c => c.candidate && spell.some(v => deskTightSameName(v, c.candidate))).map(c => ({ company: c.company || '', date: String(c.createdAt || '').slice(0, 10) })),
+        recent: mine.slice(-5).reverse().map(askCallLine).map(x => ({ date: x.date, time: x.time, company: x.company, round: x.round, handler: x.handler, status: x.status })),
+      };
+    }
+    case 'company_summary': {
+      if(!args.company) return { found: false, note: 'Which company?' };
+      const rows = f.rows;
+      if(!rows.length) return { found: false, period: f.range.label, note: 'No calls found for that company in this period.' };
+      const handlers = new Map(), rounds = { '1st': 0, '2nd+': 0 }, statuses = new Map(), names = new Map(), cands = new Set();
+      rows.forEach(r => { const h = askHandler(r) || '(unassigned)'; handlers.set(h, (handlers.get(h) || 0) + 1); rounds[askRoundGroup(r)]++; if(r.status) statuses.set(askStatusLabel(r.status), (statuses.get(askStatusLabel(r.status)) || 0) + 1); const cn = r.company || ''; names.set(cn, (names.get(cn) || 0) + 1); cands.add(ctx.resolver.keyOf(r.candidate)); });
+      const dates = rows.map(r => r._date).sort();
+      return { found: true, period: f.range.label, company: askTopCounts(names, 1)[0][0], matched_names: askTopCounts(names, 3).map(x => x[0]), total_calls: rows.length, distinct_candidates: cands.size, first_call: dates[0], last_call: dates[dates.length - 1], rounds, handlers: askTopCounts(handlers, 8).map(x => ({ handler: x[0], calls: x[1] })), statuses: Object.fromEntries(statuses) };
+    }
+    case 'count_calls': {
+      const groupBy = ['assignee', 'company', 'round', 'date', 'status', 'team'].includes(args.group_by) ? args.group_by : 'assignee';
+      const rows = f.rows; const m = new Map(), label = new Map();
+      rows.forEach(r => {
+        let k, show;
+        if(groupBy === 'assignee'){ show = askHandler(r) || '(unassigned)'; k = show.toLowerCase(); }
+        else if(groupBy === 'company'){ k = normalizeCompanyKey(r.company) || '(none)'; show = r.company || '(no company)'; }
+        else if(groupBy === 'round'){ show = askRoundGroup(r) + ' round'; k = show; }
+        else if(groupBy === 'date'){ show = r._date; k = show; }
+        else if(groupBy === 'status'){ show = askStatusLabel(r.status) || '(no status)'; k = show; }
+        else { const h = askHandler(r); show = !h ? '(unassigned)' : (ctx.teamNames.has(h) ? h : ((ctx.roster.find(p => p.name === h) || {}).team || '(no team)')); k = show; }
+        m.set(k, (m.get(k) || 0) + 1); if(!label.has(k)) label.set(k, show);
+      });
+      const top = groupBy === 'date' ? Array.from(m.entries()).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 31) : askTopCounts(m, 20);
+      return { period: f.range.label, group_by: groupBy, total_calls: rows.length, groups: top.map(x => ({ key: label.get(x[0]), calls: x[1] })), more_groups: Math.max(0, m.size - top.length) };
+    }
+    case 'first_advanced': {
+      const rg = askRange(args, ctx.today);
+      const list = deskFirstAdvanced(ctx.rows, ctx.resolver.keyOf).filter(x => askInRange(x.date, rg));
+      return { period: rg.label, total: list.length, note: 'History only goes back to the earliest saved date.', candidates: list.slice(0, 12).map(x => ({ candidate: x.candidate, date: x.date, round: x.round, company: x.company, handler: x.assignee, earlier_calls: x.earlierCalls })) };
+    }
+    case 'stale_candidates': {
+      const lim = Math.max(1, Math.min(20, Number(args.limit) || 12));
+      const list = (await computeCandidateActivity(false)).filter(s => s.isStale).sort((a, b) => b.daysSince - a.daysSince);
+      return { total_stale: list.length, candidates: list.slice(0, lim).map(s => ({ candidate: s.candidate, last_date: s.lastDate, days_since: s.daysSince, last_company: s.company, total_calls: s.totalCalls })) };
+    }
+    case 'board_overview': {
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(args.date || '')) ? args.date : ctx.today;
+      const rows = ctx.rows.filter(r => r && r._date === date && r.candidate);
+      if(!rows.length) return { date, total: 0, note: 'No calls saved for this date.' };
+      const by = new Map();
+      rows.forEach(r => { const h = askHandler(r) || '(unassigned)'; by.set(h, (by.get(h) || 0) + 1); });
+      return { date, total: rows.length, first_round: rows.filter(r => askRoundGroup(r) === '1st').length, advanced: rows.filter(r => askRoundGroup(r) === '2nd+').length,
+        waiting_for_invite: rows.filter(r => r.woi).length, unassigned_no_person: rows.filter(r => !r.woi && deskNeedsPerson(r, ctx.teamNames)).length,
+        by_person: askTopCounts(by, 10).map(x => ({ handler: x[0], calls: x[1] })) };
+    }
+    case 'closures_list': {
+      const rg = askRange(args, ctx.today);
+      let list = (ctx.closures || []).filter(c => askInRange(String(c.createdAt || '').slice(0, 10) || '0000', rg) || (!rg.from && !rg.to));
+      if(args.company) list = list.filter(c => askCompanyMatch(c.company, args.company));
+      if(args.candidate) list = list.filter(c => deskLooseNameMatch(String(args.candidate), c.candidate || '') || deskTightSameName(String(args.candidate), c.candidate || ''));
+      list = list.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      return { period: rg.label, total: list.length, closures: list.slice(0, 15).map(c => ({ candidate: c.candidate, company: c.company || '', date: String(c.createdAt || '').slice(0, 10) })) };
+    }
+    default: return { error: 'Unknown tool' };
+  }
+}
+
+// ---- name masking (AI mode): candidate names never leave the browser in tool results ----
+function askMakeMask(keyOf){
+  const byKey = new Map(), byTok = new Map();
+  const tok = name => { const k = keyOf(name) || String(name); if(!byKey.has(k)){ const t = 'Candidate_' + (byKey.size + 1); byKey.set(k, t); byTok.set(t, String(name)); } return byKey.get(k); };
+  const mask = obj => {
+    if(Array.isArray(obj)) return obj.map(mask);
+    if(obj && typeof obj === 'object'){
+      const o = {};
+      Object.keys(obj).forEach(k => {
+        if(k === 'spellings') return; // spellings would reveal names
+        if(k === 'candidate' && typeof obj[k] === 'string') o[k] = tok(obj[k]);
+        else if((k === 'candidates' || k === 'choices') && Array.isArray(obj[k]) && obj[k].every(x => typeof x === 'string')) o[k] = obj[k].map(tok);
+        else o[k] = mask(obj[k]);
+      });
+      return o;
+    }
+    return obj;
+  };
+  const unmask = text => String(text || '').replace(/candidate[_ ]?(\d+)/gi, (m, n) => byTok.get('Candidate_' + n) || m);
+  return { tok, mask, unmask, name: t => byTok.get(t) || '', size: () => byKey.size };
+}
+function askClip(obj){
+  let s = JSON.stringify(obj);
+  if(s.length <= ASK_MAX_JSON) return s;
+  const o = JSON.parse(s);
+  for(let i = 0; i < 12 && JSON.stringify(o).length > ASK_MAX_JSON; i++){
+    let best = null, bl = 1;
+    Object.keys(o).forEach(k => { if(Array.isArray(o[k]) && o[k].length > bl){ best = k; bl = o[k].length; } });
+    if(!best) break;
+    o[best] = o[best].slice(0, Math.max(1, Math.floor(o[best].length / 2))); o.truncated = true;
+  }
+  return JSON.stringify(o).slice(0, ASK_MAX_JSON * 2);
+}
+
+// ---- plain-text rendering of a tool result (the exact answer, and the "rows used" panel) ----
+function askFormat(name, r){
+  if(!r) return ['No result.'];
+  if(r.error) return ['⚠ ' + r.error];
+  if(r.ambiguous) return ['More than one person matches — which one?'].concat((r.choices || []).map(c => '• ' + c));
+  const L = [];
+  const callTxt = c => c.date + ' ' + (c.time || '') + ' — ' + c.candidate + ' · ' + (c.company || 'no company') + ' · ' + (c.round || 'round n/a') + (c.handler ? ' · ' + c.handler : '') + (c.status ? ' · ' + c.status : '');
+  if(name === 'search_calls'){
+    L.push(r.total + ' call' + (r.total === 1 ? '' : 's') + ' (' + r.period + ')' + (r.total > r.shown ? ', showing the latest ' + r.shown : '') + ':');
+    (r.calls || []).forEach(c => L.push('• ' + callTxt(c)));
+  } else if(name === 'candidate_summary'){
+    if(!r.found) return [r.note || 'Not found.'];
+    L.push('**' + r.candidate + '** — ' + r.total_calls + ' call' + (r.total_calls === 1 ? '' : 's') + ', first ' + r.first_call + ', last ' + r.last_call + ' (' + r.days_since_last_call + ' days ago).');
+    L.push('Rounds: ' + r.rounds['1st'] + ' first-round, ' + r.rounds['2nd+'] + ' 2nd+.' + (r.first_2nd_plus ? ' First 2nd+ round: ' + r.first_2nd_plus.date + (r.first_2nd_plus.company ? ' at ' + r.first_2nd_plus.company : '') + '.' : ' Never reached a 2nd+ round.'));
+    if(r.companies.length) L.push('Companies: ' + r.companies.map(c => c.company + ' (' + c.calls + ', last ' + c.last_date + ')').join('; '));
+    if(r.closures.length) L.push('🏆 Closure: ' + r.closures.map(c => (c.company || 'company n/a') + (c.date ? ' on ' + c.date : '')).join('; '));
+    if(r.spellings && r.spellings.length > 1) L.push('Also typed as: ' + r.spellings.slice(0, 5).join(', '));
+    L.push('Latest calls:'); r.recent.forEach(c => L.push('• ' + c.date + ' ' + c.time + ' · ' + (c.company || 'no company') + ' · ' + (c.round || '') + (c.handler ? ' · ' + c.handler : '') + (c.status ? ' · ' + c.status : '')));
+  } else if(name === 'company_summary'){
+    if(!r.found) return [r.note || 'Not found.'];
+    L.push('**' + r.company + '** (' + r.period + ') — ' + r.total_calls + ' calls, ' + r.distinct_candidates + ' candidates, ' + r.first_call + ' → ' + r.last_call + '.');
+    L.push('Rounds: ' + r.rounds['1st'] + ' first-round, ' + r.rounds['2nd+'] + ' 2nd+.');
+    L.push('Handled by: ' + r.handlers.map(h => h.handler + ' ' + h.calls).join(', '));
+    const st = Object.keys(r.statuses || {}); if(st.length) L.push('Outcomes: ' + st.map(k => k + ' ' + r.statuses[k]).join(', '));
+    if(r.matched_names.length > 1) L.push('Matched spellings: ' + r.matched_names.join(', '));
+  } else if(name === 'count_calls'){
+    L.push(r.total_calls + ' call' + (r.total_calls === 1 ? '' : 's') + ' (' + r.period + '), by ' + r.group_by + ':');
+    r.groups.forEach(g => L.push('• ' + g.key + ': ' + g.calls)); if(r.more_groups) L.push('…and ' + r.more_groups + ' more.');
+  } else if(name === 'first_advanced'){
+    L.push(r.total + ' candidate' + (r.total === 1 ? '' : 's') + ' reached a 2nd+ round for the first time (' + r.period + ')' + (r.total > r.candidates.length ? ', showing ' + r.candidates.length : '') + ':');
+    r.candidates.forEach(c => L.push('• ' + c.date + ' — ' + c.candidate + ' · ' + (c.round || '2nd+') + (c.company ? ' at ' + c.company : '') + (c.handler ? ' · ' + c.handler : '') + (c.earlier_calls ? ' · ' + c.earlier_calls + ' earlier call' + (c.earlier_calls > 1 ? 's' : '') : ' · no earlier calls on file')));
+    if(r.total) L.push(r.note);
+  } else if(name === 'stale_candidates'){
+    L.push(r.total_stale + ' candidate' + (r.total_stale === 1 ? '' : 's') + ' with no new call for 14+ days' + (r.total_stale > r.candidates.length ? ' (showing ' + r.candidates.length + ')' : '') + ':');
+    r.candidates.forEach(c => L.push('• ' + c.candidate + ' — ' + c.days_since + ' days (last ' + c.last_date + (c.last_company ? ', ' + c.last_company : '') + ', ' + c.total_calls + ' calls)'));
+  } else if(name === 'board_overview'){
+    if(!r.total) return [r.date + ': ' + (r.note || 'no calls.')];
+    L.push('**' + r.date + '** — ' + r.total + ' calls: ' + r.first_round + ' first-round, ' + r.advanced + ' 2nd+, ' + r.waiting_for_invite + ' waiting for invite.');
+    L.push('Without a named person: ' + r.unassigned_no_person + '.');
+    L.push('By person: ' + r.by_person.map(p => p.handler + ' ' + p.calls).join(', '));
+  } else if(name === 'closures_list'){
+    L.push(r.total + ' closure' + (r.total === 1 ? '' : 's') + ' (' + r.period + ')' + (r.total > r.closures.length ? ', showing ' + r.closures.length : '') + ':');
+    r.closures.forEach(c => L.push('• ' + (c.date || 'date n/a') + ' — ' + c.candidate + ' → ' + (c.company || 'company n/a')));
+  } else L.push(JSON.stringify(r));
+  return L;
+}
+
+// ---- exact-answer router (no AI): question text -> one tool call, or null ----
+function askPeriodFrom(q){
+  q = q.toLowerCase();
+  if(/\byesterday\b/.test(q)) return 'yesterday';
+  if(/\btoday\b|\btoday's\b/.test(q)) return 'today';
+  if(/last week|previous week|past week/.test(q)) return /past week/.test(q) ? 'last_7_days' : 'last_week';
+  if(/this week/.test(q)) return 'this_week';
+  if(/last month|previous month/.test(q)) return 'last_month';
+  if(/this month/.test(q)) return 'this_month';
+  if(/last 7 days|past 7 days/.test(q)) return 'last_7_days';
+  if(/last 30 days|past 30 days|past month/.test(q)) return 'last_30_days';
+  if(/all time|ever\b|overall|so far/.test(q)) return 'all';
+  return '';
+}
+function askFindCompany(q, ctx){
+  const qk = normalizeCompanyKey(q); if(!qk) return '';
+  if(!ctx._companies){ const m = new Map(); ctx.rows.forEach(r => { const k = normalizeCompanyKey(r.company); if(k && k.length >= 4 && !m.has(k)) m.set(k, r.company); }); ctx._companies = m; }
+  let best = '', bl = 0;
+  ctx._companies.forEach((name, k) => { if(k.length > bl && qk.includes(k)){ best = name; bl = k.length; } });
+  return best;
+}
+function askFindCandidateInText(q, ctx){
+  const words = q.replace(/[?.,!]/g, ' ').split(/\s+/).filter(Boolean);
+  const clusters = Array.from(ctx.resolver.clusters.values());
+  for(let n = Math.min(4, words.length); n >= 2; n--){
+    for(let i = 0; i + n <= words.length; i++){
+      const phrase = words.slice(i, i + n).join(' ');
+      const hit = clusters.filter(c => c.variants.some(v => deskTightSameName(v, phrase)));
+      if(hit.length) return phrase;
+    }
+  }
+  // a single leftover word only counts as a name if it is not an everyday word of the question and fits very few people
+  const stop = new Set('the for and who what when how many calls call last first show tell about with from that this candidate candidates company companies client clients round rounds week weeks month months year today yesterday tomorrow status history timeline person people handler handled handlers assignee assignees team teams per count number total most least took take took have has had any all each every which gone quiet cold stale stuck closure closures offer offers placed unassigned overview board second third technical advanced waiting invite time times date dates name names new old latest recent list give does did done there their them they than then these those been being were was are not out over under only also just like want need please'.split(' '));
+  for(const w of words){
+    if(w.length < 4 || stop.has(w.toLowerCase())) continue;
+    const hit = clusters.filter(c => c.variants.some(v => deskNameTokens(v).includes(w.toLowerCase())));
+    if(hit.length >= 1 && hit.length <= 3) return w;
+  }
+  return '';
+}
+function askRoute(question, ctx){
+  const q = String(question || '').toLowerCase().trim();
+  const period = askPeriodFrom(q);
+  const person = (ctx.roster || []).map(p => p.name).filter(n => n && new RegExp('\\b' + n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(q)).sort((a, b) => b.length - a.length)[0] || '';
+  if(/first.*(2nd|second|3rd|third|technical|advanced)|(2nd|second|technical|advanced).*first (time|ever)|new (to|in) (the )?(2nd|second|technical)/.test(q)) return { tool: 'first_advanced', args: { period: period || 'last_30_days' } };
+  if(/stale|gone quiet|gone cold|no new calls?|stuck|dried up|haven'?t had a call/.test(q)) return { tool: 'stale_candidates', args: {} };
+  if(/closure|closed|offers?\b|placed|placement/.test(q)){
+    const co = askFindCompany(q, ctx);
+    return { tool: 'closures_list', args: Object.assign({ period: period || 'all' }, co ? { company: co } : {}) };
+  }
+  if(/unassigned|not assigned|no (assignee|person)|without (an? )?(assignee|person)|waiting for invit|\bwoi\b|overview|board|how (busy|many calls)? ?(is|are)? ?(today|tomorrow)/.test(q) && !/how many.*(did|has|have)/.test(q)){
+    const iso = (q.match(/\b(20\d\d-\d\d-\d\d)\b/) || [])[1];
+    const d = iso || (period === 'yesterday' ? deskDateAdd(ctx.today, -1) : (/tomorrow/.test(q) ? deskDateAdd(ctx.today, 1) : ctx.today));
+    return { tool: 'board_overview', args: { date: d } };
+  }
+  if(/how many|count|number of|total|most|least|per (person|company|day|round|team)|by (person|company|day|round|team|handler)|breakdown/.test(q)){
+    const args = { period: period || (/ever|all time/.test(q) ? 'all' : 'this_week') };
+    args.group_by = /compan|client/.test(q) ? 'company' : /\bround/.test(q) ? 'round' : /status|outcome|resched|cancel/.test(q) ? 'status' : /per day|by day|daily|by date/.test(q) ? 'date' : /\bteam/.test(q) ? 'team' : 'assignee';
+    if(person){ args.assignee = person; if(args.group_by === 'assignee') args.group_by = /compan/.test(q) ? 'company' : 'date'; }
+    else if(!/per (person|people|handler|member)|by (person|people|handler|member)|who has|who took|who handled/.test(q)){
+      const candQ = askFindCandidateInText(q, ctx);
+      if(candQ){ args.candidate = candQ; if(!period) args.period = 'all'; if(args.group_by === 'assignee') args.group_by = 'company'; }
+    }
+    const co = askFindCompany(q, ctx); if(co) args.company = co;
+    if(/2nd|second|advanced|technical/.test(q) && !/first.?round/.test(q)) args.round = '2nd+'; else if(/1st|first.?round/.test(q)) args.round = '1st';
+    return { tool: 'count_calls', args };
+  }
+  const cand = askFindCandidateInText(q, ctx);
+  const co = askFindCompany(q, ctx);
+  if(cand && !(co && /company|client|who (handled|took)/.test(q))) return { tool: 'candidate_summary', args: { candidate: cand } };
+  if(co) return { tool: 'company_summary', args: { company: co, period: period || 'all' } };
+  if(person) return { tool: 'count_calls', args: { group_by: 'date', assignee: person, period: period || 'this_week' } };
+  return null;
+}
+const ASK_HELP = ['I can answer these from your saved calls (exact numbers, nothing guessed):',
+  '• "Who got their first 2nd round this week?"', '• "Last call for <candidate name>"', '• "<Company> history" or "who handled <company>?"',
+  '• "How many calls per person this week?"', '• "Unassigned calls today"', '• "Which candidates have gone quiet?"', '• "Closures this month"'];
+
+// ---- the chat window ----
+(function setupAskDesk(){
+  const ask = { open: false, msgs: [], busy: false, ai: { checked: false, configured: false, model: '', reason: '' }, history: [], mask: null, maskFor: null, resolver: null, resolverFor: null };
+  window._askDesk = ask;
+  const esc = escapeHtml;
+  const EXAMPLES = ['Who got their first 2nd round this week?', 'Calls per person this week', 'Unassigned calls today', 'Which candidates have gone quiet?', 'Closures this month'];
+
+  function fmt(text){ return esc(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>'); }
+  function paintMsgs(){
+    const box = document.getElementById('askMsgs'); if(!box) return;
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    box.innerHTML = (ask.msgs.length ? '' : '<div class="ask-hello">Ask about any candidate, company, person or date — I only look things up, I never change anything.</div>') +
+      ask.msgs.map(m => m.role === 'user' ? '<div class="ask-b user">' + esc(m.text) + '</div>' :
+        '<div class="ask-b bot">' + fmt(m.text) +
+        (m.used && m.used.length ? '<details class="ask-used"><summary>Rows used</summary>' + m.used.map(u => '<div class="ask-u"><div class="ask-ut">' + esc(u.title) + '</div>' + fmt(u.lines.join('\n')) + '</div>').join('') + '</details>' : '') +
+        (m.timeline ? '<div><button class="lf-act" data-ask-timeline="' + esc(m.timeline) + '">📋 Open timeline</button></div>' : '') + '</div>').join('') +
+      (ask.busy ? '<div class="ask-b bot ask-typing"><span class="spinner"></span> Looking…</div>' : '');
+    if(stick || ask.busy) box.scrollTop = box.scrollHeight;
+  }
+  function paintMode(){
+    const el = document.getElementById('askMode'); if(!el) return;
+    el.textContent = !ask.ai.checked ? 'checking…' : (ask.ai.configured ? '🤖 AI on · names masked' : '🔎 Exact answers');
+    el.title = ask.ai.configured ? 'The AI chooses what to look up. Candidate names in results are replaced by Candidate_N before leaving your browser.' : (ask.ai.reason || 'AI is not set up yet — answers come straight from your saved calls.');
+  }
+  function paintShell(){
+    const o = document.getElementById('askDeskOverlay'); if(!o) return;
+    o.innerHTML = '<div class="my-name-picker-card ask-card"><div class="ask-head"><strong>💬 Ask Desk</strong><span class="ask-mode" id="askMode"></span><span style="flex:1"></span><button class="lf-link" data-ask-clear>Clear</button><button class="lf-x" data-ask-close aria-label="Close">✕</button></div>' +
+      '<div class="ask-msgs" id="askMsgs"></div>' +
+      '<div class="ask-chips">' + EXAMPLES.map(e => '<button class="ask-chip" data-ask-ex="' + esc(e) + '">' + esc(e) + '</button>').join('') + '</div>' +
+      '<div class="ask-input"><input id="askInput" placeholder="Ask about candidates, companies, people, dates…" autocomplete="off"><button class="btn primary" data-ask-send>Send</button></div>' +
+      '<div class="ask-foot">Read-only · answers come from your saved calls</div></div>';
+    paintMsgs(); paintMode();
+  }
+  async function probe(){
+    ask.ai.checked = false; paintMode();
+    if(!API_BASE_URL){ ask.ai = { checked: true, configured: false, model: '', reason: 'Offline mode — no server.' }; paintMode(); return; }
+    try{
+      const r = await apiCall('chat', { timeoutMs: 8000 });
+      ask.ai = { checked: true, configured: !!(r && r.configured), model: (r && r.model) || '', reason: r && r.configured ? '' : 'AI is not set up yet (add GROQ_API_KEY in Vercel). Exact answers still work.' };
+    }catch(e){ ask.ai = { checked: true, configured: false, model: '', reason: 'AI is unavailable right now. Exact answers still work.' }; }
+    paintMode();
+  }
+  function open(){
+    ask.open = true;
+    let o = document.getElementById('askDeskOverlay');
+    if(!o){ o = document.createElement('div'); o.id = 'askDeskOverlay'; o.className = 'my-name-picker-overlay ask-overlay'; document.body.appendChild(o); }
+    paintShell(); probe();
+    setTimeout(() => { const i = document.getElementById('askInput'); if(i) i.focus(); }, 50);
+  }
+  function close(){ ask.open = false; const o = document.getElementById('askDeskOverlay'); if(o) o.remove(); }
+  window.openAskDesk = open;
+
+  async function buildCtx(){
+    const rows = await fetchAllRowsAcrossDates(false);
+    if(!state.closuresLoaded){ try{ await loadClosures(); }catch(e){} }
+    if(ask.resolverFor !== rows){ ask.resolver = deskBuildPersonResolver(rows); ask.resolverFor = rows; }
+    if(!ask.mask) ask.mask = askMakeMask(nm => ask.resolver.keyOf(nm)); // one mask for the whole chat, so Candidate_N means the same person in follow-up questions
+    return { rows, closures: state.closures || [], today: todayDateString(), resolver: ask.resolver, teamNames: new Set((state.roster || []).map(p => p.team)), roster: state.roster || [], mask: ask.mask };
+  }
+  const titleOf = (name, args) => name + '(' + Object.keys(args || {}).filter(k => args[k] !== '' && args[k] != null).map(k => k + '=' + args[k]).join(', ') + ')';
+  function timelineOf(used){ const u = used.find(x => x.name === 'candidate_summary' && x.res && x.res.found); return u ? u.res.candidate : ''; }
+
+  async function exactAnswer(q, ctx){
+    const route = askRoute(q, ctx);
+    if(!route) return { text: ASK_HELP.join('\n'), used: [] };
+    const res = await askRunTool(route.tool, route.args, ctx);
+    return { text: askFormat(route.tool, res).join('\n'), used: [], timeline: timelineOf([{ name: route.tool, res }]) };
+  }
+  async function aiAnswer(q, ctx){
+    const messages = ask.history.slice(-6).map(h => ({ role: h.role, content: h.content })).concat([{ role: 'user', content: q }]);
+    const used = [];
+    for(let step = 0; step < 4; step++){
+      const resp = await apiCall('chat', { method: 'POST', body: { messages, today: ctx.today }, timeoutMs: 15000 });
+      const m = resp && resp.message;
+      if(!m) throw new Error('empty answer');
+      messages.push(m);
+      if(m.tool_calls && m.tool_calls.length){
+        for(const tc of m.tool_calls){
+          let args = {}; try{ args = JSON.parse(tc.function.arguments || '{}'); }catch(e){}
+          const res = await askRunTool(tc.function.name, args, ctx);
+          used.push({ name: tc.function.name, args, res });
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: askClip(ctx.mask.mask(res)) });
+        }
+        continue;
+      }
+      const masked = String(m.content || '').trim();
+      if(!masked) throw new Error('the AI gave an empty answer');
+      return { text: ctx.mask.unmask(masked), maskedText: masked, used: used.map(u => ({ title: titleOf(u.name, u.args), lines: askFormat(u.name, u.res) })), timeline: timelineOf(used) };
+    }
+    throw new Error('the AI needed too many steps');
+  }
+  async function send(q){
+    q = String(q || '').trim(); if(!q || ask.busy) return;
+    const inp = document.getElementById('askInput'); if(inp) inp.value = '';
+    ask.msgs.push({ role: 'user', text: q }); ask.busy = true; paintMsgs();
+    let out;
+    try{
+      const ctx = await buildCtx();
+      if(ask.ai.configured){
+        try{
+          out = await aiAnswer(q, ctx);
+          ask.history.push({ role: 'user', content: q }, { role: 'assistant', content: out.maskedText });
+        }catch(e){
+          const why = String(e && e.message || e).replace(/^chat:\s*/, '');
+          const ex = await exactAnswer(q, ctx);
+          out = { text: '⚠ AI unavailable (' + why + '). Exact answer:\n' + ex.text, used: [], timeline: ex.timeline };
+        }
+      } else out = await exactAnswer(q, ctx);
+    }catch(e){ out = { text: '⚠ Could not load your call history: ' + String(e && e.message || e) + '. Try again in a moment.', used: [] }; }
+    ask.busy = false; ask.msgs.push({ role: 'bot', text: out.text, used: out.used || [], timeline: out.timeline || '' }); paintMsgs();
+  }
+  window.askDeskSend = send;
+
+  document.addEventListener('click', function(e){
+    const t = e.target; if(!t.closest) return;
+    if(t.closest('#openAskDesk')){ state.showMoreMenu = false; render(); open(); return; }
+    if(t.id === 'askDeskOverlay' || t.closest('[data-ask-close]')){ close(); return; }
+    if(!t.closest('#askDeskOverlay')) return;
+    if(t.closest('[data-ask-send]')){ const i = document.getElementById('askInput'); send(i ? i.value : ''); return; }
+    const ex = t.closest('[data-ask-ex]'); if(ex){ send(ex.getAttribute('data-ask-ex')); return; }
+    if(t.closest('[data-ask-clear]')){ ask.msgs = []; ask.history = []; ask.mask = null; paintMsgs(); return; }
+    const tl = t.closest('[data-ask-timeline]'); if(tl){ const nm = tl.getAttribute('data-ask-timeline'); close(); closeAllPanels(); openCandidateProfile(nm); return; }
+  });
+  document.addEventListener('keydown', function(e){
+    if(!ask.open) return;
+    if(e.key === 'Escape'){ close(); return; }
+    if(e.key === 'Enter' && e.target && e.target.id === 'askInput' && !e.isComposing){ e.preventDefault(); send(e.target.value); }
+  });
+})();
 
 (function setupDeskTools(){
   const dt = { faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
