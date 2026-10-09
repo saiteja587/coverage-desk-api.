@@ -10,6 +10,7 @@
 //   Users panel in the app.
 
 const mysql = require('mysql2/promise');
+const { handleChat } = require('./_ask-desk-chat');
 const crypto = require('crypto');
 
 // Passwords used to be hashed with plain unsalted SHA-256 — fast by
@@ -238,7 +239,7 @@ module.exports = async (req, res) => {
       // alerts is a per-device notification preference, not a data edit —
       // it never touches calls/closures/roster/etc, so the usual "only
       // admin can write" reasoning doesn't apply here.
-      const allowedForAnyRole = resource === 'push_subscription';
+      const allowedForAnyRole = resource === 'push_subscription' || resource === 'chat';
       if (!allowedForAnyRole && auth.role !== 'admin' && !(auth.role === 'team_lead' && allowedForTeamLead)) {
         return res.status(403).json({ error: 'You do not have permission to save changes to this.' });
       }
@@ -266,7 +267,8 @@ module.exports = async (req, res) => {
     if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|push_subscription|users|whoami' });
+    if (resource === 'chat') return await handleChat(req, res, db, auth);
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|push_subscription|users|chat|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
