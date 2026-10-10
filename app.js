@@ -15266,6 +15266,28 @@ window.addEventListener('keydown', (e)=>{
     if(state.dirty && !state.saving && CURRENT_ROLE==='admin') saveAllChanges();
     return;
   }
+  // Import shortcuts (2026-10-10) — N = new calls import, R = reschedule/
+  // cancel import. Alt+N / Alt+R work everywhere. Ctrl/Cmd+N and Ctrl/Cmd+R
+  // are ALSO handled, but those belong to the browser (new window / reload):
+  // most browsers let a page cancel Ctrl+R but not Ctrl+N, so Alt is the
+  // reliable pair. Ctrl+Shift+R (hard reload) is deliberately left alone.
+  if(!e.shiftKey && (e.altKey || ctrlOrCmd) && !(e.altKey && ctrlOrCmd)){
+    const k = (e.key||'').toLowerCase();
+    if(k==='n' || k==='r'){
+      e.preventDefault();
+      closeAllPanels();
+      state.showQuickJump = false;
+      if(k==='n'){ state.showImport = true; state.importDefaultRound = state.view==='2nd' ? '2nd' : '1st'; }
+      else { state.showRescheduleImport = true; }
+      render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(()=>{
+        const el = document.getElementById(k==='n' ? 'importText' : 'rescheduleImportText');
+        if(el) el.focus();
+      }, 30);
+      return;
+    }
+  }
   // Quick-jump command bar (added 2026-09-30) — Ctrl/Cmd+K, same shortcut
   // convention as most command palettes elsewhere. Deliberately NOT gated
   // by isTyping, same reasoning as Ctrl/Cmd+S above: this is a modifier
