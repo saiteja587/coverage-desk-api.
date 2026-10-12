@@ -3096,6 +3096,10 @@ function parseDurationMinutes(text){
 // ("Name – Time – rescheduled from candidate side"), the "reschedule to
 // [when]" form, and the fuller form with company/round/duration/reason,
 // often split across a couple of lines with @mentions and "sir" mixed in.
+// "... will be unable to attend interviews" / "not available for the interview" /
+// "can't attend" — a candidate-unavailable message with no literal
+// "reschedule" word; tracked as a reschedule.
+const RESCHED_UNAVAILABLE_RE = /\b(?:unable\s+to\s+attend|(?:can.?t|cannot|won.?t\s+be\s+able\s+to)\s+attend|not\s+(?:be\s+)?available\s+for\s+(?:the\s+|any\s+)?(?:interview|call)s?)/i;
 function looksLikeRescheduleLine(line){
   // Broadened to also catch "not responding"/"no response" messages (a
   // genuinely distinct status from reschedule/cancel), typo'd variants
@@ -3123,6 +3127,7 @@ function looksLikeRescheduleLine(line){
     || (/didn.t\s+happen/i.test(line) && /invit\w*|link/i.test(line));
   const hasStatusWord = /\b(reschedul\w*|cancel\w*|(?:not|no)\s+(?:\w+\s+){0,2}respon\w*)\b/i.test(line)
     || /candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(line)
+    || RESCHED_UNAVAILABLE_RE.test(line)
     || hasNoInviteWord;
   return hasStatusWord;
 }
@@ -3142,7 +3147,12 @@ function parseRescheduleText(text){
   for(const line of lines){
     if(!line){ if(current.length){ blocks.push(current); current=[]; } continue; }
     if(/^@/.test(line) && !timeRe.test(line)) continue; // pure @mention line, not data
-    const isNewEntry = timeRe.test(line) && /[–\-]/.test(line);
+    let isNewEntry = timeRe.test(line) && /[–\-]/.test(line);
+    // A second self-contained status message pasted right after the first
+    // with no blank line between them ("... Name (3:30 PM) mentioned ...\nSir,
+    // ahmed call rescheduled ...") — the second has no time so the rule
+    // above never split it off, and it got glued into the first message.
+    if(!isNewEntry && current.length && looksLikeRescheduleLine(line) && looksLikeRescheduleLine(current.join(' '))) isNewEntry = true;
     if(isNewEntry && current.length){ blocks.push(current); current=[]; }
     current.push(line);
   }
@@ -3169,7 +3179,22 @@ function parseRescheduleText(text){
     const nameMatch =
       timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/) ||
       timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s+\d{1,2}[:.]\d{2}/);
-    const candidate = nameMatch ? nameMatch[1].trim() : null;
+    let candidate = nameMatch ? nameMatch[1].trim() : null;
+    // Free-form shapes with no dash after the name:
+    //   "@Sashank Bava Sir, Sharon Rentala (3:30 PM) mentioned that ..."  (name + time in parens)
+    //   "Sir, ahmed call rescheduled from candidate side ..."            (name + the word "call", no time)
+    // Only tried when the dash-based patterns above found nothing.
+    if(!candidate){
+      const NOT_NAME = /^(?:the|this|that|his|her|their|our|my|all|both|candidate|interview|today|call|calls|sir|madam|a|an)$/i;
+      const lead = '^(?:@[\\w\\s]+?[,:]?\\s*)?(?:sir[,:]?\\s*)?';
+      let fm = timeLine.match(new RegExp(lead + '([A-Za-z][A-Za-z .]*?)\\s*\\(\\s*\\d{1,2}(?:[:.]\\d{2})?\\s*(?:[AaPp][Mm])?\\s*(?:IST)?\\s*\\)', 'i'))
+        || timeLine.match(new RegExp(lead + "([A-Za-z][A-Za-z .]*?)(?:['\\u2019]s)?\\s+calls?\\s+(?:(?:has|have|was|were|is|got|been|has\\s+been|have\\s+been)\\s+)?(?:reschedul|cancel|not\\s+respon|didn)", 'i'));
+      if(fm){
+        const words = fm[1].trim().split(/\s+/).filter(Boolean);
+        while(words.length && NOT_NAME.test(words[0])) words.shift();
+        if(words.length && words.length <= 5 && !words.some(w=>NOT_NAME.test(w) && words.length===1)) candidate = words.join(' ');
+      }
+    }
 
     let company = null;
     const companyMatch = full.match(/Interview\s*[–\-]\s*([^–\-]+?)\s*[–\-]/i);
@@ -3189,6 +3214,7 @@ function parseRescheduleText(text){
     else if(noInviteMatch) status = 'no_invite';
     else if(/cancel/i.test(full)) status = 'cancelled';
     else if(/reschedul/i.test(full)) status = 'rescheduled';
+    else if(RESCHED_UNAVAILABLE_RE.test(full)) status = 'rescheduled';
 
     let side = null;
     if(/candidate\s*side/i.test(full)) side = 'candidate side';
@@ -3200,6 +3226,7 @@ function parseRescheduleText(text){
     const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
     if(reasonMatch) reason = reasonMatch[1].trim();
     else if(/candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(full)) reason = 'Candidate handling interview independently';
+    else if(RESCHED_UNAVAILABLE_RE.test(full) && !/reschedul|cancel/i.test(full)) reason = full.replace(/^@[\w\s]+?(?:sir)?[,:]\s*/i,'').trim().slice(0,400); // the whole message is the explanation
     else if(status === 'no_invite') reason = 'Didn’t receive the invitation link'; // real messages for this case rarely use "due to..." phrasing, so default it directly rather than leaving it blank
     else {
       const toMatch = full.match(/reschedul\w*\s+to\s+([^.@]+?)(?:\s+sir\.?)?(?:\s*@|$)/i);
@@ -3486,6 +3513,20 @@ function matchRescheduleToRow(parsed, rows){
     if(companyMatch) return companyMatch;
   }
   return pool[0];
+}
+
+// Last-resort lookup for a message that only gives PART of a name ("ahmed"
+// for "Mudassir Ahmed Mohammed"): every word typed must be a whole word of
+// the call's candidate name. Returns all matching rows' distinct people so
+// the caller can refuse to guess when it is ambiguous — never silent: the
+// review screen flags it for confirmation.
+function findPartialNameRows(rows, candidateName){
+  const words = (candidateName||'').toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+  if(!words.length) return [];
+  return rows.filter(r=>{
+    const rw = (r.candidate||'').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return rw.length && words.every(w=>rw.includes(w));
+  });
 }
 
 // Detects when a freshly-parsed import line is actually describing a call
@@ -8247,7 +8288,7 @@ function renderRescheduleConfirmPanel(){
       </div>
       <select class="resched-target-select" data-idx="${idx}" ${it.skip?'disabled':''}>${optionsHtml(it.selectedRowId)}</select>
       <div class="resched-flags">
-        ${matched && it.autoMatched ? `<span class="resched-match-badge">✓ Auto-matched to an existing call — check it's the right one</span>` : `<span class="resched-unmatch-badge">⚠ No automatic match found — pick the call this refers to</span>`}
+        ${matched && it.autoMatched && it.partial ? `<span class="resched-match-badge">✓ Matched from a partial name ("${escapeHtml(it.candidate)}") — check it's the right person</span>` : matched && it.autoMatched ? `<span class="resched-match-badge">✓ Auto-matched to an existing call — check it's the right one</span>` : `<span class="resched-unmatch-badge">⚠ No automatic match found — pick the call this refers to</span>`}
         <label style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:5px;white-space:nowrap"><input type="checkbox" class="resched-skip" data-idx="${idx}" ${it.skip?'checked':''}> Skip this one</label>
       </div>
     </div>`;
@@ -12427,8 +12468,19 @@ function attachHandlers(conflictIds){
     // confirms (or manually picks the right call) on the next screen before
     // anything is saved to the database.
     state.rescheduleReview = parsed.map(msg=>{
-      const matchedRow = matchRescheduleToRow(msg, state.rows);
+      let matchedRow = matchRescheduleToRow(msg, state.rows);
+      let partial = false;
+      if(!matchedRow){
+        const pr = findPartialNameRows(state.rows, msg.candidate);
+        const people = new Set(pr.map(r=>(r.candidate||'').trim().toLowerCase()));
+        if(pr.length && people.size === 1){
+          // same person (maybe several calls) — prefer the one at the stated time
+          matchedRow = (msg.time && pr.find(r=>(r.time||'').replace(/\s+/g,' ').toUpperCase()===msg.time.toUpperCase())) || (pr.length===1 ? pr[0] : null);
+          partial = !!matchedRow;
+        }
+      }
       return {
+        partial,
         raw: msg.raw,
         candidate: msg.candidate,
         time: msg.time,
