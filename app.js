@@ -195,6 +195,7 @@ let state = {
   lastDeleted: null,
   assigneeFilter: '',
   clientFilter: '',
+  roleFilter: '',
   teamFilter: null,
   groupByCompany: false,
   showMoreMenu: false,
@@ -2847,6 +2848,7 @@ function exportDayToExcel(){
       'Time': r.woi ? 'Waiting for Invite' : (r.time||''),
       'Candidate': r.candidate||'',
       'Company': r.company||'',
+      'Role': r.role||'',
       'Round': r.round||'',
       'Duration': r.duration||'',
       'Assignee': r.assignee || (r.woi ? '' : 'Unassigned'),
@@ -2876,7 +2878,7 @@ function exportDayToExcel(){
   const wb = XLSX.utils.book_new();
   const callsSheet = XLSX.utils.json_to_sheet(callRows);
   callsSheet['!cols'] = [
-    {wch:16},{wch:14},{wch:26},{wch:22},{wch:12},{wch:10},{wch:18},{wch:16},{wch:10},{wch:8},{wch:14}
+    {wch:16},{wch:14},{wch:26},{wch:22},{wch:28},{wch:12},{wch:10},{wch:18},{wch:16},{wch:10},{wch:8},{wch:14}
   ];
   XLSX.utils.book_append_sheet(wb, callsSheet, 'Calls');
 
@@ -3010,14 +3012,14 @@ function exportCandidateActivityToExcel(){
   const calls = [];
   list.forEach(s => (s.calls || []).forEach((c, i) => calls.push({
     'Candidate': s.candidate || '', 'Call #': i + 1, 'Date': c.date || '', 'Time': c.woi ? 'WOI' : (c.time || ''),
-    'Company': c.company || '', 'Round': c.round || '', 'Status': stLabel(c.status, c.woi),
+    'Company': c.company || '', 'Role': c.role || '', 'Round': c.round || '', 'Status': stLabel(c.status, c.woi),
   })));
   const wb = XLSX.utils.book_new();
   const sh1 = XLSX.utils.json_to_sheet(summary);
   sh1['!cols'] = [{wch:28},{wch:26},{wch:11},{wch:14},{wch:14},{wch:20},{wch:18},{wch:18},{wch:16},{wch:16}];
   XLSX.utils.book_append_sheet(wb, sh1, 'Candidates');
   const sh2 = XLSX.utils.json_to_sheet(calls);
-  sh2['!cols'] = [{wch:28},{wch:8},{wch:12},{wch:12},{wch:26},{wch:14},{wch:20}];
+  sh2['!cols'] = [{wch:28},{wch:8},{wch:12},{wch:12},{wch:26},{wch:28},{wch:14},{wch:20}];
   XLSX.utils.book_append_sheet(wb, sh2, 'All calls');
   XLSX.writeFile(wb, `Coverage-Desk-Candidate-Activity-${scope}-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
@@ -4222,7 +4224,7 @@ async function scanForRepeatCandidates(forceRefresh){
     if(!row.candidate) return;
     const key = row.candidate.trim().toLowerCase();
     byCandidate[key] = byCandidate[key] || [];
-    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, status: row.status, statusFields: row.statusFields});
+    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, role: row.role || '', status: row.status, statusFields: row.statusFields});
   });
 
   const results = [];
@@ -5353,7 +5355,7 @@ async function computeCandidateActivity(forceRefresh){
       totalCalls: sorted.length,
       daysSince,
       isStale,
-      calls: sorted.map(r=>({ date:r._date||'', time:r.time||'', round:r.round||'', company:r.company||'', status:r.status||'', woi:!!r.woi })),
+      calls: sorted.map(r=>({ date:r._date||'', time:r.time||'', round:r.round||'', company:r.company||'', role:r.role||'', status:r.status||'', woi:!!r.woi })),
       monthKey: last._date ? last._date.slice(0,7) : 'Undated',
     };
   }).sort((a,b)=> (b.lastDate||'').localeCompare(a.lastDate||''));
@@ -5947,6 +5949,9 @@ function render(){
   if(state.clientFilter){
     filtered = filtered.filter(r => r.company === state.clientFilter);
   }
+  if(state.roleFilter){
+    filtered = filtered.filter(r => (r.role||'').trim().toLowerCase() === state.roleFilter.toLowerCase());
+  }
   if(state.teamFilter){
     const allTeamNames = new Set(state.roster.map(p=>p.team));
     filtered = filtered.filter(r => teamOfAssignee(r.assignee, allTeamNames) === state.teamFilter);
@@ -5961,7 +5966,8 @@ function render(){
   if(q){
     filtered = filtered.filter(r =>
       (r.candidate||'').toLowerCase().includes(q) ||
-      (r.company||'').toLowerCase().includes(q)
+      (r.company||'').toLowerCase().includes(q) ||
+      (r.role||'').toLowerCase().includes(q)
     );
   }
 
@@ -6324,7 +6330,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
   return `
     <div class="search-row">
       <span class="search-icon">🔍</span>
-      <input type="text" id="searchBox" class="search-box" placeholder="Search candidate or client…" value="${escapeHtml(state.search||'')}">
+      <input type="text" id="searchBox" class="search-box" placeholder="Search candidate, client or role…" value="${escapeHtml(state.search||'')}">
       ${state.search ? `<button class="search-clear" id="clearSearch" title="Clear search">✕</button>` : ''}
       ${state.search ? `<span class="search-count">${filtered.length} match${filtered.length===1?'':'es'}</span>` : ''}
     </div>
@@ -6370,6 +6376,10 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
       <select id="clientFilterSelect" class="filter-bar-select" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:1 1 140px;min-width:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
         <option value="">Filter by client…</option>
         ${Array.from(new Set(state.rows.map(r=>r.company).filter(Boolean))).sort((a,b)=>a.localeCompare(b)).map(c=>`<option value="${escapeHtml(c)}" ${state.clientFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
+      </select>
+      <select id="roleFilterSelect" class="filter-bar-select" title="Show only one job role" style="background:var(--surface);border:1px solid var(--border);color:var(--text);width:auto;flex:1 1 130px;min-width:0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;padding:8px 30px 8px 12px;border-radius:8px;font-family:var(--body);cursor:pointer;box-shadow:var(--shadow-sm);appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235C6672' stroke-width='1.5' fill='none'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;">
+        <option value="">Filter by role…</option>
+        ${(()=>{ const m = new Map(); state.rows.forEach(r=>{ const k=(r.role||'').trim(); if(k && !m.has(k.toLowerCase())) m.set(k.toLowerCase(), k); }); return Array.from(m.values()).sort((a,b)=>a.localeCompare(b)).map(c=>`<option value="${escapeHtml(c)}" ${(state.roleFilter||'').toLowerCase()===c.toLowerCase()?'selected':''}>${escapeHtml(c)}</option>`).join(''); })()}
       </select>
       <button class="btn ${state.groupByCompany?'active':''}" id="groupByCompanyBtn" style="${state.groupByCompany?'background:var(--teal-dim);border-color:#1F4A43;color:var(--teal)':''}" title="Sort the table by client instead of time, so same-client calls sit next to each other">${state.groupByCompany?'✓ ':''}Group by client</button>
       ${(()=>{
@@ -7054,7 +7064,7 @@ function runQuickJumpSearch(q){
     render();
     const allRows = await fetchAllRowsAcrossDates(false); // cached is fine here — this is a lookup aid, not a data-integrity-sensitive read
     const qLower = query.toLowerCase();
-    let results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower));
+    let results = allRows.filter(r => (r.candidate||'').toLowerCase().includes(qLower) || (r.company||'').toLowerCase().includes(qLower) || (r.role||'').toLowerCase().includes(qLower));
     results.sort((a,b)=> b._date.localeCompare(a._date));
     // One entry per candidate + company (latest call), with a count — so each company a candidate has
     // interviewed with is its own clickable result instead of 6 near-identical rows.
@@ -7081,7 +7091,7 @@ function renderQuickJumpOverlay(){
         ${state.quickJumpLoading ? `<div class="hint" style="padding:10px 4px">Searching calls…</div>` : ''}
         ${(state.quickJumpResults && state.quickJumpResults.length) ? `
           <div class="quick-action-status-label">Calls</div>
-          ${state.quickJumpResults.map(r=>`<button class="quick-action-item" data-qj-candidate="${escapeHtml(r.candidate||'')}" data-qj-company="${escapeHtml(r.company||'')}">📋 ${escapeHtml(r.candidate||'(no name)')}${r.company?' — '+escapeHtml(r.company):''} <span style="opacity:.6">(${escapeHtml(r._date)}${r._qjN>1?' · '+r._qjN+' calls':''})</span></button>`).join('')}
+          ${state.quickJumpResults.map(r=>`<button class="quick-action-item" data-qj-candidate="${escapeHtml(r.candidate||'')}" data-qj-company="${escapeHtml(r.company||'')}">📋 ${escapeHtml(r.candidate||'(no name)')}${r.company?' — '+escapeHtml(r.company):''}${r.role?' · <i>'+escapeHtml(r.role)+'</i>':''} <span style="opacity:.6">(${escapeHtml(r._date)}${r._qjN>1?' · '+r._qjN+' calls':''})</span></button>`).join('')}
         ` : ''}
         ${(qLower.length>=2 && state.quickJumpResults && !state.quickJumpResults.length && !state.quickJumpLoading) ? `<div class="hint" style="padding:10px 4px">No matching calls found.</div>` : ''}
       </div>
@@ -10274,7 +10284,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); return sameClient ? `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}">↻</span>` : ''; })()}${(()=>{
+        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client; ${escapeHtml(repeatFlag.occurrences.map(o=>o.date).filter(Boolean).slice(0,6).join(', '))}) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); if(!sameClient) return ''; const roleDiff = !!(sameClient.role && r.role && sameClient.role.trim().toLowerCase() !== r.role.trim().toLowerCase()); return `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}${roleDiff ? ' — DIFFERENT role this time (was: '+escapeHtml(sameClient.role)+'), so this may be a new opening, not a repeat round' : (sameClient.role && r.role ? ' — same role' : '')}">${roleDiff ? '↻≠' : '↻'}</span>`; })()}${(()=>{
   const info = studentMatchBadgeInfo(r.candidate);
   if(!info) return '';
   if(info.kind === 'confirm'){
@@ -11342,6 +11352,11 @@ function attachHandlers(conflictIds){
     state.clientFilter = clientFilterSelect.value;
     render();
   };
+  const roleFilterSelect = document.getElementById('roleFilterSelect');
+  if(roleFilterSelect) roleFilterSelect.onchange = ()=>{
+    state.roleFilter = roleFilterSelect.value;
+    render();
+  };
   const groupByCompanyBtn = document.getElementById('groupByCompanyBtn');
   if(groupByCompanyBtn) groupByCompanyBtn.onclick = ()=>{
     state.groupByCompany = !state.groupByCompany;
@@ -12340,7 +12355,9 @@ function attachHandlers(conflictIds){
   const cancelImport = document.getElementById('cancelImport');
   if(cancelImport) cancelImport.onclick = ()=>{ closeAllPanels(); render(); };
   const runImport = document.getElementById('runImport');
-  if(runImport) runImport.onclick = async ()=>{
+  // The real import. `preParsed` (optional) = the rows the person reviewed/edited
+  // in the Import preview; without it the pasted text is parsed fresh, as always.
+  const runImportNow = async (preParsed)=>{
     const text = document.getElementById('importText').value;
     const dateInput = document.getElementById('importDate');
     const targetDate = dateInput ? dateInput.value : state.date;
@@ -12361,7 +12378,7 @@ function attachHandlers(conflictIds){
     // split those out now, before routing/assigning, so each date's calls
     // only ever compete for capacity against that SAME date's own existing
     // rows, not today's.
-    const parsedAll = parseImportText(text, state.date, state.importDefaultRound);
+    const parsedAll = preParsed || parseImportText(text, state.date, state.importDefaultRound);
     const totalDataLines = parsedAll._dataLineCount != null ? parsedAll._dataLineCount : parsedAll.length;
     const currentDateRaw = parsedAll.filter(r => !r._targetDate || r._targetDate === state.date);
     const otherDateRowsByDate = {};
@@ -12524,6 +12541,21 @@ function attachHandlers(conflictIds){
     // exactly the moment the "handled before" hint matters most.
     scanForRepeatCandidates().then(results=>{ state.notifications = results; render(); }).catch(()=>{});
     scanClientHistoryAllRounds().then(results=>{ state.clientHistory = results; render(); }).catch(()=>{});
+  };
+
+  // Clicking Import opens the PREVIEW first (every line split into candidate /
+  // company / role / round / time, doubts highlighted, editable). Nothing is
+  // added until "Import" is pressed there. An empty paste keeps the old path.
+  if(runImport) runImport.onclick = ()=>{
+    const ta = document.getElementById('importText');
+    const text = ta ? ta.value : '';
+    if(!text.trim() || !window.openImportPreview){ runImportNow(null); return; }
+    const dateInput = document.getElementById('importDate');
+    const baseDate = (dateInput && dateInput.value) || state.date;
+    let rows;
+    try{ rows = parseImportText(text, baseDate, state.importDefaultRound); }
+    catch(e){ runImportNow(null); return; }
+    window.openImportPreview(rows, { baseDate, onConfirm: (finalRows)=>{ runImportNow(finalRows); } });
   };
 
   // ---------- dedicated Reschedule/Cancel import (existing calls only) ----------
@@ -15778,6 +15810,21 @@ function computeSmartAlerts(allRows, today, opts){
             (earlier.length ? 'Earlier: ' + earlier.length + ' call' + (earlier.length > 1 ? 's' : '') + (cos.length ? ' (' + cos.join(', ') + ')' : '') + ', all 1st round or not completed.' : 'No earlier calls on file.')
     });
   });
+  // ---- Rule F: a call has been waiting for an invite for days ----
+  // Raised at 2 days and again at 5 days (two separate ids, so each fires once). Needs no call today
+  // for that candidate — it is about an EARLIER day's WOI call that never got a time.
+  try{
+    deskWoiOpen(rows, today, pkey).forEach(w => {
+      if(w.age < 2 || w.age > 14) return; // older ones live in Desk Tools → WOI follow-up, not as a notification flood
+      const lvl = w.age >= 5 ? 5 : 2;
+      alerts.push({
+        id: 'F|' + w.key + '|' + lvl, type: 'woi-aging', date: w.date,
+        candidate: w.candidate, company: w.company, rowId: w.rowId,
+        title: '⏳ ' + w.candidate + ' — waiting for an invite ' + w.age + ' days',
+        body: (w.company || 'No company') + (w.role ? ' (' + w.role + ')' : '') + ' · ' + (w.round || 'round n/a') + ' — first marked WOI on ' + w.date + ' and still has no scheduled time. Chase the client for the invite.' + (pn(w.assignee) ? ' Last handler: ' + w.assignee + '.' : ''),
+      });
+    });
+  }catch(e){}
   return alerts;
 }
 
@@ -16183,6 +16230,20 @@ function deskDateAdd(dateStr, n){ const p = dateStr.split('-').map(Number); retu
 function deskMonday(dateStr){ const p = dateStr.split('-').map(Number); const d = new Date(Date.UTC(p[0], p[1]-1, p[2])); const dow = (d.getUTCDay() + 6) % 7; return deskDateAdd(dateStr, -dow); }
 
 // ---- 1. Suggest assignees -------------------------------------------------
+// Rough job-role family (security / data / finance / IT-support / software /
+// business) so "who has handled this kind of role before" can be answered even
+// when the exact title differs. '' = unknown (no role, or nothing recognisable).
+function deskRoleFamily(role){
+  const t = String(role || '').toLowerCase();
+  if(!t.trim()) return '';
+  if(/security|cyber|\bsoc\b|threat|infosec/.test(t)) return 'security';
+  if(/data|analytics|\bbi\b|business intelligence|scientist|machine learning|\bml\b|\bai\b/.test(t)) return 'data';
+  if(/account|financ|audit|payroll|\btax\b|billing|treasury|chargeback|pricing/.test(t)) return 'finance';
+  if(/support|desktop|help ?desk|infrastructure|endpoint|network|\bnoc\b|sysadmin|system admin|administrator|operations/.test(t)) return 'it-support';
+  if(/developer|software|full.?stack|devops|sdet|programmer|automation|qa\b|test/.test(t)) return 'software';
+  if(/business (systems )?analyst|product owner|product|project|program|consultant|coordinator|manager/.test(t)) return 'business';
+  return '';
+}
 function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, teamNames, pkey){
   pkey = pkey || normalizeNameKey;
   const out = [];
@@ -16211,6 +16272,8 @@ function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, team
     const sameCand = prior.filter(x => pkey(x.candidate) === nk && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status))
       .sort((a, b) => b._date.localeCompare(a._date));
     let best = null;
+    const fam = deskRoleFamily(r.role);
+    const famHist = fam ? prior.filter(x => x._date >= deskDateAdd(today, -60) && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status) && deskRoleFamily(x.role) === fam) : [];
     pool.forEach((p, idx) => {
       const clash = (busy[p.name] || []).some(b => iv.s < b.e && b.s < iv.e);
       if(clash) return;
@@ -16222,6 +16285,10 @@ function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, team
         if(share >= 0.6){ score += 40 * share; if(!why) why = 'handled ' + mine + ' of ' + compHist.length + ' recent ' + r.company + ' calls'; }
       }
       if(sameCand[0] && normalizeNameKey(sameCand[0].assignee) === normalizeNameKey(p.name)){ score += 25; if(!why) why = 'handled ' + r.candidate + ' before (' + sameCand[0]._date + ')'; }
+      if(famHist.length){
+        const mineRole = famHist.filter(x => normalizeNameKey(x.assignee) === normalizeNameKey(p.name)).length;
+        if(mineRole >= 2){ score += Math.min(20, 4 * mineRole); if(!why) why = 'has handled ' + mineRole + ' recent ' + fam.replace('it-support', 'IT-support') + ' roles (' + String(r.role).slice(0, 40) + ')'; }
+      }
       score -= 4 * (loadOf[p.name] || 0);
       score -= idx * 0.01; // stable tie-break by roster order
       if(!best || score > best.score) best = { p, score, why };
@@ -16338,7 +16405,7 @@ function deskCandidateTimeline(allRows, keys, resolver){
   resolver = resolver || deskBuildPersonResolver(allRows);
   const set = new Set([].concat(keys));
   return (allRows || []).filter(r => r.candidate && set.has(resolver.keyOf(r.candidate)))
-    .map(r => ({ date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', assignee: r.assignee || '', status: r.status || '', woi: !!r.woi, typedAs: r.candidate, clusterKey: resolver.keyOf(r.candidate), reason: (r.statusFields || []).map(f => f.label + ': ' + f.value).filter(x => !/: $/.test(x)).join(', ') }))
+    .map(r => ({ date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', assignee: r.assignee || '', status: r.status || '', woi: !!r.woi, typedAs: r.candidate, role: r.role || '',  clusterKey: resolver.keyOf(r.candidate), reason: (r.statusFields || []).map(f => f.label + ': ' + f.value).filter(x => !/: $/.test(x)).join(', ') }))
     .sort((a, b) => b.date.localeCompare(a.date) || timeToMinutes(b.time) - timeToMinutes(a.time));
 }
 
@@ -16545,12 +16612,13 @@ function askFilter(rows, a, ctx){
   const out = (rows || []).filter(r => r && r._date && askInRange(r._date, rg)
     && (!keys || keys.has(ctx.resolver.keyOf(r.candidate)))
     && (!a.company || askCompanyMatch(r.company, a.company))
+    && (!a.role || String(r.role || '').toLowerCase().includes(String(a.role).toLowerCase().trim()))
     && (!a.assignee || askPersonMatch(askHandler(r), a.assignee))
     && (!rnd || askRoundGroup(r) === rnd)
     && (!st || String(r.status || '').toLowerCase() === st || askStatusLabel(r.status).toLowerCase().includes(st)));
   return { rows: out, range: rg };
 }
-const askCallLine = r => ({ date: r._date, time: r.woi ? 'WOI' : (r.time || ''), candidate: r.candidate, company: r.company || '', round: r.round || '', handler: askHandler(r), status: askStatusLabel(r.status) });
+const askCallLine = r => ({ date: r._date, time: r.woi ? 'WOI' : (r.time || ''), candidate: r.candidate, company: r.company || '', role: r.role || '', round: r.round || '', handler: askHandler(r), status: askStatusLabel(r.status) });
 const askByDateDesc = (x, y) => y._date.localeCompare(x._date) || timeToMinutes(y.time) - timeToMinutes(x.time);
 function askTopCounts(map, n){ return Array.from(map.entries()).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, n); }
 
@@ -16594,12 +16662,13 @@ async function askRunTool(name, args, ctx){
       return { found: true, period: f.range.label, company: askTopCounts(names, 1)[0][0], matched_names: askTopCounts(names, 3).map(x => x[0]), total_calls: rows.length, distinct_candidates: cands.size, first_call: dates[0], last_call: dates[dates.length - 1], rounds, handlers: askTopCounts(handlers, 8).map(x => ({ handler: x[0], calls: x[1] })), statuses: Object.fromEntries(statuses) };
     }
     case 'count_calls': {
-      const groupBy = ['assignee', 'company', 'round', 'date', 'status', 'team'].includes(args.group_by) ? args.group_by : 'assignee';
+      const groupBy = ['assignee', 'company', 'role', 'round', 'date', 'status', 'team'].includes(args.group_by) ? args.group_by : 'assignee';
       const rows = f.rows; const m = new Map(), label = new Map();
       rows.forEach(r => {
         let k, show;
         if(groupBy === 'assignee'){ show = askHandler(r) || '(unassigned)'; k = show.toLowerCase(); }
         else if(groupBy === 'company'){ k = normalizeCompanyKey(r.company) || '(none)'; show = r.company || '(no company)'; }
+        else if(groupBy === 'role'){ show = String(r.role || '').trim() || '(no role)'; k = show.toLowerCase(); }
         else if(groupBy === 'round'){ show = askRoundGroup(r) + ' round'; k = show; }
         else if(groupBy === 'date'){ show = r._date; k = show; }
         else if(groupBy === 'status'){ show = askStatusLabel(r.status) || '(no status)'; k = show; }
@@ -16762,6 +16831,12 @@ function askFindCandidateInText(q, ctx){
   }
   return '';
 }
+// A role named in the question — matched ONLY against role names that really
+// exist in the saved calls (longest first), never guessed.
+function askFindRole(q, ctx){
+  const roles = new Set(); (ctx.rows || []).forEach(r => { const x = String(r.role || '').trim().toLowerCase(); if(x.length >= 4) roles.add(x); });
+  return Array.from(roles).sort((a, b) => b.length - a.length).find(x => q.indexOf(x) !== -1) || '';
+}
 function askRoute(question, ctx){
   const q = String(question || '').toLowerCase().trim();
   const period = askPeriodFrom(q);
@@ -16777,15 +16852,16 @@ function askRoute(question, ctx){
     const d = iso || (period === 'yesterday' ? deskDateAdd(ctx.today, -1) : (/tomorrow/.test(q) ? deskDateAdd(ctx.today, 1) : ctx.today));
     return { tool: 'board_overview', args: { date: d } };
   }
-  if(/how many|count|number of|total|most|least|per (person|company|day|round|team)|by (person|company|day|round|team|handler)|breakdown/.test(q)){
+  if(/how many|count|number of|total|most|least|per (person|company|day|round|team|role)|by (person|company|day|round|team|handler|role)|breakdown/.test(q)){
     const args = { period: period || (/ever|all time/.test(q) ? 'all' : 'this_week') };
-    args.group_by = /compan|client/.test(q) ? 'company' : /\bround/.test(q) ? 'round' : /status|outcome|resched|cancel/.test(q) ? 'status' : /per day|by day|daily|by date/.test(q) ? 'date' : /\bteam/.test(q) ? 'team' : 'assignee';
+    args.group_by = /\b(per|by) role|\broles\b/.test(q) ? 'role' : /compan|client/.test(q) ? 'company' : /\bround/.test(q) ? 'round' : /status|outcome|resched|cancel/.test(q) ? 'status' : /per day|by day|daily|by date/.test(q) ? 'date' : /\bteam/.test(q) ? 'team' : 'assignee';
     if(person){ args.assignee = person; if(args.group_by === 'assignee') args.group_by = /compan/.test(q) ? 'company' : 'date'; }
-    else if(!/per (person|people|handler|member)|by (person|people|handler|member)|who has|who took|who handled/.test(q)){
+    else if(args.group_by !== 'role' && !/per (person|people|handler|member)|by (person|people|handler|member)|who has|who took|who handled/.test(q)){
       const candQ = askFindCandidateInText(q, ctx);
       if(candQ){ args.candidate = candQ; if(!period) args.period = 'all'; if(args.group_by === 'assignee') args.group_by = 'company'; }
     }
     const co = askFindCompany(q, ctx); if(co) args.company = co;
+    const ro = askFindRole(q, ctx); if(ro){ args.role = ro; if(args.group_by === 'assignee') args.group_by = 'date'; }
     if(/2nd|second|advanced|technical/.test(q) && !/first.?round/.test(q)) args.round = '2nd+'; else if(/1st|first.?round/.test(q)) args.round = '1st';
     return { tool: 'count_calls', args };
   }
@@ -16793,12 +16869,13 @@ function askRoute(question, ctx){
   const co = askFindCompany(q, ctx);
   if(cand && !(co && /company|client|who (handled|took)/.test(q))) return { tool: 'candidate_summary', args: { candidate: cand } };
   if(co) return { tool: 'company_summary', args: { company: co, period: period || 'all' } };
+  const roQ = askFindRole(q, ctx); if(roQ && !cand) return { tool: 'count_calls', args: { group_by: 'company', role: roQ, period: period || 'all' } };
   if(person) return { tool: 'count_calls', args: { group_by: 'date', assignee: person, period: period || 'this_week' } };
   return null;
 }
 const ASK_HELP = ['I can answer these from your saved calls (exact numbers, nothing guessed):',
   '• "Who got their first 2nd round this week?"', '• "Last call for <candidate name>"', '• "<Company> history" or "who handled <company>?"',
-  '• "How many calls per person this week?"', '• "Unassigned calls today"', '• "Which candidates have gone quiet?"', '• "Closures this month"'];
+  '• "How many calls per person this week?"', '• "Calls per role this month" or "<role name> calls"', '• "Unassigned calls today"', '• "Which candidates have gone quiet?"', '• "Closures this month"'];
 
 // ---- the chat window ----
 (function setupAskDesk(){
@@ -16930,6 +17007,106 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
   });
 })();
 
+// ---- Import preview (2026-10-13): after pasting, every line is shown split into
+// time / candidate / company / role / round / duration with problems
+// highlighted, editable, BEFORE anything is added to the board.
+(function setupImportPreview(){
+  const esc = escapeHtml;
+  const ip = { open: false, rows: [], opts: null, onlyCheck: false, skip: new Set() };
+  function reasonsFor(r){
+    const out = [];
+    (r.doubts || []).forEach(d => out.push(d));
+    if(/\s-\s/.test(r.company || '')) out.push('Company still contains " - " — the role may be stuck inside it.');
+    if(r.company && /[�]|ï¿½/.test(r.company)) out.push('Garbled characters in the company name.');
+    return out;
+  }
+  function overlay(){
+    let o = document.getElementById('importPreviewOverlay');
+    if(!o){ o = document.createElement('div'); o.id = 'importPreviewOverlay'; o.className = 'my-name-picker-overlay ip-overlay'; document.body.appendChild(o); }
+    return o;
+  }
+  function paint(){
+    const o = overlay();
+    if(!ip.open){ o.style.display = 'none'; o.innerHTML = ''; return; }
+    o.style.display = '';
+    const flagged = ip.rows.map((r, i) => reasonsFor(r).length ? i : -1).filter(i => i >= 0);
+    const shown = ip.rows.map((r, i) => i).filter(i => !ip.onlyCheck || flagged.includes(i));
+    const keep = ip.rows.length - ip.skip.size;
+    const cell = (i, f, ph) => '<input class="ip-in" data-ip-i="' + i + '" data-ip-f="' + f + '" value="' + esc(ip.rows[i][f] || '') + '"' + (ph ? ' placeholder="' + ph + '"' : '') + '>';
+    o.innerHTML = '<div class="my-name-picker-card ip-card">' +
+      '<div class="ip-head"><strong>🔎 Check before importing</strong><span style="flex:1"></span><button class="lf-link" data-ip-cancel>✕ Cancel</button></div>' +
+      '<div class="ip-sum"><b>' + ip.rows.length + '</b> call' + (ip.rows.length === 1 ? '' : 's') + ' found · ' +
+      (flagged.length ? '<span class="ip-warn">' + flagged.length + ' need a look</span>' : '<span class="ip-ok">nothing looks wrong</span>') +
+      (flagged.length && flagged.length < ip.rows.length ? ' · <button class="lf-link" data-ip-toggle>' + (ip.onlyCheck ? 'Show all ' + ip.rows.length : 'Show only the ' + flagged.length + ' to check') + '</button>' : '') + '</div>' +
+      '<div class="ip-scroll"><table class="ip-table"><thead><tr><th></th><th>Time</th><th>Candidate</th><th>Company</th><th>Role</th><th>Round</th><th>Dur.</th><th>Country</th><th>WOI</th></tr></thead><tbody>' +
+      shown.map(i => { const r = ip.rows[i]; const why = reasonsFor(r); const sk = ip.skip.has(i);
+        return '<tr class="' + (why.length ? 'ip-flag' : '') + (sk ? ' ip-skipped' : '') + '"><td><label title="Leave this one out"><input type="checkbox" data-ip-skip="' + i + '" ' + (sk ? 'checked' : '') + '> skip</label></td>' +
+          '<td>' + (r.woi ? '<span class="ip-woi">WOI</span>' : cell(i, 'time')) + '</td><td>' + cell(i, 'candidate') + '</td><td>' + cell(i, 'company') + '</td><td>' + cell(i, 'role', '—') + '</td><td>' + cell(i, 'round') + '</td><td>' + cell(i, 'duration') + '</td>' +
+          '<td>' + esc(r.country || '') + '</td><td>' + (r.woi ? '✓' : '') + '</td></tr>' +
+          (why.length ? '<tr class="ip-why"><td></td><td colspan="8">❔ ' + why.map(esc).join(' · ') + '</td></tr>' : '');
+      }).join('') + '</tbody></table></div>' +
+      '<div class="ip-foot"><span class="hint">Edit any cell here — what you see is what gets added. Times, rounds and assignment still follow the normal import rules.</span><span style="flex:1"></span>' +
+      '<button class="btn" data-ip-cancel>Cancel</button><button class="btn primary" data-ip-go ' + (keep ? '' : 'disabled') + '>Import ' + keep + ' call' + (keep === 1 ? '' : 's') + '</button></div></div>';
+  }
+  function close(){ ip.open = false; ip.rows = []; ip.skip = new Set(); paint(); }
+  window.openImportPreview = function(rows, opts){
+    ip.open = true; ip.rows = rows; ip.opts = opts || {}; ip.skip = new Set();
+    const flagged = rows.filter(r => reasonsFor(r).length).length;
+    ip.onlyCheck = rows.length > 12 && flagged > 0 && flagged < rows.length;
+    paint();
+  };
+  window._importPreview = ip;
+  document.addEventListener('click', function(e){
+    if(!ip.open) return; const t = e.target;
+    if(t.closest('[data-ip-cancel]')){ close(); return; }
+    if(t.closest('[data-ip-toggle]')){ ip.onlyCheck = !ip.onlyCheck; paint(); return; }
+    const sk = t.closest('[data-ip-skip]'); if(sk){ const i = Number(sk.getAttribute('data-ip-skip')); if(sk.checked) ip.skip.add(i); else ip.skip.delete(i); paint(); return; }
+    if(t.closest('[data-ip-go]')){
+      const keepRows = ip.rows.filter((r, i) => !ip.skip.has(i));
+      if(!keepRows.length) return;
+      const total = ip.rows._dataLineCount != null ? ip.rows._dataLineCount : ip.rows.length;
+      keepRows._dataLineCount = total - ip.skip.size;
+      const cb = ip.opts && ip.opts.onConfirm; close();
+      if(cb) cb(keepRows);
+    }
+  });
+  document.addEventListener('input', function(e){
+    if(!ip.open) return; const el = e.target; if(!el.matches || !el.matches('[data-ip-i]')) return;
+    const r = ip.rows[Number(el.getAttribute('data-ip-i'))]; if(r) r[el.getAttribute('data-ip-f')] = el.value;
+  });
+  document.addEventListener('keydown', function(e){ if(ip.open && e.key === 'Escape'){ e.stopPropagation(); close(); } }, true);
+})();
+// ---- WOI follow-up: every call still waiting for an invite --------------
+// "Still waiting" = a WOI call (any saved day) that has NOT been followed by a
+// real, scheduled call for the same candidate at the same company on or after it,
+// and wasn't itself cancelled / rescheduled. Oldest first.
+function deskWoiOpen(allRows, today, keyOf){
+  keyOf = keyOf || normalizeNameKey;
+  const rows = (allRows || []).filter(r => r && r._date && r.candidate);
+  const sched = new Map(); // cand|company -> latest scheduled date
+  rows.forEach(r => { if(r.woi) return; const k = keyOf(r.candidate) + '|' + normalizeCompanyKey(r.company || ''); const c = sched.get(k); if(!c || r._date > c) sched.set(k, r._date); });
+  const out = [];
+  rows.forEach(r => {
+    if(!r.woi || DESK_BAD_STATUSES.includes(r.status)) return;
+    const k = keyOf(r.candidate) + '|' + normalizeCompanyKey(r.company || '');
+    const later = sched.get(k); if(later && later >= r._date) return;
+    out.push({ rowId: r.id, date: r._date, age: Math.max(0, Math.round((new Date(today + 'T00:00:00Z') - new Date(r._date + 'T00:00:00Z')) / 86400000)), candidate: r.candidate, company: r.company || '', role: r.role || '', round: r.round || '', assignee: r.assignee || '', key: k });
+  });
+  const seen = new Set(); // same candidate+company waiting on several days: keep the earliest
+  return out.sort((a, b) => a.date.localeCompare(b.date)).filter(x => { if(seen.has(x.key)) return false; seen.add(x.key); return true; });
+}
+function deskNormalizeTimeInput(raw){
+  const m = String(raw || '').trim().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*([AaPp])?\.?[Mm]?\.?(?:\s*IST)?$/);
+  if(!m) return '';
+  let h = Number(m[1]); const mi = Number(m[2] || 0); if(h < 1 || h > 12 || mi > 59) return '';
+  return h + ':' + String(mi).padStart(2, '0') + ' ' + (m[3] ? m[3].toUpperCase() : 'P') + 'M';
+}
+function deskWoiText(list){
+  if(!list.length) return 'No calls are waiting for an invite.';
+  const L = ['Waiting for invite (' + list.length + '):'];
+  list.forEach((x, i) => L.push((i + 1) + '. ' + x.candidate + ' – ' + (x.company || 'no company') + (x.role ? ' – ' + x.role : '') + (x.round ? ' (' + x.round + ')' : '') + ' – since ' + x.date + (x.age ? ' (' + x.age + ' day' + (x.age > 1 ? 's' : '') + ')' : ' (today)')));
+  return L.join('\n');
+}
 // ---- Role fix: repair calls that were saved BEFORE company and role were
 // split — company holding "Company - Job Title", the role holding a note
 // ("Reschedule from 12th", "Candidate 1st Interview"). Re-reads each call's
@@ -16959,11 +17136,11 @@ function deskRoleFix(rows){
   return out;
 }
 (function setupDeskTools(){
-  const dt = { roleMsg: '', faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
+  const dt = { woiMsg: '', roleMsg: '', faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
   window._deskTools = dt;
   const teamNames = () => new Set(state.roster.map(p => p.team));
   const esc = escapeHtml;
-  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+'], ['role', '🏷️ Role fix']];
+  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+'], ['role', '🏷️ Role fix'], ['woi', '⏳ WOI follow-up']];
 
   function toast(html, ms){
     const box = document.getElementById('liveFeedToasts'); if(!box) return;
@@ -16998,6 +17175,22 @@ function deskRoleFix(rows){
       if(!vis.length) return h + '<div class="lf-empty">No first-time 2nd+ round candidates in this view.</div>';
       h += '<div class="dt-note"><b>' + vis.length + '</b> candidate' + (vis.length > 1 ? 's' : '') + (vis.length > 200 ? ' (showing the latest 200 — the Excel file has all)' : '') + ' <button class="lf-act" data-dt-fadl style="margin-left:8px">⬇ Excel</button></div>';
       h += vis.slice(0, 200).map(x => '<div class="dt-row"><div class="dt-main"><b>' + esc(x.date) + '</b> · ' + esc(x.candidate) + ' — ' + esc(x.round || 'advanced round') + (x.company ? ' at ' + esc(x.company) : '') + '<div class="dt-sub">' + (x.assignee ? esc(x.assignee) + ' · ' : '') + (x.earlierCalls ? x.earlierCalls + ' earlier call' + (x.earlierCalls > 1 ? 's' : '') + (x.earlierCompanies.length ? ' (' + esc(x.earlierCompanies.slice(0, 3).join(', ')) + ')' : '') : 'no earlier calls on file') + '</div></div><button class="lf-act" data-dt-fatl="' + esc(x.candidate) + '">Timeline</button></div>').join('');
+      return h;
+    }
+    if(dt.tab === 'woi'){
+      const can = CURRENT_ROLE === 'admin';
+      const list = deskWoiOpen(hist, today, resolver().keyOf);
+      let h = '<div class="dt-note">Every call still <b>waiting for an invite</b> across all saved days, oldest first. A WOI call drops off this list as soon as a scheduled call for the same candidate and company exists. For calls on the day you have open you can <b>set the time</b> right here (clears WOI).</div>';
+      if(dt.woiMsg) h += '<div class="dt-ok">' + esc(dt.woiMsg) + '</div>';
+      if(!list.length) return h + '<div class="dt-ok">✅ Nothing is waiting for an invite.</div>';
+      h += '<div class="dt-note"><b>' + list.length + '</b> waiting · <button class="lf-act" data-dt-woicopy>Copy list for the team</button></div>';
+      h += list.map(x => {
+        const onBoard = x.date === state.date && state.rows.some(r => r.id === x.rowId);
+        return '<div class="dt-row"><div class="dt-main"><b>' + esc(x.candidate) + '</b> — ' + esc(x.company || 'no company') + (x.role ? ' · <i>' + esc(x.role) + '</i>' : '') + ' ' + chip(x.round || '1st') +
+          chip(x.age ? x.age + ' day' + (x.age > 1 ? 's' : '') + ' waiting' : 'today', x.age >= 3 ? 'bad' : (x.age >= 1 ? 'warn' : '')) +
+          '<div class="dt-sub">Since ' + esc(x.date) + (x.assignee ? ' · ' + esc(x.assignee) : '') + '</div></div>' +
+          (onBoard && can ? '<span style="display:flex;gap:4px;align-items:center"><input class="sa-in" style="width:84px" placeholder="7:30 PM" data-dt-woitime="' + esc(x.rowId) + '"><button class="lf-act primary" data-dt-woiset="' + esc(x.rowId) + '">Set</button></span>' : '<button class="lf-act" data-dt-gotodate="' + esc(x.date) + '">Open day</button>') + '</div>';
+      }).join('');
       return h;
     }
     if(dt.tab === 'role'){
@@ -17104,10 +17297,18 @@ function deskRoleFix(rows){
         const names = new Set(); keys.forEach(k => R.clusters.get(k).variants.forEach(v => names.add(v)));
         const closed = (state.closures || []).filter(c => names.has(String(c.candidate || '').replace(/\s+/g, ' ').trim()) || keys.includes(R.keyOf(c.candidate)));
         const rel = deskRelatedClusters(R, dt.selKey);
+        const badOnes = tl.filter(t => DESK_BAD_STATUSES.includes(t.status));
+        const roleTagChip = (list, idx) => {
+          const t = list[idx]; const ck = normalizeCompanyKey(t.company); if(!ck || !t.role) return '';
+          const earlier = list.slice(idx + 1).filter(x => normalizeCompanyKey(x.company) === ck && x.role && !x.woi && !DESK_BAD_STATUSES.includes(x.status));
+          if(!earlier.length) return '';
+          return earlier.some(x => x.role.trim().toLowerCase() === t.role.trim().toLowerCase()) ? chip('same role again') : chip('new role at this company', 'warn');
+        };
         html += '<div class="dt-note" style="margin-top:8px"><b>' + tl.length + ' call' + (tl.length > 1 ? 's' : '') + '</b> across <b>' + cos.size + '</b> compan' + (cos.size === 1 ? 'y' : 'ies') + (closed.length ? ' · 🏆 ' + closed.length + ' closure' + (closed.length > 1 ? 's' : '') + ' (' + closed.map(c => esc(c.company)).join(', ') + ')' : '') +
           (names.size > 1 ? '<br>Includes these spellings: ' + Array.from(names).map(n => esc(n)).join(' · ') : '') + '</div>' +
+          (badOnes.length ? '<div class="dt-note">↻ <b>' + badOnes.length + '</b> rescheduled / cancelled / no-response call' + (badOnes.length > 1 ? 's' : '') + ': ' + badOnes.map(b => esc(b.date) + (b.company ? ' (' + esc(b.company) + ')' : '')).join(', ') + (badOnes.length >= REPEAT_NO_SHOW_MIN_COUNT ? ' — <b>a pattern worth watching</b>' : '') + '</div>' : '') +
           (rel.length ? '<div class="dt-note">Could also be the same person? Tap to include / exclude: ' + rel.map(c => '<button class="lf-act' + (dt.extra.has(c.key) ? ' primary' : '') + '" data-dt-extra="' + esc(c.key) + '" style="margin:2px 4px 2px 0">' + esc(c.name) + ' · ' + c.n + '</button>').join('') + '</div>' : '') +
-          tl.map(t => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + ' ' + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
+          tl.map((t, ti) => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + (t.role ? ' · <i>' + esc(t.role) + '</i>' : '') + ' ' + roleTagChip(tl, ti) + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
       }
       return html;
     }
@@ -17230,6 +17431,17 @@ function deskRoleFix(rows){
       })();
       return;
     }
+    const wset = t.closest('[data-dt-woiset]');
+    if(wset && CURRENT_ROLE === 'admin'){
+      const id = wset.getAttribute('data-dt-woiset'); const inp = document.querySelector('[data-dt-woitime="' + id + '"]');
+      const tm = deskNormalizeTimeInput(inp ? inp.value : '');
+      if(!tm){ dt.woiMsg = '⚠ Type a time like 7:30 PM (or 7:30, 8pm).'; paint(); return; }
+      const row = state.rows.find(r => r.id === id);
+      if(!row){ dt.woiMsg = '⚠ That call is not on the open day any more.'; paint(); return; }
+      row.time = tm; row.woi = false; markDirty(); render();
+      dt.woiMsg = '✅ ' + (row.candidate || 'Call') + ' set to ' + tm + ' — press Save changes to keep it.'; paint(); return;
+    }
+    if(t.closest('[data-dt-woicopy]')){ copy(deskWoiText(deskWoiOpen(allRows(), todayDateString(), resolver().keyOf)), t.closest('[data-dt-woicopy]')); return; }
     if(t.closest('[data-dt-rolescan]')){ dt.roleMsg = ''; ensureData(true); return; }
     const rf = t.closest('[data-dt-rolefix]');
     if(rf && CURRENT_ROLE === 'admin'){
