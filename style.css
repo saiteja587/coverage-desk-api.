@@ -90,7 +90,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);}
 button,.btn,.tab-btn,.filter-chip,.notif-tab-btn,select.cell-input,input.cell-input,.mini-badge,.prior-badge{transition:background-color .12s ease,border-color .12s ease,color .12s ease,opacity .12s ease,box-shadow .12s ease;}
 .roster-tag,.user-row,.notif-row{transition:background-color .12s ease;}
 
-.app{max-width:1180px;margin:0 auto;padding:28px 24px 80px;}
+.app{max-width:1560px;margin:0 auto;padding:28px 24px 80px;}
 @media (max-width:480px){
   .app{padding:16px 12px 60px;}
   .header h1{font-size:21px;margin:0;}
