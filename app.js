@@ -2198,11 +2198,47 @@ function matchOrCreateRosterName(name){
 function normalizeCountryParenText(text){
   return (text||'').trim().toLowerCase().replace(/\blocal\b/g,'').replace(/\s+/g,' ').trim();
 }
+// "(IR)" is the common shorthand for Ireland in these messages.
 function countryFromParens(parens){
-  const p = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test(normalizeCountryParenText(x)));
+  const p = (parens||[]).find(x=>/^(uk|ireland|ir|canada|germany)$/i.test(normalizeCountryParenText(x)));
   if(!p) return 'USA';
   const t = normalizeCountryParenText(p);
+  if(t==='ir') return 'Ireland';
   return t==='uk' ? 'UK' : (t.charAt(0).toUpperCase()+t.slice(1));
+}
+// "Waiting for invite" incl. the typos that really occur ("Wiating for
+// invite", "Waiting fot Invite"). WOI_SEG_RE = a whole dash-separated
+// segment that is only that phrase.
+const WOI_RE = /\bw[ai]{1,3}t(?:ing)?\s+f[a-z]{1,3}\s+(?:the\s+)?inv\w*|\bwoi\b/i;
+const WOI_SEG_RE = /^\W*w[ai]{1,3}t(?:ing)?\s+f[a-z]{1,3}\s+(?:the\s+)?inv\w*\W*$/i;
+// Words that make a piece of text a JOB TITLE rather than a company name.
+const JOB_WORD_RE = /\b(?:analysts?|anaylsts?|engineers?|developers?|managers?|specialists?|associates?|consultants?|scientists?|administrators?|coordinators?|assistants?|representatives?|technicians?|officers?|architects?|directors?|executives?|designers?|testers?|programmers?|interns?|advisors?|advisers?|supervisors?|strategists?|accountants?|technologists?|researchers?|recruiters?|owners?|sdet|devops)\b/i;
+// Typo-tolerant "(1st round)" / "(1stround)" / "(1stound)" / "(1 St round)".
+const ROUND_TYPO_RE = /^\s*\d+\s*(?:st|nd|rd|th)?\s*(?:r?ound|rnd)\s*$/i;
+function normalizeRoundLabel(raw){
+  const t = (raw||'').trim();
+  if(!t || /^\d+(?:st|nd|rd|th) round$/i.test(t)) return t;
+  const m = t.match(/^(\d+)\s*(?:st|nd|rd|th)?\s*(?:r?ound|rnd)$/i);
+  if(!m) return t;
+  const n = Number(m[1]); const v = n % 100;
+  const suf = (v>=11 && v<=13) ? 'th' : ({1:'st',2:'nd',3:'rd'}[n%10] || 'th');
+  return n + suf + ' Round';
+}
+// A parenthetical that is a NOTE about the call (not the job role, not
+// round/duration/country): reschedule-from text, dates, "Need a Developer",
+// C2C, "Night", "Candidate Own Side"... Kept in the call's priority note
+// instead of being mislabelled as the role.
+function isNoteParen(p){
+  const t = (p||'').trim();
+  return /^(?:re-?)?schedul\w*/i.test(t) || /^candidate\b/i.test(t) || /^need\s+a\b/i.test(t)
+    || /^c2c$/i.test(t) || /^night$/i.test(t) || /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}(?:st|nd|rd|th)?$/i.test(t)
+    || /^\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*$/i.test(t);
+}
+// Parentheticals that carry NO information for the role/note fields.
+function isNoiseParen(p){
+  const t = (p||'').trim();
+  return WOI_RE.test(t) || /^(?:phone\s+)?(?:interview|call)$/i.test(t) || /^\d+\s*(?:st|nd|rd|th)?\s*inter\w*$/i.test(t)
+    || /^on\s*-?\s*site/i.test(t) || ROUND_TYPO_RE.test(t);
 }
 const MONTH_ABBR_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 // Matches section headers like "Call's for tomorrow (2nd Sep)" that split
@@ -2285,7 +2321,13 @@ function parseDetailedLine(line, defaultRound){
 
   // split off the assignment chain at the first arrow
   const arrowIdx = clean.search(/->|→/);
-  const mainPart = arrowIdx>=0 ? clean.slice(0,arrowIdx).trim() : clean.trim();
+  let mainPart = arrowIdx>=0 ? clean.slice(0,arrowIdx).trim() : clean.trim();
+  // A parenthetical glued INSIDE a name ("H.A McEwen(Boiler Repairs)Ltd") is part
+  // of the company, not a role/round/country note — swap its parens for
+  // square brackets so the paren extraction below leaves it alone; they are
+  // turned back into parens on the company afterwards.
+  mainPart = mainPart.replace(/([A-Za-z.])\(([^()]{3,})\)(?=[A-Za-z])/g, (m, a, inner)=>
+    (/^(?:uk|ireland|ir|canada|germany)$/i.test(inner.trim()) || /round/i.test(inner) || ROUND_TYPO_RE.test(inner) || /^\d+\s*(?:mins?|hrs?)/i.test(inner.trim())) ? m : a+' ['+inner+'] ');
   const afterArrowRaw = arrowIdx>=0 ? clean.slice(arrowIdx) : '';
 
   // pull out all parenthetical groups so internal dashes/slashes don't break segmenting
@@ -2319,7 +2361,7 @@ function parseDetailedLine(line, defaultRound){
   // which was causing the real company name one segment later to never be
   // reached — the loop stopped early on "- Phn Interview" instead of
   // skipping it and continuing on to "Procea Ltd".
-  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean);
+  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean).filter(s=>!WOI_SEG_RE.test(s));
   // Minutes are optional here ("11pm", no ":00") — a common shorthand in
   // real messages that previously meant the time (and therefore the row's
   // whole time field) was silently left blank. AM/PM stays mandatory,
@@ -2404,14 +2446,14 @@ function parseDetailedLine(line, defaultRound){
   // sometimes just tack "1st Round" or "3RD Round" on as plain trailing text
   // with no parens at all — check the split segments for that pattern too
   // before giving up and defaulting to 1st.
-  const roundParen = parens.find(p=>/round/i.test(p));
+  const roundParen = parens.find(p=>/round/i.test(p) || ROUND_TYPO_RE.test(p));
   // Same typo-tolerance as isAdvancedRound() — matches "2ns Round" (should be
   // "2nd") the same way it matches "2nd Round", since real source data has
   // inconsistent/typo'd ordinal suffixes and requiring an exact one meant
   // rounds like this silently defaulted to "1st" instead of being detected.
   const roundSegMatch = segs.find(s=>/^(final|\d+\w{0,4})\s*rounds?$/i.test(s.trim()));
   const roundFound = roundParen || roundSegMatch;
-  let round = roundFound || (defaultRound || '1st');
+  let round = roundFound ? normalizeRoundLabel(roundFound) : (defaultRound || '1st');
 
   // Round TYPE (separate from round NUMBER) — a second parenthetical often
   // carries this ("(3rd Round) (Given Coderpad Link)", "(4th Round) (Loop
@@ -2427,6 +2469,8 @@ function parseDetailedLine(line, defaultRound){
   // and overrides it even if e.g. the 2nd Round Import button was used or
   // the line separately (contradictorily) mentions another round.
   const candidateFirstInterview = /candidate['\u2019]?s?\s*(1st|first)\s*int\w*/i.test(clean);
+  // A bare "(1st Interview)" note means the same thing as "(Candidate 1st Interview)".
+  const bareFirstInterview = parens.some(p=>/^\s*(?:1st|first)\s*inter\w*\s*$/i.test(p));
   if(candidateFirstInterview) round = '1st';
 
   const country = countryFromParens(parens);
@@ -2436,14 +2480,42 @@ function parseDetailedLine(line, defaultRound){
   // "(Marketing Operations Specialist)". Whatever's left over after country/
   // round/duration are matched is that role — captured here since it was
   // previously just discarded.
-  const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|canada|germany)$/i.test(normalizeCountryParenText(x)));
+  const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|ir|canada|germany)$/i.test(normalizeCountryParenText(x)));
   const durParenForRole = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
   // A paren that's purely a round-TYPE note ("Given Coderpad Link", "Loop
   // round") isn't the candidate's target role — exclude it here so it
   // doesn't get mislabeled as the role field just because it's the
   // "leftover" paren after country/round-number/duration are matched.
-  const roleParen = parens.find(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && !isRoundTypeOnlyParen(p) && p.trim().length>0);
-  const role = (roleParen||'').trim();
+  const roleParen = parens.find(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && !isRoundTypeOnlyParen(p) && !isNoteParen(p) && !isNoiseParen(p) && p.trim().length>0);
+  let role = (roleParen||'').trim();
+  // Notes that used to be mislabelled as the role ("Rescheduled from 12th
+  // Oct", "Need a Developer", "C2C", "Night") go to the call's priority note.
+  const noteParts = parens.filter(p => p !== countryParenRaw && p !== roundParen && isNoteParen(p) && !/^candidate\s*(1st|first)/i.test(p.trim())).map(p=>p.trim());
+  // Role written next to the company with a dash:
+  //   "Company - Job Title", "Job Title - Company", "Company - Team - Job Title".
+  // Split only when a piece clearly reads as a job title (job-word match),
+  // so a hyphen inside a real company name ("The Co - operative Bank") is
+  // left alone.
+  company = company.replace(/\[([^\]]+)\]/g, '($1)').replace(/\s+/g,' ').trim();
+  company = company.replace(/Â®️?|®️?/g, '').replace(/\s+/g,' ').trim();
+  let roleFromCompany = '';
+  if(company){
+    const pieces = company.split(/\s+-\s+/).map(x=>x.trim()).filter(Boolean);
+    if(pieces.length >= 2 && pieces.slice(1).some(x=>JOB_WORD_RE.test(x))){
+      company = pieces[0];
+      roleFromCompany = pieces.slice(1).join(' - ');
+    } else if(pieces.length === 2 && JOB_WORD_RE.test(pieces[0]) && !JOB_WORD_RE.test(pieces[1])
+              && pieces[0].split(/\s+/).length <= 3 && !/^the\b/i.test(pieces[0])
+              && JOB_WORD_RE.test(pieces[0].replace(/\s+(?:I{1,3}|IV|V|\d+)$/i,'').split(/\s+/).pop())){
+      // "Accounts Assistant - CoMind": title first, company second
+      roleFromCompany = pieces[0];
+      company = pieces[1];
+    }
+  }
+  roleFromCompany = roleFromCompany.replace(/\s*\bon\s*-?\s*site\b/i, '').trim();
+  if(roleFromCompany && role && role.toLowerCase() !== roleFromCompany.toLowerCase()) role = roleFromCompany + ' (' + role + ')';
+  else if(roleFromCompany) role = roleFromCompany;
+  const garbled = /ï¿½|\uFFFD/.test(company);
 
   // duration: explicit "Duration: X" first, else a paren that's purely a duration token
   let duration = '';
@@ -2469,7 +2541,7 @@ function parseDetailedLine(line, defaultRound){
   // the exact-substring version missed "Waiting for invitation", which
   // then fell all the way through to the raw-text fallback instead of
   // being recognized as a WOI call with its country/etc parsed properly.
-  const woi = /waiting\s+for\s+invit\w*|\bwoi\b/i.test(clean);
+  const woi = WOI_RE.test(clean);
   // Real messages sometimes explicitly say "(OnSite Interview)"/"(On-Site)"
   // — captured automatically when stated. When they don't (per real
   // experience, the 2nd-round supplementary details often skip it), the
@@ -2479,6 +2551,7 @@ function parseDetailedLine(line, defaultRound){
   const doubts = [];
   if(!time && !woi) doubts.push('No time found in this line — check the original text.');
   if(!company.trim()) doubts.push('No company detected — check the original text.');
+  if(garbled) doubts.push('The company name has garbled characters (copy/paste encoding) — please correct it by hand.');
   if(!roundFound && !woi) doubts.push('Round wasn\u2019t stated in the source — defaulted to 1st, please verify.');
   if(!duration.trim() && !woi) doubts.push('Duration wasn\u2019t stated in the source — conflict detection can\u2019t check overlaps for this call without it.');
 
@@ -2523,7 +2596,7 @@ function parseDetailedLine(line, defaultRound){
     }
   }
 
-  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC, onsite, candidateFirstInterview, roundType };
+  return { id: uid(), time, company: company.trim(), candidate: name, round, duration, woi, assignee, country, doubts, raw: line, role, interviewer, technicalPOC, onsite, candidateFirstInterview: candidateFirstInterview || bareFirstInterview, importance: noteParts.join('; '), roundType };
 }
 // Detects a special round TYPE mentioned anywhere in the parenthetical
 // notes — coding rounds (Coderpad-based), loop rounds, and
@@ -2658,7 +2731,7 @@ function parseImportText(text, baseDate, defaultRound){
     // Minutes optional ("8pm ist", "8 PM") — parseDetailedLine already accepts a
     // bare hour with am/pm; this gate used to demand ":MM" so such lines fell
     // through to the "could not parse" fallback.
-    if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /(^|[^\d:.])\d{1,2}\s*[AaPp][Mm]\b/.test(line) || /waiting\s+for\s+invit\w*|\bwoi\b/i.test(line)){
+    if(/\d{1,2}[:.]\d{2}\s*[AaPp][Mm]/.test(line) || /(^|[^\d:.])\d{1,2}\s*[AaPp][Mm]\b/.test(line) || WOI_RE.test(line)){
       const detailed = parseDetailedLine(line, defaultRound);
       detailed._targetDate = currentTargetDate;
       out.push(detailed);
@@ -10101,7 +10174,7 @@ function renderTable(rows, conflictIds, clientConflicts){
   // Assigned To is already a specific individual directly — the column
   // has nothing left to add there, so it's hidden on that tab specifically.
   const showDrivingPersonColumn = state.view !== '2nd';
-  const colCount = 10 + (showOnsiteColumn?1:0) + (showDrivingPersonColumn?1:0);
+  const colCount = 11 + (showOnsiteColumn?1:0) + (showDrivingPersonColumn?1:0);
   // Driving Person is the one field a Team Lead account CAN write, even
   // though they're otherwise read-only just like a plain 'user' account —
   // this is deliberately checked independently of the general isReadOnly
@@ -10226,6 +10299,7 @@ function renderTable(rows, conflictIds, clientConflicts){
         </select>
       </td>
       <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Role"><input class="cell-input" data-field="role" value="${escapeHtml(r.role||'')}" placeholder="—" title="Job role for this interview"></td>
       <td data-label="Round"><input class="cell-input round-input ${roundClass}" data-field="round" value="${escapeHtml(r.round)}"></td>
       <td data-label="Duration">${longDuration?`<span class="flag-icon" title="1st round running over 30 min${category?' — also a '+category+' client':''}. Worth a second look.">⏱</span>`:''}<input class="cell-input" data-field="duration" value="${escapeHtml(r.duration)}" style="width:100%"></td>
       <td data-label="WOI">
@@ -10300,6 +10374,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:175px">Candidate</th>
       <th style="width:98px">Country</th>
       <th style="width:190px">Company</th>
+      <th style="width:170px">Role</th>
       <th style="width:104px">Round</th>
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
@@ -10384,7 +10459,7 @@ function deleteCallRow(id){
   markDirty(); render();
 }
 function addBlankCallRow(){
-  state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
+  state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', role:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
   markDirty(); render();
 }
 function attachHandlers(conflictIds){
@@ -12346,6 +12421,7 @@ function attachHandlers(conflictIds){
       const existing = findExistingCallMatch(p, beforeBatchRows);
       if(existing){
         if(p.role && !existing.role) existing.role = p.role;
+        if(p.importance && !existing.importance) existing.importance = p.importance;
         if(p.interviewer && !existing.interviewer) existing.interviewer = p.interviewer;
         if(p.company && !existing.company) existing.company = p.company;
         if(p.duration && !existing.duration) existing.duration = p.duration;
