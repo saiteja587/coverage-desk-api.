@@ -837,7 +837,7 @@ async function fetchCalendarMonth(monthKey){
 // individual's total — same "team name isn't a person" exclusion used
 // throughout (see computeAssigneeWorkloadToday, scanCallTrends).
 function computeCalendarComparisons(allRows, monthKey){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -2833,7 +2833,7 @@ function exportDayToExcel(){
     alert(`There are no calls for ${state.date} to export.`);
     return;
   }
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const statusLabels = { rescheduled: 'Rescheduled', cancelled: 'Cancelled', not_responded: 'Not Responded', no_invite: 'Didn’t Receive Invite' };
 
   const callRows = state.rows.slice().sort((a,b)=>{
@@ -3023,6 +3023,11 @@ function exportCandidateActivityToExcel(){
   XLSX.utils.book_append_sheet(wb, sh2, 'All calls');
   XLSX.writeFile(wb, `Coverage-Desk-Candidate-Activity-${scope}-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
+// Every team name — the roster's AND the fixed ones, so a team-level assignment such as
+// "Marketing Team" is never mistaken for a single person (e.g. as a double-booking) even
+// when that team has no members listed in the roster.
+const KNOWN_TEAM_NAMES = ['HYD Team','Pradeep Anna Team','Development Team','Marketing Team','Sai Team','Sandeep Anna Team'];
+function getTeamNames(){ return new Set([].concat(KNOWN_TEAM_NAMES, (state.roster || []).map(p => p.team).filter(Boolean))); }
 function teamOfAssignee(assignee, teamNames){
   if(!assignee) return null;
   if(teamNames.has(assignee)) return assignee;
@@ -3031,7 +3036,7 @@ function teamOfAssignee(assignee, teamNames){
 }
 async function autoRouteRows(newRows, existingRows){
   existingRows = existingRows || [];
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const hydRaw = state.roster.filter(p=>p.team==='HYD Team').length || 6;
   const paRaw = state.roster.filter(p=>p.team==='Pradeep Anna Team').length || 8;
   const hydAbsentCount = state.roster.filter(p=>p.team==='HYD Team' && state.absentIds.includes(p.id)).length;
@@ -3753,7 +3758,7 @@ function computeClientTimeConflicts(rows){
 }
 
 function computeConflicts(rows){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const byAssignee = {};
   rows.forEach(r=>{
     if(!r.assignee || teamNames.has(r.assignee) || r.woi) return; // team-level assignments aren't a single-person conflict
@@ -3792,7 +3797,7 @@ function computeConflicts(rows){
 // actual conflicting row PAIRS rather than a reason string per id — what
 // the Conflicts quick-fix panel needs to show both calls side by side.
 function computeConflictPairs(rows){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const byAssignee = {};
   rows.forEach(r=>{
     if(!r.assignee || teamNames.has(r.assignee) || r.woi) return;
@@ -3828,7 +3833,7 @@ function computeConflictPairs(rows){
 // becomes another data-entry cycle — catching it at assignment time is
 // cheaper than untangling it afterward.
 function computeWorkloadWarnings(rows){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const counts = {};
   rows.forEach(r=>{
     if(!r.assignee || teamNames.has(r.assignee) || r.woi) return; // only individual assignments count
@@ -4582,7 +4587,7 @@ async function computeClosuresPerformance(forceRefresh){
   if(_closuresPerfCache && _closuresPerfCacheSig === sig){
     return _closuresPerfCache;
   }
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -4885,7 +4890,7 @@ const TRENDS_MIN_HANDLER_CALLS = 5; // below this a per-handler rate is too nois
 // person to hold accountable for a rate).
 async function scanCallTrends(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -4979,7 +4984,7 @@ async function scanWoiAging(forceRefresh){
 // synchronous/instant (no cross-date fetch) since it's meant to be glanced
 // at constantly, not run as a manual scan like the other Reports tools.
 function computeAssigneeWorkloadToday(){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const counts = {};
   state.rows.forEach(r=>{
     if(!r.assignee || r.woi || teamNames.has(r.assignee)) return; // individual assignments only, same exclusion used elsewhere
@@ -5108,7 +5113,7 @@ function buildPipelineEntries(allRows, teamOf){
   return Object.values(pipelineMap);
 }
 function makeTeamOf(){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   return function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -5960,7 +5965,7 @@ function render(){
     filtered = filtered.filter(r => (r.role||'').trim().toLowerCase() === state.roleFilter.toLowerCase());
   }
   if(state.teamFilter){
-    const allTeamNames = new Set(state.roster.map(p=>p.team));
+    const allTeamNames = getTeamNames();
     filtered = filtered.filter(r => teamOfAssignee(r.assignee, allTeamNames) === state.teamFilter);
   }
   if(state.groupByCompany){
@@ -6433,7 +6438,7 @@ function renderCallsView(sum, sortedRows, filtered, conflictIds, allRowsToday, c
 // accidental cross-team duplicate scenario neither coordinator's own view
 // would ever surface on its own.
 function findSameDayDuplicateCandidates(rows){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const byName = {};
   rows.forEach(r=>{
     if(!r.candidate) return;
@@ -6540,7 +6545,7 @@ function renderSummaryPanel(){
   const doubts = all.filter(r=>r.doubts && r.doubts.length>0);
   const healthEdu = all.filter(r=>classifyCompany(r.company));
 
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -6608,7 +6613,7 @@ function buildDailySummaryText(dateKey, rows){
   const advanced = rows.filter(r=>isAdvancedRound(r.round)).length;
   const doubts = rows.filter(r=>r.doubts && r.doubts.length>0).length;
   const healthEdu = rows.filter(r=>classifyCompany(r.company)).length;
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -8182,7 +8187,7 @@ function renderStrip(rows, conflictIds){
   if(!rows.length){
     return `<div class="strip-wrap"><div class="strip-title"><span>Coverage by hour</span></div><div class="strip-empty">No calls loaded for this day yet.</div></div>`;
   }
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const hydRaw = state.roster.filter(p=>p.team==='HYD Team').length || 6;
   const paRaw = state.roster.filter(p=>p.team==='Pradeep Anna Team').length || 8;
   const hydAbsentCount = state.roster.filter(p=>p.team==='HYD Team' && state.absentIds.includes(p.id)).length;
@@ -9859,7 +9864,7 @@ function buildDrivingPersonOptions(currentValue){
 // shown on the dashboard so it's easy to see at a glance if one team is
 // carrying more than the other, for quick manual rebalancing.
 function computeTeamLoadCounts(rows){
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   function teamOf(assignee){
     if(!assignee) return null;
     if(teamNames.has(assignee)) return assignee;
@@ -9914,7 +9919,7 @@ function suggestAlternativeTeam(firstRoundRows){
   // calling out on its own rather than folding it into the same sentence
   // as the roomiest-team suggestion.
   if(fullest.name !== 'HYD Team'){
-    const teamNames = new Set(state.roster.map(p=>p.team));
+    const teamNames = getTeamNames();
     const fullestRows = firstRoundRows.filter(r=>!r.woi && r.assignee && teamOfAssignee(r.assignee, teamNames)===fullest.name);
     const outsideHydHours = fullestRows.filter(r=>!isWithinHydHours(r.time)).length;
     if(outsideHydHours > 0){
@@ -10247,7 +10252,7 @@ function renderTable(rows, conflictIds, clientConflicts){
   // its own (roughly 10ms off a ~240ms render) — most of render time is
   // the per-row HTML string size itself (see buildRosterOptions/
   // buildDrivingPersonOptions caching above), not this loop's JS cost.
-  const teamNames = new Set(state.roster.map(p=>p.team));
+  const teamNames = getTeamNames();
   const rosterByName = new Map(state.roster.map(p=>[p.name, p]));
   const absentIdSet = new Set(state.absentIds);
   // Same lookup pattern as teamNames/rosterByName just above — built once
@@ -12563,6 +12568,8 @@ function attachHandlers(conflictIds){
     let rows;
     try{ rows = parseImportText(text, baseDate, state.importDefaultRound); }
     catch(e){ runImportNow(null); return; }
+    // Clean paste → straight in, no sheet. The sheet only opens when something needs a look.
+    if(window.importPreviewNeeded && !window.importPreviewNeeded(rows)){ runImportNow(rows); return; }
     window.openImportPreview(rows, { baseDate, onConfirm: (finalRows)=>{ runImportNow(finalRows); } });
   };
 
@@ -13406,7 +13413,7 @@ function attachHandlers(conflictIds){
       if(moveBtn){
         const row = state.rows.find(r=>r.id===id);
         if(row){
-          const teamNames = new Set(state.roster.map(p=>p.team));
+          const teamNames = getTeamNames();
           row.round = '2nd Round';
           // Only clear a TEAM-level assignment (e.g. "HYD Team") — that
           // default doesn't carry over to 2nd round & above, which needs a
@@ -15940,7 +15947,7 @@ function computeSmartAlerts(allRows, today, opts){
     try{
       const all = await fetchAllRowsAcrossDates(!!force);
       const resolver = deskBuildPersonResolver(all);
-      const alerts = computeSmartAlerts(all, today, { teamNames: new Set((state.roster || []).map(p => p.team)), personKey: resolver.keyOf });
+      const alerts = computeSmartAlerts(all, today, { teamNames: getTeamNames(), personKey: resolver.keyOf });
       try{ if(window.deskOnAllRows) window.deskOnAllRows(all, today); }catch(e){}
       // `seen` remembers every alert ever raised — Clear / mark-read / expiry never make it fire again
       lf.items.forEach(i => { if(!lf.seen[i.id]) lf.seen[i.id] = i.ts || Date.now(); });
@@ -16942,7 +16949,7 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
     if(!state.closuresLoaded){ try{ await loadClosures(); }catch(e){} }
     if(ask.resolverFor !== rows){ ask.resolver = deskBuildPersonResolver(rows); ask.resolverFor = rows; }
     if(!ask.mask) ask.mask = askMakeMask(nm => ask.resolver.keyOf(nm)); // one mask for the whole chat, so Candidate_N means the same person in follow-up questions
-    return { rows, closures: state.closures || [], today: todayDateString(), resolver: ask.resolver, teamNames: new Set((state.roster || []).map(p => p.team)), roster: state.roster || [], mask: ask.mask };
+    return { rows, closures: state.closures || [], today: todayDateString(), resolver: ask.resolver, teamNames: getTeamNames(), roster: state.roster || [], mask: ask.mask };
   }
   const titleOf = (name, args) => name + '(' + Object.keys(args || {}).filter(k => args[k] !== '' && args[k] != null).map(k => k + '=' + args[k]).join(', ') + ')';
   function timelineOf(used){ const u = used.find(x => x.name === 'candidate_summary' && x.res && x.res.found); return u ? u.res.candidate : ''; }
@@ -17057,10 +17064,11 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
       '<button class="btn" data-ip-cancel>Cancel</button><button class="btn primary" data-ip-go ' + (keep ? '' : 'disabled') + '>Import ' + keep + ' call' + (keep === 1 ? '' : 's') + '</button></div></div>';
   }
   function close(){ ip.open = false; ip.rows = []; ip.skip = new Set(); paint(); }
+  window.importPreviewNeeded = function(rows){ return (rows || []).some(r => reasonsFor(r).length); };
   window.openImportPreview = function(rows, opts){
     ip.open = true; ip.rows = rows; ip.opts = opts || {}; ip.skip = new Set();
     const flagged = rows.filter(r => reasonsFor(r).length).length;
-    ip.onlyCheck = rows.length > 12 && flagged > 0 && flagged < rows.length;
+    ip.onlyCheck = flagged > 0 && flagged < rows.length;
     paint();
   };
   window._importPreview = ip;
@@ -17149,7 +17157,7 @@ function deskRoleFix(rows){
 (function setupDeskTools(){
   const dt = { woiMsg: '', roleMsg: '', faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
   window._deskTools = dt;
-  const teamNames = () => new Set(state.roster.map(p => p.team));
+  const teamNames = () => getTeamNames();
   const esc = escapeHtml;
   const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+'], ['role', '🏷️ Role fix'], ['woi', '⏳ WOI follow-up']];
 
