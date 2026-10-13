@@ -16930,12 +16930,40 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
   });
 })();
 
+// ---- Role fix: repair calls that were saved BEFORE company and role were
+// split — company holding "Company - Job Title", the role holding a note
+// ("Reschedule from 12th", "Candidate 1st Interview"). Re-reads each call's
+// original pasted text (r.raw) with the current parser and changes ONLY
+// company / role / priority note / first-interview flag, and only when the
+// stored values clearly match the old, wrongly-split shape (so anything you
+// edited by hand is left alone). Never touches time, round, assignee, status.
+function deskRoleFixOne(r){
+  if(!r || !r.raw) return null;
+  const lc = x => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let p; try{ p = parseDetailedLine(r.raw, ''); }catch(e){ return null; }
+  if(!p || lc(p.candidate) !== lc(r.candidate)) return null;           // same call only
+  if(!r.woi && (p.time || '') !== (r.time || '')) return null;
+  const ch = {};
+  if(p.company && lc(r.company) !== lc(p.company) && lc(r.company).includes(lc(p.company))
+     && (!p.role || lc(r.company).includes(lc(String(p.role).split(' (')[0])))) ch.company = p.company;
+  const badRole = !!r.role && (isNoteParen(r.role) || isNoiseParen(r.role) || /^\s*(?:candidate\s*)?(?:1st|first)\s*inter\w*/i.test(r.role));
+  if(p.role && (!r.role || badRole) && lc(r.role) !== lc(p.role)) ch.role = p.role;
+  else if(badRole && !p.role) ch.role = '';
+  if(badRole && p.importance && !lc(r.importance).includes(lc(p.importance))) ch.importance = r.importance ? r.importance + '; ' + p.importance : p.importance;
+  if(p.candidateFirstInterview && !r.candidateFirstInterview) ch.candidateFirstInterview = true;
+  return Object.keys(ch).length ? ch : null;
+}
+function deskRoleFix(rows){
+  const out = [];
+  (rows || []).forEach(r => { const ch = deskRoleFixOne(r); if(ch) out.push({ row: r, ch }); });
+  return out;
+}
 (function setupDeskTools(){
-  const dt = { faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
+  const dt = { roleMsg: '', faRange: '30', faQuery: '', recText: '', rec: null, recSel: new Set(), recMsg: '', tab: 'suggest', all: null, loading: false, error: '', query: '', selKey: '', extra: new Set(), weekStart: '', showDone: false, lastWarnSig: '', _res: null, _resFor: null };
   window._deskTools = dt;
   const teamNames = () => new Set(state.roster.map(p => p.team));
   const esc = escapeHtml;
-  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+']];
+  const TABS = [['suggest', '🎯 Suggest'], ['checks', '⚖️ Checks'], ['loose', '🧹 Loose ends'], ['resched', '↻ Reschedules'], ['cand', '👤 Candidate'], ['weekly', '📈 Weekly'], ['eod', '🌙 EOD message'], ['rec', '🧾 Reconcile'], ['first', '🎯 First 2nd+'], ['role', '🏷️ Role fix']];
 
   function toast(html, ms){
     const box = document.getElementById('liveFeedToasts'); if(!box) return;
@@ -16970,6 +16998,32 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
       if(!vis.length) return h + '<div class="lf-empty">No first-time 2nd+ round candidates in this view.</div>';
       h += '<div class="dt-note"><b>' + vis.length + '</b> candidate' + (vis.length > 1 ? 's' : '') + (vis.length > 200 ? ' (showing the latest 200 — the Excel file has all)' : '') + ' <button class="lf-act" data-dt-fadl style="margin-left:8px">⬇ Excel</button></div>';
       h += vis.slice(0, 200).map(x => '<div class="dt-row"><div class="dt-main"><b>' + esc(x.date) + '</b> · ' + esc(x.candidate) + ' — ' + esc(x.round || 'advanced round') + (x.company ? ' at ' + esc(x.company) : '') + '<div class="dt-sub">' + (x.assignee ? esc(x.assignee) + ' · ' : '') + (x.earlierCalls ? x.earlierCalls + ' earlier call' + (x.earlierCalls > 1 ? 's' : '') + (x.earlierCompanies.length ? ' (' + esc(x.earlierCompanies.slice(0, 3).join(', ')) + ')' : '') : 'no earlier calls on file') + '</div></div><button class="lf-act" data-dt-fatl="' + esc(x.candidate) + '">Timeline</button></div>').join('');
+      return h;
+    }
+    if(dt.tab === 'role'){
+      const can = CURRENT_ROLE === 'admin';
+      const fixes = deskRoleFix(state.rows);
+      const line = f => '<div class="dt-row"><div class="dt-main"><b>' + esc(f.row.candidate || '') + '</b> · ' + esc(f.row.time || (f.row.woi ? 'WOI' : '')) +
+        '<div class="dt-sub">' + (f.ch.company !== undefined ? 'Company: ' + esc(f.row.company) + ' → <b>' + esc(f.ch.company) + '</b><br>' : '') +
+        (f.ch.role !== undefined ? 'Role: ' + esc(f.row.role || '—') + ' → <b>' + esc(f.ch.role || '—') + '</b><br>' : '') +
+        (f.ch.importance !== undefined ? 'Note: <b>' + esc(f.ch.importance) + '</b><br>' : '') +
+        (f.ch.candidateFirstInterview ? '<b>Candidate\'s 1st interview</b> flag will be set' : '') + '</div></div></div>';
+      let h = '<div class="dt-note">Fixes calls that were saved <b>before</b> Company and Role were separated — e.g. company “Kenco Group - Business Systems Analyst I”, or a role column that says “Reschedule from 12th” / “Candidate 1st Interview”. Each call is re-read from its original pasted text. Only company, role, note and the 1st-interview flag change — never time, round or assignee, and anything you edited by hand is left alone.</div>';
+      if(dt.roleMsg) h += '<div class="dt-ok">' + esc(dt.roleMsg) + '</div>';
+      h += '<h4 class="dt-h">' + esc(state.date) + ' — ' + fixes.length + ' call' + (fixes.length === 1 ? '' : 's') + ' to fix</h4>';
+      if(!fixes.length) h += '<div class="dt-ok">✅ Nothing to fix on this day.</div>';
+      else {
+        h += fixes.slice(0, 80).map(line).join('') + (fixes.length > 80 ? '<div class="dt-note">…and ' + (fixes.length - 80) + ' more (all will be fixed).</div>' : '');
+        if(can) h += '<div style="margin:8px 0"><button class="lf-act primary" data-dt-rolefix="day">Fix these ' + fixes.length + ' calls</button></div>';
+        else h += '<div class="dt-note">Only an admin can apply fixes.</div>';
+      }
+      const rowsAll = dt.all;
+      const perDate = {}; if(rowsAll) deskRoleFix(rowsAll).forEach(f => { perDate[f.row._date] = (perDate[f.row._date] || 0) + 1; });
+      const dates = Object.keys(perDate).sort(); const tot = dates.reduce((a, d) => a + perDate[d], 0);
+      h += '<h4 class="dt-h">All saved days</h4>';
+      h += '<div class="dt-note">Older days with the same problem: ' + (rowsAll ? '<b>' + tot + '</b> call(s) across <b>' + dates.length + '</b> day(s)' + (dates.length ? ' — ' + dates.map(d => esc(d) + ' (' + perDate[d] + ')').join(', ') : '') : 'press the button to scan every saved day.') + '</div>';
+      h += '<div style="margin:8px 0"><button class="lf-act" data-dt-rolescan>' + (rowsAll ? '↻ Re-scan all days' : 'Scan all saved days') + '</button> ' +
+        (can && tot ? '<button class="lf-act primary" data-dt-rolefix="all">Fix all ' + tot + ' calls on ' + dates.length + ' day(s)</button>' : '') + '</div>';
       return h;
     }
     if(dt.tab === 'rec'){
@@ -17175,6 +17229,55 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
         dt.rec = Object.assign(deskReconcile(state.rows, parsed, teamNames()), { date: state.date }); paint();
       })();
       return;
+    }
+    if(t.closest('[data-dt-rolescan]')){ dt.roleMsg = ''; ensureData(true); return; }
+    const rf = t.closest('[data-dt-rolefix]');
+    if(rf && CURRENT_ROLE === 'admin'){
+      const scope = rf.getAttribute('data-dt-rolefix');
+      const applyCh = (row, ch) => { Object.keys(ch).forEach(k => { row[k] = ch[k]; }); };
+      if(scope === 'day'){
+        const fixes = deskRoleFix(state.rows); if(!fixes.length) return;
+        if(!confirm('Fix company/role on ' + fixes.length + ' call(s) of ' + state.date + '? A backup is saved first.')) return;
+        (async () => {
+          try{ await createBackup('pre-role-fix', state.date, state.rows); }
+          catch(err){ dt.roleMsg = '⚠ Backup failed, so nothing was changed: ' + (err && err.message || err); paint(); return; }
+          fixes.forEach(f => applyCh(f.row, f.ch));
+          markDirty(); render();
+          try{ await saveAllChanges(); }catch(err){}
+          dt.roleMsg = (state.dirty || state.saveError) ? '⚠ Fixed ' + fixes.length + ' call(s) on screen, but SAVING FAILED. Press Save changes (top) before leaving.' : '✅ Fixed ' + fixes.length + ' call(s) and saved.';
+          paint();
+        })();
+        return;
+      }
+      if(scope === 'all' && dt.all){
+        const byDate = {}; deskRoleFix(dt.all).forEach(f => { (byDate[f.row._date] = byDate[f.row._date] || []).push(f.row.id); });
+        const dates = Object.keys(byDate).filter(d => d !== state.date).sort();
+        const todayFixes = deskRoleFix(state.rows);
+        const total = dates.reduce((a, d) => a + byDate[d].length, 0) + todayFixes.length;
+        if(!total) return;
+        if(!confirm('Fix company/role on ' + total + ' call(s) across ' + (dates.length + (todayFixes.length ? 1 : 0)) + ' day(s)? A backup of each day is saved first.')) return;
+        (async () => {
+          let done = 0, failed = [];
+          for(const d of dates){
+            try{
+              const res = await apiCall('calls', { qs: 'date=' + encodeURIComponent(d) });
+              const rows = (res && res.rows) || [];
+              const fx = deskRoleFix(rows); if(!fx.length) continue;
+              await createBackup('pre-role-fix', d, rows);
+              fx.forEach(f => applyCh(f.row, f.ch));
+              await apiCall('calls', { method: 'POST', body: { date: d, rows } });
+              done += fx.length;
+            }catch(err){ failed.push(d + ' (' + (err && err.message || err) + ')'); }
+          }
+          if(todayFixes.length){
+            try{ await createBackup('pre-role-fix', state.date, state.rows); todayFixes.forEach(f => applyCh(f.row, f.ch)); markDirty(); render(); await saveAllChanges(); done += todayFixes.length; }
+            catch(err){ failed.push(state.date + ' (' + (err && err.message || err) + ')'); }
+          }
+          dt.roleMsg = (failed.length ? '⚠ Fixed ' + done + ' call(s); these days FAILED and were not changed: ' + failed.join(', ') : '✅ Fixed ' + done + ' call(s) on ' + (dates.length + (todayFixes.length ? 1 : 0)) + ' day(s).');
+          ensureData(true);
+        })();
+        return;
+      }
     }
     const fr = t.closest('[data-dt-farange]'); if(fr){ dt.faRange = fr.getAttribute('data-dt-farange'); paint(); return; }
     const ftl = t.closest('[data-dt-fatl]'); if(ftl){ const nm = ftl.getAttribute('data-dt-fatl'); close(); closeAllPanels(); openCandidateProfile(nm); return; }
