@@ -10299,6 +10299,12 @@ function renderTable(rows, conflictIds, clientConflicts){
         </select>
       </td>
       <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Assigned to">
+        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
+          <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
+          ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? buildRosterOptions(r.round, r.assignee) : cachedRosterOptions(advancedRound)}
+        </select>
+      </td>
       <td data-label="Role"><input class="cell-input" data-field="role" value="${escapeHtml(r.role||'')}" placeholder="—" title="Job role for this interview"></td>
       <td data-label="Round"><input class="cell-input round-input ${roundClass}" data-field="round" value="${escapeHtml(r.round)}"></td>
       <td data-label="Duration">${longDuration?`<span class="flag-icon" title="1st round running over 30 min${category?' — also a '+category+' client':''}. Worth a second look.">⏱</span>`:''}<input class="cell-input" data-field="duration" value="${escapeHtml(r.duration)}" style="width:100%"></td>
@@ -10314,12 +10320,6 @@ function renderTable(rows, conflictIds, clientConflicts){
           <span>Onsite</span>
         </label>
       </td>` : ''}
-      <td data-label="Assigned to">
-        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
-          <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
-          ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? buildRosterOptions(r.round, r.assignee) : cachedRosterOptions(advancedRound)}
-        </select>
-      </td>
       ${showDrivingPersonColumn ? `<td data-label="Driving Person">
         <select class="driving-person-select" data-id="${r.id}" data-driving-value="${escapeHtml(r.drivingPerson||'')}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
           <option value="">— none —</option>
@@ -10374,12 +10374,12 @@ function renderTable(rows, conflictIds, clientConflicts){
       <th style="width:175px">Candidate</th>
       <th style="width:98px">Country</th>
       <th style="width:190px">Company</th>
+      <th style="width:140px">Assigned to</th>
       <th style="width:170px">Role</th>
       <th style="width:104px">Round</th>
       <th style="width:82px">Duration</th>
       <th style="width:52px">WOI</th>
       ${showOnsiteColumn ? `<th style="width:60px">Onsite</th>` : ''}
-      <th style="width:140px">Assigned to</th>
       ${showDrivingPersonColumn ? `<th style="width:140px">Driving Person</th>` : ''}
       <th style="width:96px"></th>
     </tr></thead>
