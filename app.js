@@ -3200,6 +3200,13 @@ function looksLikeRescheduleLine(line){
     || /(?:invit\w*|link)\s+(?:wasn.t|was\s+not|never)\s+(?:received|sent|shared)/i.test(line)
     || /no\s+invit\w*\s+(?:received|sent)/i.test(line)
     || (/didn.t\s+happen/i.test(line) && /invit\w*|link/i.test(line));
+  // "(Rescheduled from 12th)" on a full listing line ("… – Interview – Company – 9:00 PM IST (1st Round)")
+  // only says where the call CAME from — it is a live call at the stated time, not a
+  // reschedule message. Ignore that parenthetical when the line is a detailed listing.
+  const MONTHS_RE = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*';
+  if(/\binterview\b|\(\s*\d(?:st|nd|rd|th)\s*round/i.test(line)){
+    line = line.replace(new RegExp('\\(\\s*re-?scheduled\\s+from\\s+(?:\\d{1,2}(?:st|nd|rd|th)?|' + MONTHS_RE + ')[^)]*\\)', 'ig'), ' ');
+  }
   const hasStatusWord = /\b(reschedul\w*|cancel\w*|(?:not|no)\s+(?:\w+\s+){0,2}respon\w*)\b/i.test(line)
     || /candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(line)
     || RESCHED_UNAVAILABLE_RE.test(line)
