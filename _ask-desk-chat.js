@@ -16,11 +16,11 @@
 const CHAT_PERIODS = ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'last_7_days', 'last_30_days', 'all'];
 const CHAT_TOOLS = [
   { name: 'search_calls', description: 'List individual calls (latest first, max 10 shown plus the total). Filter by any combination of fields.',
-    properties: { candidate: 'string', company: 'string', assignee: 'string', round: 'string: "1st" or "2nd+"', status: 'string', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
+    properties: { candidate: 'string', company: 'string', role: 'string', assignee: 'string', round: 'string: "1st" or "2nd+"', status: 'string', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
   { name: 'candidate_summary', description: 'Full history of one candidate: calls, rounds reached, companies, first 2nd+ round date, closures.', properties: { candidate: 'string' }, required: ['candidate'] },
   { name: 'company_summary', description: 'History of one company: calls, candidates, who handled them, rounds, last call date.', properties: { company: 'string', period: 'enum' }, required: ['company'] },
   { name: 'count_calls', description: 'Count calls grouped by something. Use for "how many" and "who has the most" questions.',
-    properties: { group_by: 'enum: assignee|company|round|date|status|team', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD', assignee: 'string', company: 'string', round: 'string: "1st" or "2nd+"' }, required: ['group_by'] },
+    properties: { group_by: 'enum: assignee|company|role|round|date|status|team', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD', assignee: 'string', company: 'string', role: 'string', round: 'string: "1st" or "2nd+"' }, required: ['group_by'] },
   { name: 'first_advanced', description: 'Candidates whose first-ever 2nd-or-later round happened in the period.', properties: { period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
   { name: 'stale_candidates', description: 'Candidates with no new call for 14+ days (and not closed).', properties: { limit: 'integer' } },
   { name: 'board_overview', description: 'One day on the board: totals, by round, by person, unassigned and waiting-for-invite counts.', properties: { date: 'YYYY-MM-DD, default today' } },
