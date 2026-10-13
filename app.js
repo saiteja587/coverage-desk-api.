@@ -2229,15 +2229,17 @@ function normalizeRoundLabel(raw){
 // round/duration/country): reschedule-from text, dates, "Need a Developer",
 // C2C, "Night", "Candidate Own Side"... Kept in the call's priority note
 // instead of being mislabelled as the role.
+const REF_PAREN_RE = /^\s*ref(?:erence)?(?:\s+call)?\s*$/i;
 function isNoteParen(p){
   const t = (p||'').trim();
-  return /^(?:re-?)?schedul\w*/i.test(t) || /^candidate\b/i.test(t) || /^need\s+a\b/i.test(t)
+  return /\bcompleted\b|\bown\s+side\b|\bfeedback\b/i.test(t) || /^with\s+\w+/i.test(t) || /^(?:re-?)?schedul\w*/i.test(t) || /^candidate\b/i.test(t) || /^need\s+a\b/i.test(t)
     || /^c2c$/i.test(t) || /^night$/i.test(t) || /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}(?:st|nd|rd|th)?$/i.test(t)
     || /^\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*$/i.test(t);
 }
 // Parentheticals that carry NO information for the role/note fields.
 function isNoiseParen(p){
   const t = (p||'').trim();
+  if(REF_PAREN_RE.test(t)) return true;
   return WOI_RE.test(t) || /^(?:phone\s+)?(?:interview|call)$/i.test(t) || /^\d+\s*(?:st|nd|rd|th)?\s*inter\w*$/i.test(t)
     || /^on\s*-?\s*site/i.test(t) || ROUND_TYPO_RE.test(t);
 }
@@ -2341,6 +2343,20 @@ function parseDetailedLine(line, defaultRound){
     skeleton = skeleton.slice(0,pm.index) + ' ' + skeleton.slice(pm.index+pm[0].length);
   }
   skeleton = skeleton.replace(/\s+/g,' ').trim();
+  // "(45 min, 3rd round, with Director)" / "(2nd Round, Candidate's Own Side; 1st Round Completed…)":
+  // a bracket holding several comma/semicolon-separated facts is split so round, duration and
+  // notes are each recognised on their own.
+  {
+    const flat = [];
+    parens.forEach(pp => {
+      if(/[;,]/.test(pp)){
+        const pieces = pp.split(/\s*[;,]\s*/).filter(Boolean);
+        if(pieces.some(x => /round/i.test(x) || ROUND_TYPO_RE.test(x) || /^\d+\s*(?:-\s*\d+\s*)?(?:mins?|hrs?)\b/i.test(x))){ pieces.forEach(x => flat.push(x)); return; }
+      }
+      flat.push(pp);
+    });
+    parens.length = 0; flat.forEach(x => parens.push(x));
+  }
 
   // Splits on a plain hyphen only when surrounded by spaces on both sides
   // (so hyphenated names/words don't get broken apart), but splits on an
@@ -2362,7 +2378,7 @@ function parseDetailedLine(line, defaultRound){
   // which was causing the real company name one segment later to never be
   // reached — the loop stopped early on "- Phn Interview" instead of
   // skipping it and continuing on to "Procea Ltd".
-  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean).filter(s=>!WOI_SEG_RE.test(s));
+  const segs = skeleton.split(/\s+-\s+|\s+-(?=\S)|(?<=[A-Za-z0-9])-\s+(?=\S)|\s*[–—]\s*|\s*--\s*/).map(s=>s.trim().replace(/^-+\s*/,'').replace(/\s*-+$/,'')).filter(Boolean).filter(s=>!WOI_SEG_RE.test(s));
   // Minutes are optional here ("11pm", no ":00") — a common shorthand in
   // real messages that previously meant the time (and therefore the row's
   // whole time field) was silently left blank. AM/PM stays mandatory,
@@ -2397,7 +2413,7 @@ function parseDetailedLine(line, defaultRound){
     // "company" value instead. "phn" is a common WhatsApp shorthand for
     // "phone" — treated the same way.
     return /^((phone|phn)\s+)?(interview|call)s?$/i.test(s)
-      || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behavioral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
+      || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behaviou?ral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
   }
   let company = '';
   let companyEndIdx = -1;
@@ -2474,7 +2490,8 @@ function parseDetailedLine(line, defaultRound){
   const bareFirstInterview = parens.some(p=>/^\s*(?:1st|first)\s*inter\w*\s*$/i.test(p));
   if(candidateFirstInterview) round = '1st';
 
-  const country = countryFromParens(parens);
+  const isRefCall = parens.some(pp => REF_PAREN_RE.test(pp));
+  const country = isRefCall ? 'Ref' : countryFromParens(parens);
 
   // Real messages often carry a THIRD kind of parenthetical besides country
   // and round — the student's target role for this interview, e.g.
@@ -2482,13 +2499,20 @@ function parseDetailedLine(line, defaultRound){
   // round/duration are matched is that role — captured here since it was
   // previously just discarded.
   const countryParenRaw = (parens||[]).find(x=>/^(uk|ireland|ir|canada|germany)$/i.test(normalizeCountryParenText(x)));
-  const durParenForRole = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
+  const durParenForRole = parens.find(p=>/^[0-9]+\s*(?:-\s*[0-9]+\s*)?(hrs?|hours?|mins?|minutes?)$/i.test(p));
   // A paren that's purely a round-TYPE note ("Given Coderpad Link", "Loop
   // round") isn't the candidate's target role — exclude it here so it
   // doesn't get mislabeled as the role field just because it's the
   // "leftover" paren after country/round-number/duration are matched.
   const roleParen = parens.find(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && !isRoundTypeOnlyParen(p) && !isNoteParen(p) && !isNoiseParen(p) && p.trim().length>0);
   let role = (roleParen||'').trim();
+  // "… – PwC -Tax innovation Data Engineer 10:30 PM IST": the role sits in front of the time
+  // inside the time segment itself.
+  if(!role && timeIdx > 0){
+    const m0 = segs[timeIdx].match(timeRegex);
+    const before = m0 ? segs[timeIdx].slice(0, m0.index).replace(/[-–—,\s]+$/, '').trim() : '';
+    if(before && JOB_WORD_RE.test(before) && !isDescriptorSegment(before)) role = before;
+  }
   // Notes that used to be mislabelled as the role ("Rescheduled from 12th
   // Oct", "Need a Developer", "C2C", "Night") go to the call's priority note.
   const noteParts = parens.filter(p => p !== countryParenRaw && p !== roundParen && isNoteParen(p) && !/^candidate\s*(1st|first)/i.test(p.trim())).map(p=>p.trim());
@@ -2523,8 +2547,8 @@ function parseDetailedLine(line, defaultRound){
   const durMatch = mainPart.match(/duration:?\s*-?\s*([0-9]+\s*(mins?|hrs?|hours?))/i);
   if(durMatch) duration = durMatch[1];
   else {
-    const durParen = parens.find(p=>/^[0-9]+\s*(hrs?|hours?|mins?|minutes?)$/i.test(p));
-    if(durParen) duration = durParen.replace(/([0-9])\s*([a-z])/i,'$1 $2');
+    const durParen = parens.find(p=>/^[0-9]+\s*(?:-\s*[0-9]+\s*)?(hrs?|hours?|mins?|minutes?)$/i.test(p));
+    if(durParen) duration = durParen.replace(/([0-9])\s*([a-z])/i,'$1 $2').replace(/\s*-\s*/,'-');
     else{
       // Neither an explicit "Duration:" label nor a standalone parenthetical
       // — some messages just drop a bare "25mins" (no space, no label) as
@@ -2798,7 +2822,7 @@ function isHydCountry(country){
   return country==='UK' || country==='Ireland' || country==='Germany';
 }
 function autoRouteByCountry(row){
-  if(row.woi) return row;
+  if(row.woi || row.country === 'Ref') return row;
   if(isAdvancedRound(row.round)) return row; // 2nd round & above left for manual assignment
   if(row.assignee) return row; // don't override an explicit assignment
   row.assignee = isHydCountry(row.country) ? 'HYD Team' : 'Pradeep Anna Team';
@@ -3034,7 +3058,13 @@ function teamOfAssignee(assignee, teamNames){
   const p = state.roster.find(p=>p.name===assignee);
   return p ? p.team : null;
 }
+// Reference calls (country "Ref") are never auto-assigned — the person assigns them by hand.
 async function autoRouteRows(newRows, existingRows){
+  if(!(newRows || []).some(r => r && r.country === 'Ref')) return autoRouteRowsCore(newRows, existingRows);
+  await autoRouteRowsCore(newRows.filter(r => !(r && r.country === 'Ref')), existingRows);
+  return newRows;
+}
+async function autoRouteRowsCore(newRows, existingRows){
   existingRows = existingRows || [];
   const teamNames = getTeamNames();
   const hydRaw = state.roster.filter(p=>p.team==='HYD Team').length || 6;
@@ -10286,6 +10316,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       category==='Healthcare'?'row-healthcare':'',
       category==='Education'?'row-education':'',
       longDuration?'row-long-duration':'',
+      r.country==='Ref'?'row-ref':'',
       r.onsite?'row-onsite':'',
       // Purely additive — lets the mobile card view give a rescheduled/
       // cancelled/not-responded call its own accent color at a glance
@@ -10319,6 +10350,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="Ireland" ${r.country==='Ireland'?'selected':''}>Ireland</option>
           <option value="Canada" ${r.country==='Canada'?'selected':''}>Canada</option>
           <option value="Germany" ${r.country==='Germany'?'selected':''}>Germany</option>
+          <option value="Ref" ${r.country==='Ref'?'selected':''}>Ref (reference call)</option>
         </select>
       </td>
       <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
@@ -12559,19 +12591,8 @@ function attachHandlers(conflictIds){
   // Clicking Import opens the PREVIEW first (every line split into candidate /
   // company / role / round / time, doubts highlighted, editable). Nothing is
   // added until "Import" is pressed there. An empty paste keeps the old path.
-  if(runImport) runImport.onclick = ()=>{
-    const ta = document.getElementById('importText');
-    const text = ta ? ta.value : '';
-    if(!text.trim() || !window.openImportPreview){ runImportNow(null); return; }
-    const dateInput = document.getElementById('importDate');
-    const baseDate = (dateInput && dateInput.value) || state.date;
-    let rows;
-    try{ rows = parseImportText(text, baseDate, state.importDefaultRound); }
-    catch(e){ runImportNow(null); return; }
-    // Clean paste → straight in, no sheet. The sheet only opens when something needs a look.
-    if(window.importPreviewNeeded && !window.importPreviewNeeded(rows)){ runImportNow(rows); return; }
-    window.openImportPreview(rows, { baseDate, onConfirm: (finalRows)=>{ runImportNow(finalRows); } });
-  };
+  // Import preview removed (2026-10-13): the parse button imports straight away, as before.
+  if(runImport) runImport.onclick = ()=>{ runImportNow(null); };
 
   // ---------- dedicated Reschedule/Cancel import (existing calls only) ----------
   const cancelRescheduleImport = document.getElementById('cancelRescheduleImport');
