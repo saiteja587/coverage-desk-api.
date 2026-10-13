@@ -392,7 +392,7 @@ async function handleCalls(req, res, db) {
         const values = rows.map(r => [
           r.id, date, r.time||'', r.candidate||'', r.company||'', r.round||'', r.duration||'',
           r.woi?1:0, r.assignee||'', r.country||'USA', JSON.stringify(r.doubts||[]), r.raw||'',
-          r.interviewer||'', r.importance||'', r.role||'', r.technicalPOC||'',
+          r.interviewer||'', r.importance||'', String(r.role||'').slice(0, 100), r.technicalPOC||'',
           r.onsite?1:0, r.candidateFirstInterview?1:0
         ]);
         await db.query(
@@ -508,7 +508,13 @@ async function handleCallStatus(req, res, db) {
       await db.query('DELETE FROM call_status WHERE call_date = ?', [date]);
       if (rows.length) {
         const values = rows.map(r => [
-          r.callId, date, r.status || '', r.reason || '', JSON.stringify(r.statusFields || [])
+          r.callId, date, String(r.status || '').slice(0, 40),
+          // `reason` column is VARCHAR(255): a long reason (e.g. a pasted
+          // 270-char message) made MySQL reject the whole save with
+          // "Data too long". The FULL text is kept in status_fields_json
+          // (TEXT) and that is what the app reads back, so trimming here loses nothing.
+          String(r.reason || '').slice(0, 255),
+          JSON.stringify(r.statusFields || [])
         ]);
         await db.query(
           `INSERT INTO call_status (call_id, call_date, status, reason, status_fields_json) VALUES ?`,
