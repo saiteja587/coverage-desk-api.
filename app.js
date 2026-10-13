@@ -17067,13 +17067,16 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
       if(!keepRows.length) return;
       const total = ip.rows._dataLineCount != null ? ip.rows._dataLineCount : ip.rows.length;
       keepRows._dataLineCount = total - ip.skip.size;
+      // The sheet IS the review: whatever it flagged, the person has now seen and (if needed) fixed it,
+      // so don't carry the same "please verify" notes onto the board.
+      keepRows.forEach(r => { r.doubts = []; });
       const cb = ip.opts && ip.opts.onConfirm; close();
       if(cb) cb(keepRows);
     }
   });
   document.addEventListener('input', function(e){
     if(!ip.open) return; const el = e.target; if(!el.matches || !el.matches('[data-ip-i]')) return;
-    const r = ip.rows[Number(el.getAttribute('data-ip-i'))]; if(r) r[el.getAttribute('data-ip-f')] = el.value;
+    const r = ip.rows[Number(el.getAttribute('data-ip-i'))]; if(r){ r[el.getAttribute('data-ip-f')] = el.value; if(r.doubts && r.doubts.length) r.doubts = []; }
   });
   document.addEventListener('keydown', function(e){ if(ip.open && e.key === 'Escape'){ e.stopPropagation(); close(); } }, true);
 })();
