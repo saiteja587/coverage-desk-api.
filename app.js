@@ -7233,6 +7233,7 @@ function renderCandidateProfilePanel(){
         <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
         <span class="notif-chip">${escapeHtml(r.company||'no company')}</span>
         ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
+        ${r.drivingPerson && !namesEquivalent(r.drivingPerson, r.assignee)?`<span class="notif-chip" title="Driving person (from portal sync)" style="border-color:var(--accent,#2dd4bf);color:var(--accent,#2dd4bf)">🚗 ${escapeHtml(r.drivingPerson)}</span>`:''}
       </div>
     </div>`;
   }).join('');
@@ -16405,7 +16406,7 @@ function deskCandidateTimeline(allRows, keys, resolver){
   resolver = resolver || deskBuildPersonResolver(allRows);
   const set = new Set([].concat(keys));
   return (allRows || []).filter(r => r.candidate && set.has(resolver.keyOf(r.candidate)))
-    .map(r => ({ date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', assignee: r.assignee || '', status: r.status || '', woi: !!r.woi, typedAs: r.candidate, role: r.role || '',  clusterKey: resolver.keyOf(r.candidate), reason: (r.statusFields || []).map(f => f.label + ': ' + f.value).filter(x => !/: $/.test(x)).join(', ') }))
+    .map(r => ({ date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', assignee: r.assignee || '', driver: r.drivingPerson || '', status: r.status || '', woi: !!r.woi, typedAs: r.candidate, role: r.role || '',  clusterKey: resolver.keyOf(r.candidate), reason: (r.statusFields || []).map(f => f.label + ': ' + f.value).filter(x => !/: $/.test(x)).join(', ') }))
     .sort((a, b) => b.date.localeCompare(a.date) || timeToMinutes(b.time) - timeToMinutes(a.time));
 }
 
@@ -17308,7 +17309,7 @@ function deskRoleFix(rows){
           (names.size > 1 ? '<br>Includes these spellings: ' + Array.from(names).map(n => esc(n)).join(' · ') : '') + '</div>' +
           (badOnes.length ? '<div class="dt-note">↻ <b>' + badOnes.length + '</b> rescheduled / cancelled / no-response call' + (badOnes.length > 1 ? 's' : '') + ': ' + badOnes.map(b => esc(b.date) + (b.company ? ' (' + esc(b.company) + ')' : '')).join(', ') + (badOnes.length >= REPEAT_NO_SHOW_MIN_COUNT ? ' — <b>a pattern worth watching</b>' : '') + '</div>' : '') +
           (rel.length ? '<div class="dt-note">Could also be the same person? Tap to include / exclude: ' + rel.map(c => '<button class="lf-act' + (dt.extra.has(c.key) ? ' primary' : '') + '" data-dt-extra="' + esc(c.key) + '" style="margin:2px 4px 2px 0">' + esc(c.name) + ' · ' + c.n + '</button>').join('') + '</div>' : '') +
-          tl.map((t, ti) => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + (t.role ? ' · <i>' + esc(t.role) + '</i>' : '') + ' ' + roleTagChip(tl, ti) + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
+          tl.map((t, ti) => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + (t.role ? ' · <i>' + esc(t.role) + '</i>' : '') + ' ' + roleTagChip(tl, ti) + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.driver && !namesEquivalent(t.driver, t.assignee) ? ' · 🚗 Driving: ' + esc(t.driver) : '') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
       }
       return html;
     }
