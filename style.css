@@ -436,7 +436,7 @@ tbody tr.row-education{box-shadow:inset 3px 0 0 var(--amber);}
 tbody tr.row-onsite{box-shadow:inset -3px 0 0 var(--onsite);}
 tbody tr.row-healthcare.row-onsite{box-shadow:inset 3px 0 0 var(--teal), inset -3px 0 0 var(--onsite);}
 tbody tr.row-education.row-onsite{box-shadow:inset 3px 0 0 var(--amber), inset -3px 0 0 var(--onsite);}
-tbody tr.row-long-duration td:nth-child(7){background:var(--violet-dim);}
+tbody tr.row-long-duration td:nth-child(8){background:var(--violet-dim);}
 .cat-badge{display:inline-block;font-size:12px;margin-right:4px;}
 .round-type-badge{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;border-radius:4px;padding:1px 4px;margin-right:5px;vertical-align:middle;cursor:default;}
 .round-type-coding{color:var(--blue);border:1px solid var(--blue);}
