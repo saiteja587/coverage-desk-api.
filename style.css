@@ -1059,3 +1059,8 @@ tbody tr[data-id]{touch-action:pan-y;}
 .ip-skipped{opacity:.45;} .ip-woi{font-size:11px;color:var(--violet);font-weight:700;}
 .ip-foot{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;}
 @media (max-width:700px){ .ip-overlay{align-items:flex-end;} .ip-card{width:100vw;max-height:94vh;border-radius:14px 14px 0 0 !important;} .ip-foot .hint{flex:0 0 100%;} }
+
+/* Reference calls (country = Ref): highlighted until someone is assigned */
+tbody tr.row-ref{background:rgba(245,176,65,.16);}
+tbody tr.row-ref td:first-child{box-shadow:inset 4px 0 0 var(--amber,#f5b041);}
+tbody tr.row-ref select[data-field="country"]{font-weight:700;color:var(--amber,#f5b041);}
