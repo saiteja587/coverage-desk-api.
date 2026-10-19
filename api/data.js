@@ -268,6 +268,8 @@ module.exports = async (req, res) => {
     if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
     if (resource === 'expected_closures') return await handleExpectedClosures(req, res, db);
     if (resource === 'assessments') return await handleAssessments(req, res, db);
+    if (resource === 'onsites') return await handleOnsites(req, res, db);
+    if (resource === 'results') return await handleResults(req, res, db);
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
@@ -276,7 +278,7 @@ module.exports = async (req, res) => {
       if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
     }
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|app_settings|push_subscription|users|chat|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -1145,6 +1147,129 @@ async function handleAssessments(req, res, db) {
       [values]
     );
     return res.status(200).json({ ok: true, count: values.length });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- onsites: onsite / in-person interviews that never fit the daily call list ----------
+// Added 2026-10-19. Own table (like `assessments`), created on first use. Several handlers per row.
+let onsitesTableReady = false;
+async function ensureOnsitesTable(db) {
+  if (onsitesTableReady) return;
+  await db.query(`CREATE TABLE IF NOT EXISTS onsites (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    onsite_date   VARCHAR(10)  NOT NULL,
+    time_text     VARCHAR(20)  NOT NULL DEFAULT '',
+    candidate     VARCHAR(255) NOT NULL,
+    country       VARCHAR(20)  NOT NULL DEFAULT '',
+    company       VARCHAR(255) NOT NULL DEFAULT '',
+    role          VARCHAR(255) NOT NULL DEFAULT '',
+    round_text    VARCHAR(40)  NOT NULL DEFAULT '',
+    location      VARCHAR(255) NOT NULL DEFAULT '',
+    interviewer   VARCHAR(255) NOT NULL DEFAULT '',
+    handlers      VARCHAR(500) NOT NULL DEFAULT '',
+    status        VARCHAR(20)  NOT NULL DEFAULT 'Scheduled',
+    note          TEXT         NULL,
+    raw_text      TEXT         NULL,
+    created_by    VARCHAR(100) NULL,
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_onsite_date (onsite_date)
+  ) ENGINE=InnoDB`);
+  onsitesTableReady = true;
+}
+async function handleOnsites(req, res, db) {
+  await ensureOnsitesTable(db);
+  const cols = `id, onsite_date AS date, time_text AS time, candidate, country, company, role, round_text AS round, location,
+                interviewer, handlers, status, note, created_by AS createdBy, created_at AS createdAt`;
+  if (req.method === 'GET') {
+    const date = req.query.date;
+    const [rows] = date
+      ? await db.query(`SELECT ${cols} FROM onsites WHERE onsite_date = ? ORDER BY id`, [String(date)])
+      : await db.query(`SELECT ${cols} FROM onsites ORDER BY onsite_date DESC, id LIMIT 3000`);
+    return res.status(200).json({ rows });
+  }
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    if (body.action === 'delete') {
+      const id = Number(body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      await db.query('DELETE FROM onsites WHERE id = ?', [id]);
+      return res.status(200).json({ ok: true });
+    }
+    if (body.action === 'update') {
+      const id = Number(body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      const f = body.fields || {};
+      const map = { date: 'onsite_date', time: 'time_text', candidate: 'candidate', country: 'country', company: 'company', role: 'role',
+                    round: 'round_text', location: 'location', interviewer: 'interviewer', handlers: 'handlers', status: 'status', note: 'note' };
+      const lim = { onsite_date: 10, time_text: 20, candidate: 255, country: 20, company: 255, role: 255, round_text: 40, location: 255, interviewer: 255, handlers: 500, status: 20 };
+      const sets = [], vals = [];
+      Object.keys(map).forEach(k => {
+        if (!Object.prototype.hasOwnProperty.call(f, k)) return;
+        let v = String(f[k] == null ? '' : f[k]); if (lim[map[k]]) v = v.slice(0, lim[map[k]]);
+        sets.push(map[k] + ' = ?'); vals.push(v);
+      });
+      if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+      vals.push(id);
+      await db.query('UPDATE onsites SET ' + sets.join(', ') + ' WHERE id = ?', vals);
+      return res.status(200).json({ ok: true });
+    }
+    const rows = body.rows;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows[] required' });
+    const by = req.headers['x-username'] || 'admin';
+    const values = rows.map(r => [
+      String(r.date || '').slice(0, 10), String(r.time || '').slice(0, 20), String(r.candidate || '').trim().slice(0, 255),
+      String(r.country || '').slice(0, 20), String(r.company || '').trim().slice(0, 255), String(r.role || '').trim().slice(0, 255),
+      String(r.round || '').slice(0, 40), String(r.location || '').trim().slice(0, 255), String(r.interviewer || '').trim().slice(0, 255),
+      String(r.handlers || '').trim().slice(0, 500), String(r.status || 'Scheduled').slice(0, 20), r.note || '', r.raw || '', by,
+    ]);
+    if (values.some(v => !v[0] || !v[2])) return res.status(400).json({ error: 'Each row needs a date and a candidate' });
+    await db.query(
+      'INSERT INTO onsites (onsite_date, time_text, candidate, country, company, role, round_text, location, interviewer, handlers, status, note, raw_text, created_by) VALUES ?',
+      [values]
+    );
+    return res.status(200).json({ ok: true, count: values.length });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- results: Passed / Failed / Waiting for calls, assessments and onsites ----------
+// Added 2026-10-19. One row per (kind, ref_key): kind = call | assessment | onsite; ref_key identifies the item
+// (calls: date|candidate|company|time, others: the row id). Upsert on POST, GET returns everything.
+let resultsTableReady = false;
+async function ensureResultsTable(db) {
+  if (resultsTableReady) return;
+  await db.query(`CREATE TABLE IF NOT EXISTS results (
+    kind        VARCHAR(12)  NOT NULL,
+    ref_key     VARCHAR(500) NOT NULL,
+    result      VARCHAR(12)  NOT NULL,
+    result_date VARCHAR(10)  NOT NULL DEFAULT '',
+    candidate   VARCHAR(255) NOT NULL DEFAULT '',
+    company     VARCHAR(255) NOT NULL DEFAULT '',
+    updated_by  VARCHAR(100) NULL,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (kind, ref_key(191))
+  ) ENGINE=InnoDB`);
+  resultsTableReady = true;
+}
+async function handleResults(req, res, db) {
+  await ensureResultsTable(db);
+  if (req.method === 'GET') {
+    const [rows] = await db.query('SELECT kind, ref_key AS refKey, result, result_date AS date, candidate, company FROM results ORDER BY updated_at DESC LIMIT 20000');
+    return res.status(200).json({ rows });
+  }
+  if (req.method === 'POST') {
+    const b = req.body || {};
+    const kind = String(b.kind || ''), key = String(b.refKey || '').slice(0, 500), result = String(b.result || '');
+    if (!['call', 'assessment', 'onsite'].includes(kind) || !key) return res.status(400).json({ error: 'kind and refKey required' });
+    if (!result) { await db.query('DELETE FROM results WHERE kind = ? AND ref_key = ?', [kind, key]); return res.status(200).json({ ok: true }); }
+    if (!['Passed', 'Failed', 'Waiting'].includes(result)) return res.status(400).json({ error: 'result must be Passed, Failed or Waiting' });
+    const by = req.headers['x-username'] || 'admin';
+    await db.query(
+      'INSERT INTO results (kind, ref_key, result, result_date, candidate, company, updated_by) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE result = VALUES(result), result_date = VALUES(result_date), candidate = VALUES(candidate), company = VALUES(company), updated_by = VALUES(updated_by)',
+      [kind, key, result, String(b.date || '').slice(0, 10), String(b.candidate || '').slice(0, 255), String(b.company || '').slice(0, 255), by]
+    );
+    return res.status(200).json({ ok: true });
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }
