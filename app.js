@@ -1143,7 +1143,7 @@ function parseAssessmentText(text, defaultDate){
     const hasTime = !!assessTimeFrom(line);
     const dateInLine = assessParseDate(line);
     if(dateInLine && !hasTime){ curDate = dateInLine; return; }           // heading
-    if(!hasTime && !/[-–—]/.test(line)) { if(!/^@/.test(line) && line.length > 3) skipped.push(rawLine.trim()); return; }
+    if(!hasTime && !/[-–—]/.test(line)) { if(!/^@/.test(line) && !/assess/i.test(line) && line.length > 3) skipped.push(rawLine.trim()); return; }
     line = line.replace(/^\s*\d{1,3}[\.\)]\s+/, '');
     // mask dashes inside brackets so "(Interview - through assessment)" is not split
     const masked = line.replace(/\(([^()]*)\)/g, (m, inner) => '(' + inner.replace(/[-–—]/g, '\u0001') + ')');
@@ -1190,6 +1190,39 @@ function parseAssessmentText(text, defaultDate){
   return { rows, skipped, dates: Array.from(dates).sort() };
 }
 function assessKey(r){ return [r.date, String(r.candidate || '').trim().toLowerCase(), String(r.company || '').trim().toLowerCase(), r.time || ''].join('|'); }
+// Pulls the assessment lines out of a pasted text that was dropped into the normal Calls import.
+// A heading that mentions "assessment" ("Saturday assessments (17-10-2026)") starts an assessment block; a
+// date-only heading without that word ends it. Outside a block, a line is treated as an assessment only when it
+// has a time, a clear assessment word / platform and no "1st round"-style round wording.
+function splitAssessmentLines(text){
+  const assessLines = [], rest = [];
+  let inA = false;
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const t = line.trim();
+    if(!t){ (inA ? assessLines : rest).push(line); return; }
+    const hasTime = !!assessTimeFrom(t);
+    const isHeading = !hasTime && (!!assessParseDate(t) || (/assess/i.test(t) && !/[-–—]/.test(t) && t.length < 80));
+    if(isHeading){ inA = /assess/i.test(t); (inA ? assessLines : rest).push(line); return; }
+    // inside an assessment block, a line that reads like a normal interview call (round / duration wording) stays a call
+    if(inA && !/\b\d{1,2}(?:st|nd|rd|th)\s*round\b|\bround\s*\d\b|\bfinal\s*round\b|\bduration\b/i.test(t)){ assessLines.push(line); return; }
+    if(inA){ rest.push(line); return; }
+    if(hasTime && /\b(?:assessments?|codility|hackajob|hackerrank|coderpad|codesignal)\b/i.test(t) && !/\b(?:\d{1,2}(?:st|nd|rd|th)|final)\s*round\b/i.test(t)){ assessLines.push(line); return; }
+    rest.push(line);
+  });
+  return { assessLines, rest: rest.join('\n') };
+}
+// Parses and stores assessments (skipping ones already on file). Returns { msg, firstDate, added }.
+async function importAssessmentText(text, day){
+  const res = parseAssessmentText(text, day);
+  if(!res.rows.length) return { msg: 'No assessment lines were found in that text.' + (res.skipped.length ? ' (' + res.skipped.length + ' line(s) not understood)' : ''), firstDate: '', added: 0 };
+  if(!state.assessmentsLoaded) await loadAssessments();
+  const have = new Set((state.assessments || []).map(assessKey)), seen = new Set(); let dup = 0;
+  const fresh = res.rows.filter(r => { const k = assessKey(r); if(have.has(k) || seen.has(k)){ dup++; return false; } seen.add(k); return true; });
+  if(fresh.length) await addAssessments(fresh.map(r => { const o = Object.assign({}, r); delete o.issues; return o; }));
+  const noTime = fresh.filter(r => r.issues.includes('no time')).length;
+  return { added: fresh.length, firstDate: (fresh[0] || res.rows[0]).date,
+    msg: '✓ Added ' + fresh.length + ' assessment' + (fresh.length === 1 ? '' : 's') + (dup ? ', skipped ' + dup + ' already on file' : '') + (res.skipped.length ? ', ' + res.skipped.length + ' line(s) not understood' : '') + (noTime ? ', ' + noTime + ' without a time' : '') + '. Dates: ' + res.dates.join(', ') };
+}
 async function loadAssessments(){
   if(!API_BASE_URL){ state.assessmentsLoaded = true; return; }
   try{
@@ -12768,7 +12801,26 @@ function attachHandlers(conflictIds){
   // company / role / round / time, doubts highlighted, editable). Nothing is
   // added until "Import" is pressed there. An empty paste keeps the old path.
   // Import preview removed (2026-10-13): the parse button imports straight away, as before.
-  if(runImport) runImport.onclick = ()=>{ runImportNow(null); };
+  // Assessment lines pasted into the Calls import (heading "… assessments (dd-mm-yyyy)", or a line naming
+  // Codility / Hackajob / "assessment") go to the Assessments table, never onto the call board.
+  if(runImport) runImport.onclick = async ()=>{
+    const ta = document.getElementById('importText');
+    const sp = splitAssessmentLines(ta ? ta.value : '');
+    if(sp.assessLines.some(l => l.trim())){
+      const dateInput = document.getElementById('importDate');
+      const day = (dateInput && dateInput.value) || state.date;
+      let r;
+      try{ r = await importAssessmentText(sp.assessLines.join('\n'), day); }
+      catch(e){ alert('Could not save the assessments: ' + e.message + '\nNothing was imported — please try again.'); return; }
+      // saving the assessments re-rendered the page, so re-find the fields and put the remaining text (and the chosen date) back
+      { const ta2 = document.getElementById('importText'); if(ta2) ta2.value = sp.rest; const d2 = document.getElementById('importDate'); if(d2 && day) d2.value = day; }
+      if(!sp.rest.trim()){
+        closeAllPanels(); state.showAssessments = true; state.assessDate = r.firstDate || day; state.assessMsg = r.msg; render(); return;
+      }
+      alert('🧪 ' + r.msg + '\nThe remaining lines are being imported as calls.');
+    }
+    runImportNow(null);
+  };
 
   // ---------- dedicated Reschedule/Cancel import (existing calls only) ----------
   const cancelRescheduleImport = document.getElementById('cancelRescheduleImport');
@@ -17251,17 +17303,11 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
     if(t.closest('#assessImportBtn') && CURRENT_ROLE === 'admin'){
       const ta = document.getElementById('assessImportText'); const text = ta ? ta.value : '';
       const day = state.assessDate || todayDateString();
-      const res = parseAssessmentText(text, day);
-      if(!res.rows.length){ state.assessMsg = 'No assessment lines were found in that text.' + (res.skipped.length ? ' (' + res.skipped.length + ' line(s) not understood)' : ''); render(); return; }
-      const have = new Set((state.assessments || []).map(assessKey)); const seen = new Set(); let dup = 0;
-      const fresh = res.rows.filter(r => { const k = assessKey(r); if(have.has(k) || seen.has(k)){ dup++; return false; } seen.add(k); return true; });
       state.assessBusy = true; state.assessImportDraft = text; state.assessMsg = ''; render();
       try{
-        if(fresh.length) await addAssessments(fresh.map(r => { const o = Object.assign({}, r); delete o.issues; return o; }));
-        const noTime = fresh.filter(r => r.issues.includes('no time')).length;
-        state.assessMsg = '✓ Added ' + fresh.length + (dup ? ', skipped ' + dup + ' already on file' : '') + (res.skipped.length ? ', ' + res.skipped.length + ' line(s) not understood' : '') + (noTime ? ', ' + noTime + ' without a time' : '') + '. Dates: ' + res.dates.join(', ');
-        state.assessImportDraft = '';
-        if(fresh.length) state.assessDate = fresh[0].date;
+        const r = await importAssessmentText(text, day);
+        state.assessMsg = r.msg;
+        if(r.added){ state.assessImportDraft = ''; state.assessDate = r.firstDate; }
       }catch(err){ state.assessMsg = '⚠ ' + err.message; }
       state.assessBusy = false; render();
     }
