@@ -89,7 +89,7 @@ body.d2-compact #tableScrollMain td,body.d2-compact #tableScrollMain th{font-siz
 .d2-toast-btn:hover{transform:scale(1.06)}.d2-toast-btn:active{transform:scale(.94)}
 .d2-toast-bar{position:absolute;left:0;bottom:0;height:3px;width:100%;background:var(--teal);transform-origin:left;animation:d2bar var(--ms) linear forwards}
 @keyframes d2bar{to{transform:scaleX(0)}}
-#d2Pill{position:fixed;left:16px;bottom:16px;z-index:9000;display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);font:600 12px var(--body);box-shadow:var(--shadow-md);cursor:default;transition:all .25s}
+#d2Pill{position:fixed;left:16px;bottom:16px;z-index:60;display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);font:600 12px var(--body);box-shadow:var(--shadow-md);cursor:default;transition:all .25s}
 #d2Pill .d2-pill-dot{width:8px;height:8px;border-radius:50%;background:var(--teal)}
 #d2Pill[data-s="saving"] .d2-pill-dot{background:var(--sky);animation:d2blink .8s infinite}
 #d2Pill[data-s="dirty"]{cursor:pointer;color:var(--amber);border-color:color-mix(in srgb,var(--amber) 55%,var(--border))}
@@ -215,5 +215,5 @@ body.d2-compact #tableScrollMain td,body.d2-compact #tableScrollMain th{font-siz
 .d2-bd.d{background:var(--amber)}.d2-bd.o{background:var(--violet);color:#fff}
 
 /* Keep the toolbar (and its dropdown menus) above the table / filter bar / sticky header */
-.toolbar{position:relative;z-index:40}
+@media (min-width:761px){.toolbar{position:relative;z-index:40}}
 #tableScrollMain{isolation:isolate}
