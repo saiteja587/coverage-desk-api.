@@ -1257,10 +1257,30 @@ function assessIndex(){
   }
   return _assessIdx.map;
 }
+// Company matching for assessments ↔ calls. Stricter than fuzzyCompanyKeyMatch (which only checks that one
+// spelling STARTS WITH the other, so "Capita" would match "Capital One"): the legal / filler words are dropped
+// ("Ltd", "LLC", "Corporation", "Group", "The"...), then the names must be equal, differ by a typo,
+// or one must be the other's FIRST WORDS ("Zema Global" = "Zema Global Data Corporation").
+const ASSESS_CO_STOP = new Set(['ltd','limited','llc','inc','incorporated','corp','corporation','plc','group','co','company','the','and','holdings','uk','usa','us','europe']);
+function assessCompanyTokens(c){
+  return String(c || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[\u2019'`]/g, '').replace(/&/g, ' and ').split(/[^a-z0-9]+/).filter(t => t && !ASSESS_CO_STOP.has(t));
+}
+function assessCompanyMatch(a, b){
+  const ta = assessCompanyTokens(a), tb = assessCompanyTokens(b);
+  if(!ta.length || !tb.length) return false;
+  const ja = ta.join(''), jb = tb.join('');
+  if(ja === jb) return true;                                     // "vodafonethree" = "Vodafone Three"
+  if(ja + 's' === jb || jb + 's' === ja) return true;               // "Barclays" = "Barclay"
+  if(companiesAreAliased(a, b)) return true;                     // admin-curated aliases ("TfL" = "Transport for London")
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if(short.length < long.length && short.every((t, i) => t === long[i])) return true;   // "Zema Global" ⊂ "Zema Global Data"
+  if(ja.length >= 8 && jb.length >= 8 && Math.abs(ja.length - jb.length) <= 2 && levenshteinDistance(ja, jb) <= 2) return true;  // typo
+  return false;
+}
 function assessmentsForCandidate(name, company){
   const list = assessIndex().get(normalizeNameKey(name)) || [];
   if(!company) return list;
-  return list.filter(a => !a.company || fuzzyCompanyKeyMatch(a.company, company));
+  return list.filter(a => !a.company || assessCompanyMatch(a.company, company));
 }
 function assessShortDate(d){ if(!d) return ''; const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); }
 // One candidate's path at one company, oldest first: calls (from every saved day) and assessments together.
@@ -1268,7 +1288,7 @@ function assessJourney(a, rows){
   const key = normalizeNameKey(a.candidate); const steps = [];
   (rows || []).forEach(r => {
     if(r.woi || !r.candidate || normalizeNameKey(r.candidate) !== key) return;
-    if(a.company && r.company && !fuzzyCompanyKeyMatch(a.company, r.company)) return;
+    if(a.company && r.company && !assessCompanyMatch(a.company, r.company)) return;
     steps.push({ kind: 'call', date: r._date || '', sort: timeToMinutes(r.time), label: (r.round || 'Call') + (r.status ? ' ↻' : ''), title: (r.round || 'Call') + ' on ' + (r._date || '') + (r.status ? ' (' + r.status.replace(/_/g, ' ') + ')' : '') });
   });
   assessmentsForCandidate(a.candidate, a.company).forEach(x => steps.push({ kind: 'assess', date: x.date, sort: timeToMinutes(x.time), label: '🧪 ' + (x.assessment || 'Assessment'), title: 'Assessment on ' + x.date, self: x.id === a.id }));
