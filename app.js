@@ -2526,12 +2526,15 @@ function countryFromParens(parens){
 const WOI_RE = /\bw[ai]{1,3}t(?:ing)?\s+f[a-z]{1,3}\s+(?:the\s+)?inv\w*|\bwoi\b/i;
 const WOI_SEG_RE = /^\W*w[ai]{1,3}t(?:ing)?\s+f[a-z]{1,3}\s+(?:the\s+)?inv\w*\W*$/i;
 // Words that make a piece of text a JOB TITLE rather than a company name.
-const JOB_WORD_RE = /\b(?:analysts?|anaylsts?|engineers?|developers?|managers?|specialists?|associates?|consultants?|scientists?|administrators?|coordinators?|assistants?|representatives?|technicians?|officers?|architects?|directors?|executives?|designers?|testers?|programmers?|interns?|advisors?|advisers?|supervisors?|strategists?|accountants?|technologists?|researchers?|recruiters?|owners?|sdet|devops)\b/i;
+const JOB_WORD_RE = /\b(?:analysts?|anaylsts?|engineers?|developers?|managers?|specialists?|associates?|consultants?|scientists?|administrators?|co[\s-]?ordinators?|coordinators?|assistants?|representatives?|technicians?|officers?|architects?|directors?|executives?|designers?|testers?|programmers?|interns?|advisors?|advisers?|supervisors?|strategists?|accountants?|technologists?|researchers?|recruiters?|owners?|sdet|devops)\b/i;
 // Typo-tolerant "(1st round)" / "(1stround)" / "(1stound)" / "(1 St round)".
 const ROUND_TYPO_RE = /^\s*\d+\s*(?:st|nd|rd|th)?\s*(?:r?ound|rnd)\s*$/i;
 function normalizeRoundLabel(raw){
   const t = (raw||'').trim();
-  if(!t || /^\d+(?:st|nd|rd|th) round$/i.test(t)) return t;
+  const t0 = t.replace(/^IST\s*/i,'').replace(/\.+$/,'').trim();
+  if(t0 !== t) return normalizeRoundLabel(t0);
+  if(!t) return t;
+  if(/^\d+(?:st|nd|rd|th) round$/.test(t)) return t;
   const m = t.match(/^(\d+)\s*(?:st|nd|rd|th)?\s*(?:r?ound|rnd)$/i);
   if(!m) return t;
   const n = Number(m[1]); const v = n % 100;
@@ -2553,6 +2556,7 @@ function isNoteParen(p){
 function isNoiseParen(p){
   const t = (p||'').trim();
   if(REF_PAREN_RE.test(t)) return true;
+  if(/^u\.?s\.?(?:a\.?)?$/i.test(t)) return true;
   return WOI_RE.test(t) || /^(?:phone\s+)?(?:interview|call)$/i.test(t) || /^\d+\s*(?:st|nd|rd|th)?\s*inter\w*$/i.test(t)
     || /^on\s*-?\s*site/i.test(t) || ROUND_TYPO_RE.test(t);
 }
@@ -2644,6 +2648,7 @@ function parseDetailedLine(line, defaultRound){
   // turned back into parens on the company afterwards.
   mainPart = mainPart.replace(/([A-Za-z.])\(([^()]{3,})\)(?=[A-Za-z])/g, (m, a, inner)=>
     (/^(?:uk|ireland|ir|canada|germany)$/i.test(inner.trim()) || /round/i.test(inner) || ROUND_TYPO_RE.test(inner) || /^\d+\s*(?:mins?|hrs?)/i.test(inner.trim())) ? m : a+' ['+inner+'] ');
+  mainPart = mainPart.replace(/\bCo\s+-\s+(?=ordinat)/gi, 'Co-').replace(/\bCo\s+-\s+(?=op)/gi, 'Co\u0001');
   const afterArrowRaw = arrowIdx>=0 ? clean.slice(arrowIdx) : '';
 
   // pull out all parenthetical groups so internal dashes/slashes don't break segmenting
@@ -2725,8 +2730,8 @@ function parseDetailedLine(line, defaultRound){
     // it got skipped over entirely and the descriptor phrase became the wrong
     // "company" value instead. "phn" is a common WhatsApp shorthand for
     // "phone" — treated the same way.
-    return /^((phone|phn)\s+)?(interview|call)s?$/i.test(s)
-      || /^(technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behaviou?ral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
+    return /^((phone|phn)\s+)?(interview|call|screen)s?$/i.test(s)
+      || /^(live\s+coding|technical|coding|loop|final|video|screening|panel|hr|telephonic|virtual|in-?person|onsite|group|initial|preliminary|presentation|case\s?study|behaviou?ral|panel\s?discussion)\s+(interview|call|round)$/i.test(s);
   }
   let company = '';
   let companyEndIdx = -1;
@@ -2755,7 +2760,7 @@ function parseDetailedLine(line, defaultRound){
       j < segs.length && j !== timeIdx &&
       !isDescriptorSegment(segs[j]) &&
       !/^duration:?/i.test(segs[j]) &&
-      !/^(final|\d+\w{0,4})\s*rounds?$/i.test(segs[j].trim()) &&
+      !/^(?:ist\s*)?(final|\d+\w{0,4})\s*rounds?\.?$/i.test(segs[j].trim()) &&
       !/^\d{1,2}[:.]\d{2}\s*[AaPp][Mm]?$/.test(segs[j].trim()) &&
       // A single bare word sitting as the very LAST segment in the whole
       // line, with nothing after it, is the exact shape of a trailing POC
@@ -2781,7 +2786,7 @@ function parseDetailedLine(line, defaultRound){
   // "2nd") the same way it matches "2nd Round", since real source data has
   // inconsistent/typo'd ordinal suffixes and requiring an exact one meant
   // rounds like this silently defaulted to "1st" instead of being detected.
-  const roundSegMatch = segs.find(s=>/^(final|\d+\w{0,4})\s*rounds?$/i.test(s.trim()));
+  const roundSegMatch = segs.find(s=>/^(?:ist\s*)?(final|\d+\w{0,4})\s*rounds?\.?$/i.test(s.trim()));
   const roundFound = roundParen || roundSegMatch;
   let round = roundFound ? normalizeRoundLabel(roundFound) : (defaultRound || '1st');
 
@@ -2817,8 +2822,24 @@ function parseDetailedLine(line, defaultRound){
   // round") isn't the candidate's target role — exclude it here so it
   // doesn't get mislabeled as the role field just because it's the
   // "leftover" paren after country/round-number/duration are matched.
-  const roleParen = parens.find(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && !isRoundTypeOnlyParen(p) && !isNoteParen(p) && !isNoiseParen(p) && p.trim().length>0);
-  let role = (roleParen||'').trim();
+  const roleCands = parens.filter(p => p !== countryParenRaw && p !== roundParen && p !== durParenForRole && !isRoundTypeOnlyParen(p) && !isNoteParen(p) && !isNoiseParen(p) && p.trim().length>0);
+  // Nested brackets "(Data Scientist II - (Hybrid))" / "(Multi Skilled Engineer (Food Manufacturing))"
+  // leave several leftovers: the job title wins, the rest becomes a qualifier in brackets.
+  // A bare acronym "(CRTEC)" is part of the company name, not a role.
+  let acronymForCompany = '';
+  let role = '';
+  {
+    const cl = roleCands.map(x=>x.replace(/[\s\-\/,|]+$/,'').trim()).filter(Boolean);
+    const acr = cl.filter(x=>/^[A-Z]{2,8}$/.test(x));
+    const rest = cl.filter(x=>!/^[A-Z]{2,8}$/.test(x));
+    if(acr.length && !rest.length){ acronymForCompany = acr[0]; }
+    else if(rest.length){
+      const mainIdx = Math.max(0, rest.findIndex(x=>JOB_WORD_RE.test(x)));
+      role = rest[mainIdx];
+      const extra = rest.filter((x,i)=>i!==mainIdx);
+      if(extra.length) role += ' (' + extra.join(', ') + ')';
+    }
+  }
   // "… – PwC -Tax innovation Data Engineer 10:30 PM IST": the role sits in front of the time
   // inside the time segment itself.
   if(!role && timeIdx > 0){
@@ -2842,6 +2863,12 @@ function parseDetailedLine(line, defaultRound){
     if(pieces.length >= 2 && pieces.slice(1).some(x=>JOB_WORD_RE.test(x))){
       company = pieces[0];
       roleFromCompany = pieces.slice(1).join(' - ');
+    } else if(pieces.length === 2 && pieces[0].split(/\s+/).length <= 4 && pieces[1].split(/\s+/).length >= 2
+              && !JOB_WORD_RE.test(pieces[0]) && !/\bco$/i.test(pieces[0]) && !/^(?:the|and|of)\b/i.test(pieces[1])){
+      // "Fiserv - Data Engineering", "Synergy365 - credit controller": no job word,
+      // but a short company followed by a multi-word tail is company - role.
+      company = pieces[0];
+      roleFromCompany = pieces[1];
     } else if(pieces.length === 2 && JOB_WORD_RE.test(pieces[0]) && !JOB_WORD_RE.test(pieces[1])
               && pieces[0].split(/\s+/).length <= 3 && !/^the\b/i.test(pieces[0])
               && JOB_WORD_RE.test(pieces[0].replace(/\s+(?:I{1,3}|IV|V|\d+)$/i,'').split(/\s+/).pop())){
@@ -2850,9 +2877,13 @@ function parseDetailedLine(line, defaultRound){
       company = pieces[1];
     }
   }
-  roleFromCompany = roleFromCompany.replace(/\s*\bon\s*-?\s*site\b/i, '').trim();
+  roleFromCompany = roleFromCompany.replace(/\s*\bon\s*-?\s*site\b/i, '').replace(/\s+-\s+(?:\d+\s*mins?\b|\d+\s*(?:st|nd|rd|th)\s*round).*$/i,'').trim();
   if(roleFromCompany && role && role.toLowerCase() !== roleFromCompany.toLowerCase()) role = roleFromCompany + ' (' + role + ')';
   else if(roleFromCompany) role = roleFromCompany;
+  role = role.replace(/\u0001/g, ' - ');
+  company = company.replace(/\u0001/g, ' - ');
+  role = role.replace(/[\s|]+$/,'').trim(); company = company.replace(/[\s|]+$/,'').trim();
+  if(acronymForCompany && !new RegExp('\\b'+acronymForCompany+'\\b').test(company)) company += ' (' + acronymForCompany + ')';
   const garbled = /ï¿½|\uFFFD/.test(company);
 
   // duration: explicit "Duration: X" first, else a paren that's purely a duration token
