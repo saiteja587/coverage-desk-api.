@@ -357,33 +357,80 @@
   var tlOpen = false, tlEl = null;
   function openTimeline(){ tlOpen = true; if(!tlEl){ tlEl=document.createElement('div'); tlEl.id='d2Timeline'; document.body.appendChild(tlEl); } document.body.classList.add('d2-lock'); renderTimeline(); }
   function closeTimeline(){ tlOpen=false; if(tlEl){ tlEl.remove(); tlEl=null; } document.body.classList.remove('d2-lock'); }
+  var tlSrc = LS.get('d2.tlSrc','all');
+  function portalList(){ return (state.portalAssignments||[]).filter(function(p){ return p && (!p.dateKey || p.dateKey===state.date); }); }
+  function pKey(n){ try{ return normalizeCandidateForMatch(n); }catch(e){ return String(n||'').toLowerCase().replace(/[^a-z]/g,''); } }
+  function cKey(n){ try{ return normalizeCompanyKey(n); }catch(e){ return String(n||'').toLowerCase(); } }
+  function sameName(a,b){ try{ return namesEquivalent(a,b); }catch(e){ return String(a||'').toLowerCase()===String(b||'').toLowerCase(); } }
+  // match one desk row to a portal record (any team, same date), narrowing by time then company
+  function portalFor(r, used){
+    var k = pKey(r.candidate); if(!k) return null;
+    var m = portalList().filter(function(p){ return pKey(p.candidate)===k; });
+    if(!m.length) return null;
+    var dated = m.filter(function(p){ return p.dateKey===state.date; }); if(dated.length) m = dated;
+    if(m.length>1){ var tm = m.filter(function(p){ return p.time===r.time; }); if(tm.length) m = tm; }
+    if(m.length>1){ var ck = cKey(r.company), cm = m.filter(function(p){ return cKey(p.client)===ck; }); if(cm.length) m = cm; }
+    if(used){ var free = m.filter(function(p){ return used.indexOf(p)<0; }); if(free.length) m = free; }
+    return m[0];
+  }
+  function tlModel(){
+    var src = tlSrc, hasP = !!(state.portalAssignments && state.portalAssignments.length);
+    if(!hasP && src!=='desk') src = 'desk';
+    var items = [], used = [], stats = {desk:0, fromPortal:0, differ:0, portalOnly:0, portalNoTime:0};
+    rows().filter(function(r){ return !r.woi; }).forEach(function(r){
+      if(bd(r.time)===9999) return;
+      var P = (src!=='desk') ? portalFor(r, used) : null; if(P) used.push(P);
+      var lane = r.assignee || '', kind = 'desk', note = '';
+      if(src==='portal'){ lane = P ? (P.handler||'') : ''; kind = P?'portal':'desk'; if(!P) note='not in portal'; }
+      else if(P){
+        var ph = P.handler||'';
+        if(!lane && ph){ lane = ph; kind='portal'; stats.fromPortal++; note='Assigned in Portal: '+ph; }
+        else if(lane && ph && !sameName(lane, ph)){ kind='differ'; stats.differ++; note='Portal shows: '+ph; }
+      }
+      stats.desk++;
+      items.push({r:r, lane:lane, kind:kind, note:note, start:bd(r.time), len:dur(r), P:P});
+    });
+    if(src!=='desk' && hasP){
+      portalList().forEach(function(p){
+        if(used.indexOf(p)>=0 || !p.dateKey) return;
+        var b = bd(p.time); if(b===9999){ stats.portalNoTime++; return; }
+        stats.portalOnly++;
+        items.push({r:{id:'p:'+(p.candidate||'')+b, candidate:p.candidate, company:p.client, time:p.time, round:p.round||'', duration:p.duration||''}, lane:p.handler||p.assignee||'', kind:'ponly', note:'Portal only (not on the desk list)'+(p.status?' — '+p.status:''), start:b, len:(parseDurationMinutes(p.duration)||30), ghost:true});
+      });
+    }
+    return {items:items, stats:stats, src:src, hasP:hasP};
+  }
   function renderTimeline(){
     if(!tlEl) return;
-    var rs = rows().filter(function(r){ return !r.woi && bd(r.time)!==9999; });
-    if(!rs.length){ tlEl.innerHTML = '<div class="d2-tl-card"><div class="d2-tl-h"><b>Timeline · '+esc(state.date)+'</b><button class="d2-x" data-d2="tl-close">✕</button></div><div class="d2-empty" style="margin:30px"><h3>No timed calls to plot</h3></div></div>'; return; }
-    var minB = Math.floor(Math.min.apply(null, rs.map(function(r){return bd(r.time);}))/60)*60;
-    var maxB = Math.ceil(Math.max.apply(null, rs.map(function(r){return bd(r.time)+dur(r);}))/60)*60;
+    var M = tlModel(), items = M.items;
+    var seg = function(k,l){ return '<button class="d2-seg'+(M.src===k?' on':'')+'" data-d2="tl-src" data-v="'+k+'"'+(k!=='desk'&&!M.hasP?' title="Sync the Portal first"':'')+'>'+l+'</button>'; };
+    var head = '<div class="d2-tl-h"><b>Timeline · '+esc(state.date)+'</b><div class="d2-segs">'+seg('all','Desk + Portal')+seg('desk','Desk only')+seg('portal','Portal only')+'</div><button class="btn ghost d2-sync" data-d2="tl-sync">'+(state.portalSyncLoading?'Syncing…':'⟳ Sync Portal')+'</button><button class="d2-x" data-d2="tl-close" title="Close (Esc)">✕</button></div>';
+    var info = M.hasP ? '<div class="d2-tl-info"><span><i class="k desk"></i>Desk '+M.stats.desk+'</span><span><i class="k portal"></i>Filled from Portal '+M.stats.fromPortal+'</span><span><i class="k differ"></i>Portal differs '+M.stats.differ+'</span><span><i class="k ponly"></i>Portal only '+M.stats.portalOnly+'</span>'+(M.stats.portalNoTime?'<span>'+M.stats.portalNoTime+' portal call(s) without a time</span>':'')+'</div>' : '<div class="d2-tl-info warn">No Portal data loaded yet — tap “Sync Portal” to bring in the Portal’s handlers and any calls missing from the desk list.</div>';
+    if(!items.length){ tlEl.innerHTML = '<div class="d2-tl-card">'+head+info+'<div class="d2-empty" style="margin:30px"><h3>No timed calls to plot</h3></div></div>'; return; }
+    var minB = Math.floor(Math.min.apply(null, items.map(function(x){return x.start;}))/60)*60;
+    var maxB = Math.ceil(Math.max.apply(null, items.map(function(x){return x.start+x.len;}))/60)*60;
     var PX = innerWidth<700 ? 1.6 : 2.2, W = Math.max(600,(maxB-minB)*PX);
     var t = teamNamesSet();
-    var names = {}; rs.forEach(function(r){ var k = r.assignee||''; (names[k]=names[k]||[]).push(r); });
-    if(isAdmin() && !names['']) names[''] = [];
+    var names = {}; items.forEach(function(x){ (names[x.lane]=names[x.lane]||[]).push(x); });
+    if(isAdmin() && M.src!=='portal' && !names['']) names[''] = [];
     var lanes = Object.keys(names).sort(function(a,b){ if(a==='') return -1; if(b==='') return 1; var ta=t.has(a), tb=t.has(b); if(ta!==tb) return ta?1:-1; return a.localeCompare(b); });
-    // also show roster people with no calls? keep board focused: only if they exist in roster & are advanced? skip
     var conflict = {}; try{ computeConflicts(rows()).forEach(function(id){ conflict[id]=1; }); }catch(e){}
     var hours = ''; for(var h=minB; h<=maxB; h+=60) hours += '<div class="d2-tl-hr" style="left:'+((h-minB)*PX)+'px"><span>'+hourLabel(h)+'</span></div>';
     var body = lanes.map(function(k){
-      var list = names[k].slice().sort(function(a,b){ return bd(a.time)-bd(b.time); }), ends=[], blocks='';
-      list.forEach(function(r){
-        var s=bd(r.time), e=s+dur(r), row=0; while(ends[row]!==undefined && ends[row]>s) row++; ends[row]=e;
-        blocks += '<div class="d2-tl-b d2-r-'+(/onsite/i.test(r.round||'')||r.onsite?'on':(/^(1|1st)/i.test(r.round||'')||!r.round?'r1':'r2'))+(conflict[r.id]?' clash':'')+'" draggable="'+(isAdmin()?'true':'false')+'" data-id="'+esc(r.id)+'" style="left:'+((s-minB)*PX)+'px;width:'+Math.max(46,(e-s)*PX-2)+'px;top:'+(6+row*38)+'px" title="'+esc((r.candidate||'')+' — '+(r.company||'')+'\n'+(r.time||'')+' · '+(r.round||'')+' · '+(r.duration||'')+(r.assignee?'\n'+r.assignee:'\nUnassigned'))+'"><b>'+esc(r.candidate||'?')+'</b><small>'+esc(r.company||'')+'</small></div>';
+      var list = names[k].slice().sort(function(a,b){ return a.start-b.start; }), ends=[], blocks='';
+      list.forEach(function(x){
+        var r=x.r, s=x.start, e=s+x.len, row=0; while(ends[row]!==undefined && ends[row]>s) row++; ends[row]=e;
+        var rc = /onsite/i.test(r.round||'')||r.onsite?'on':(/^(1|1st)/i.test(r.round||'')||!r.round?'r1':'r2');
+        var drag = isAdmin() && !x.ghost && M.src!=='portal';
+        blocks += '<div class="d2-tl-b d2-r-'+rc+' k-'+x.kind+(conflict[r.id]?' clash':'')+'" draggable="'+drag+'" data-id="'+esc(r.id)+'"'+(x.ghost?' data-ghost="1"':'')+' style="left:'+((s-minB)*PX)+'px;width:'+Math.max(46,x.len*PX-2)+'px;top:'+(6+row*38)+'px" title="'+esc((r.candidate||'')+' — '+(r.company||'')+'\n'+(r.time||'')+' · '+(r.round||'')+' · '+(r.duration||'')+(k?'\n'+k:'\nUnassigned')+(x.note?'\n'+x.note:''))+'">'+(x.kind==='portal'?'<i class="d2-bd p">P</i>':x.kind==='differ'?'<i class="d2-bd d">≠</i>':x.kind==='ponly'?'<i class="d2-bd o">P</i>':'')+'<b>'+esc(r.candidate||'?')+'</b><small>'+esc(r.company||'')+'</small></div>';
       });
       var lh = 12+Math.max(1,ends.length)*38, un = k==='';
-      return '<div class="d2-tl-lane'+(un?' un':'')+'"><div class="d2-tl-name"><span class="d2-av">'+(un?'?':esc(k.charAt(0).toUpperCase()))+'</span><span>'+(un?'Unassigned':esc(k))+'<small>'+(un&&!list.length?'drop here to unassign':list.length+' call'+(list.length>1?'s':''))+'</small></span></div><div class="d2-tl-track" data-lane="'+esc(k)+'" style="width:'+W+'px;height:'+lh+'px">'+blocks+'</div></div>';
+      return '<div class="d2-tl-lane'+(un?' un':'')+'"><div class="d2-tl-name"><span class="d2-av'+(t.has(k)?' team':'')+'">'+(un?'?':esc(k.charAt(0).toUpperCase()))+'</span><span>'+(un?'Unassigned':esc(k))+'<small>'+(un&&!list.length?'drop here to unassign':list.length+' call'+(list.length>1?'s':''))+'</small></span></div><div class="d2-tl-track" data-lane="'+esc(k)+'" style="width:'+W+'px;height:'+lh+'px">'+blocks+'</div></div>';
     }).join('');
-    var nb = nowBd(), nowLine = (isToday() && nb>=minB && nb<=maxB) ? '<div class="d2-tl-now" style="left:'+((nb-minB)*PX)+'px"><span>now</span></div>' : '';
+    var nb = nowBd(), nowLine = (isToday() && nb>=minB && nb<=maxB) ? '<div class="d2-tl-now" style="margin-left:150px;left:'+((nb-minB)*PX)+'px"><span>now</span></div>' : '';
     var prevScroll = $('.d2-tl-scroll', tlEl); var sl = prevScroll?prevScroll.scrollLeft:0, st = prevScroll?prevScroll.scrollTop:0;
-    tlEl.innerHTML = '<div class="d2-tl-card"><div class="d2-tl-h"><b>Timeline · '+esc(state.date)+'</b><span class="d2-quiet">'+(isAdmin()?'Drag a call onto another handler (or Unassigned). Tap a call to pick from a list.':'View only')+'</span><button class="d2-x" data-d2="tl-close" title="Close (Esc)">✕</button></div>'
-      +'<div class="d2-tl-scroll"><div class="d2-tl-axis"><div class="d2-tl-corner"></div><div style="position:relative;flex:none;width:'+W+'px;height:26px">'+hours+'</div></div><div class="d2-tl-body" style="--w:'+W+'px">'+body+nowLine.replace('class="d2-tl-now" style="left:','class="d2-tl-now" style="margin-left:150px;left:')+'</div></div></div>';
+    tlEl.innerHTML = '<div class="d2-tl-card">'+head+info
+      +'<div class="d2-tl-scroll"><div class="d2-tl-axis"><div class="d2-tl-corner"></div><div style="position:relative;flex:none;width:'+W+'px;height:26px">'+hours+'</div></div><div class="d2-tl-body" style="--w:'+W+'px">'+body+nowLine+'</div></div></div>';
     var sc = $('.d2-tl-scroll', tlEl); sc.scrollLeft = sl || (isToday()&&nb>minB ? Math.max(0,(nb-minB)*PX-200) : 0); sc.scrollTop = st;
   }
   document.addEventListener('dragstart', function(e){ var b=e.target.closest&&e.target.closest('.d2-tl-b'); if(!b) return; e.dataTransfer.setData('text/plain', b.dataset.id); e.dataTransfer.effectAllowed='move'; b.classList.add('drag'); });
@@ -514,6 +561,8 @@
     switch(t.dataset.d2){
       case 'timeline': openTimeline(); break;
       case 'tl-close': closeTimeline(); break;
+      case 'tl-src': tlSrc = t.dataset.v; LS.set('d2.tlSrc', tlSrc); renderTimeline(); break;
+      case 'tl-sync': if(typeof fetchPortalSync==='function' && !state.portalSyncLoading){ var pr = fetchPortalSync('today'); renderTimeline(); Promise.resolve(pr).then(function(){ if(tlOpen) renderTimeline(); }); } break;
       case 'handover': openHandover(); break;
       case 'ho-close': closeHandover(); break;
       case 'ho-copy': try{ navigator.clipboard.writeText(handoverText()).then(function(){ toast('Handover copied',{ms:2500}); }); }catch(x){ toast('Copy failed',{ms:2500}); } break;
@@ -527,7 +576,7 @@
     }
   });
   document.addEventListener('click', function(e){
-    var b=e.target.closest&&e.target.closest('.d2-tl-b'); if(b && isAdmin() && !e.defaultPrevented){ openAssignPop(b.dataset.id, b); }
+    var b=e.target.closest&&e.target.closest('.d2-tl-b'); if(b && isAdmin() && !b.dataset.ghost && !e.defaultPrevented){ openAssignPop(b.dataset.id, b); }
   });
   document.addEventListener('change', function(e){ if(e.target && e.target.id==='d2Group'){ LS.set('d2.group', e.target.value); render(); } });
   document.addEventListener('keydown', function(e){
