@@ -284,14 +284,17 @@
   function rankHandlers(row){
     var s = bd(row.time), e = s+dur(row), t = teamNamesSet();
     var byName = {}; rows().forEach(function(r){ if(r.id!==row.id && r.assignee && !r.woi) (byName[r.assignee]=byName[r.assignee]||[]).push(r); });
+    var prior = {};
+    try{ var po = findPriorOccurrence(row); if(po && po.assignee) prior[po.assignee]='candidate'; }catch(x){}
+    try{ var pc = findPriorSameClientOccurrence(row); if(pc && pc.assignee && !prior[pc.assignee]) prior[pc.assignee]='client'; }catch(x){}
     var roster = (state.roster||[]).filter(function(p){ return p && p.name; });
     var seen = {}, list = [];
     roster.forEach(function(p){
       if(seen[p.name]||t.has(p.name)) return; seen[p.name]=1;
       var mine = byName[p.name]||[], clash = null, nextGap = 9999;
       mine.forEach(function(o){ var os=bd(o.time), oe=os+dur(o); if(os<e && oe>s && !clash) clash=o; if(os>=e) nextGap=Math.min(nextGap, os-e); });
-      var absent = false; try{ absent = typeof isAbsent==='function' && isAbsent(p.name, state.date); }catch(x){}
-      list.push({name:p.name, team:p.team||'', load:mine.length, clash:clash, absent:absent, advanced:!!p.advanced});
+      var absent = (state.absentIds||[]).indexOf(p.id)>=0;
+      list.push({name:p.name, team:p.team||'', load:mine.length, clash:clash, absent:absent, advanced:!!p.advanced, prior:prior[p.name]||''});
     });
     var teams = {}; roster.forEach(function(p){ if(p.team) teams[p.team]=1; }); t.forEach(function(n){ teams[n]=1; });
     var teamList = Object.keys(teams).filter(function(n){ return n && n!=='Needs Team Assignment'; }).sort().map(function(n){
@@ -299,7 +302,7 @@
       var members = roster.filter(function(p){ return p.team===n && !t.has(p.name); }).length;
       return {name:n, team:'Team assignment'+(members?' · '+members+' members':''), load:cnt, isTeam:true};
     });
-    list.sort(function(a,b){ return (a.absent-b.absent) || ((!!a.clash)-(!!b.clash)) || (a.load-b.load) || a.name.localeCompare(b.name); });
+    list.sort(function(a,b){ return (a.absent-b.absent) || ((!!a.clash)-(!!b.clash)) || ((b.prior?1:0)-(a.prior?1:0)) || (a.load-b.load) || a.name.localeCompare(b.name); });
     return teamList.concat(list);
   }
   function assignTo(id, name){
@@ -325,7 +328,7 @@
         var head = (lastTeam!==!!h.isTeam) ? '<div class="d2-pop-sec">'+(h.isTeam?'Teams':'People')+'</div>' : ''; lastTeam = !!h.isTeam;
         if(h.isTeam) return head+'<button class="d2-pop-i team'+(i===fi?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av team">\u25C6</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span><em class="tm">team</em></button>';
         var tag = h.absent ? '<em class="bad">absent</em>' : h.clash ? '<em class="bad">⚠ clashes '+esc(h.clash.time||'')+'</em>' : '<em class="ok">free</em>';
-        return head+'<button class="d2-pop-i'+(i===fi?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av">'+esc(h.name.charAt(0).toUpperCase())+'</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span>'+tag+'</button>';
+        return head+'<button class="d2-pop-i'+(i===fi?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av">'+esc(h.name.charAt(0).toUpperCase())+'</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+(h.prior?' · <span class="d2-prior">↻ handled this '+h.prior+' before</span>':'')+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span>'+tag+'</button>';
       }).join('') || '<div class="d2-quiet" style="padding:12px">No match</div>';
     }
     paint(); Q.oninput = paint;
@@ -525,6 +528,7 @@
       ['undo','Undo last change','Alt+Z',doUndo,'↶'],
       ['save','Save changes','Ctrl+S',function(){ if(isAdmin()) saveAllChanges(); },'💾']
     ];
+    try{ if(window.d2ExtraCmds) cmds = cmds.concat(window.d2ExtraCmds()); }catch(x){}
     cmds.forEach(function(c){ if(!ql || c[0].indexOf(ql)>=0 || c[1].toLowerCase().indexOf(ql)>=0) act(c[1], c[2], c[3], c[4]); });
     if(ql.length>=2){
       rows().filter(function(r){ return ((r.candidate||'')+' '+(r.company||'')+' '+(r.role||'')+' '+(r.assignee||'')).toLowerCase().indexOf(ql)>=0; }).slice(0,6)
