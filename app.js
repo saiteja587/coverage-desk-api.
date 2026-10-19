@@ -1245,6 +1245,15 @@ async function deleteAssessment(id){
   await apiCall('assessments', { method: 'POST', body: { action: 'delete', id } });
   state.assessments = (state.assessments || []).filter(x => x.id !== id);
 }
+function openAssessmentsPanel(day, focusImport){
+  openOnlyPanel('showAssessments');
+  if(!state.showAssessments) openOnlyPanel('showAssessments'); // it was already open: keep it open
+  state.assessDate = day || state.date || todayDateString();
+  render();
+  if(!state.assessmentsLoaded || state.assessmentsError) loadAssessments();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if(focusImport) setTimeout(()=>{ const el = document.getElementById('assessImportText'); if(el) el.focus(); }, 40);
+}
 function assessmentsForDate(d){ return (state.assessments || []).filter(a => a.date === d).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time) || a.candidate.localeCompare(b.candidate)); }
 function assessmentsPendingToday(){ return assessmentsForDate(todayDateString()).filter(a => !a.done).length; }
 function assessDateLabel(d){
@@ -1285,6 +1294,11 @@ function renderAssessmentsPanel(){
       <td style="width:36px;text-align:right">${admin ? `<button class="row-del" data-assess-del="${a.id}" title="Remove this assessment">✕</button>` : ''}</td>
     </tr>`).join('');
   return `<div class="import-panel" id="assessPanel">
+    <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px">
+      <button type="button" class="btn ghost" data-assess-hub="new" style="flex:1">＋ New Calls</button>
+      <button type="button" class="btn ghost" data-assess-hub="reschedule" style="flex:1">↻ Reschedule / Cancel</button>
+      <button type="button" class="btn primary" style="flex:1">🧪 Assessments</button>
+    </div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
       <button class="btn ghost" data-assess-step="-1" title="Previous day">‹</button>
       <input type="date" id="assessDateInput" class="cell-input" value="${esc(d)}" style="width:auto">
@@ -6258,6 +6272,7 @@ function render(){
           ${state.showImportMenu ? `<div class="more-menu-backdrop" data-close-menu="showImportMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="importMenuNewCalls">＋ Add Calls</button>
             <button class="more-menu-item" id="importMenuReschedule">↻ Reschedule / Cancel</button>
+            <button class="more-menu-item" id="importMenuAssessments">🧪 Assessments</button>
           </div>` : ''}
         </div>` : ''}
         <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
@@ -6317,6 +6332,7 @@ function render(){
     ${state.showNavAddMenu ? `<div class="more-menu-backdrop" data-close-menu="showNavAddMenu"></div><div class="more-menu-dropdown">
       <button class="more-menu-item" id="navAddMenuNewCall">＋ Add call</button>
       <button class="more-menu-item" id="navAddMenuReschedule">↻ Reschedule / Cancel</button>
+      <button class="more-menu-item" id="navAddMenuAssessments">🧪 Assessments</button>
     </div>` : ''}
     ${state.showDailyDigestBanner ? `<div class="hint" style="color:var(--teal);background:var(--teal-dim);border:1px solid #1F4A43;padding:10px 14px;border-radius:8px;margin:-10px 0 16px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span>📋 Today's Briefing is ready — today's numbers plus anything that needs a look, in one glance.</span>
@@ -6438,6 +6454,7 @@ function render(){
         <button class="tab-btn ${state.view==='2nd'?'active':''}" data-view="2nd" title="Shortcut: 3">2nd Round &amp; Above <span class="n">${advancedRows.length}</span></button>
         <button class="tab-btn ${state.view==='doubts'?'active':''}" data-view="doubts" style="${doubtRows.length?'color:var(--amber)':''}" title="Shortcut: 4">Doubts <span class="n">${doubtRows.length}</span></button>
         <button class="tab-btn ${state.view==='rescheduled'?'active':''}" data-view="rescheduled" style="${rescheduledRows.length?'color:var(--violet)':''}" title="Shortcut: 5 — also includes 📨 Didn't Receive Invite">↻ Rescheduled/Cancelled/No Response <span class="n">${rescheduledRows.length}</span></button>
+        <button class="tab-btn" id="tabAssessments" title="Online tests and 'interview through assessment' slots for this date. Shortcut: Alt+A to add" style="${assessmentsForDate(state.date).some(a=>!a.done)?'color:var(--sky,#5DADE2)':''}">🧪 Assessments <span class="n">${assessmentsForDate(state.date).length}</span></button>
       </div>
     </div>
     <div class="hint keyboard-hint" style="margin:-10px 0 16px;font-size:11px">Keyboard: 1\u20135 to switch tabs, Ctrl/Cmd+S to save \u2014 works whenever you're not typing in a field. Swipe the tabs above if some are scrolled off-screen.</div>
@@ -9772,6 +9789,7 @@ function renderImportHubPanel(){
     <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px">
       <button type="button" class="btn ${tab==='new'?'primary':'ghost'}" id="importHubTabNew" style="flex:1">＋ New Calls</button>
       <button type="button" class="btn ${tab==='reschedule'?'primary':'ghost'}" id="importHubTabReschedule" style="flex:1">↻ Reschedule / Cancel</button>
+      <button type="button" class="btn ghost" id="importHubTabAssessments" style="flex:1">🧪 Assessments</button>
     </div>
     ${tab==='new' ? renderImportPanel() : renderRescheduleImportPanel()}
   </div>`;
@@ -10865,6 +10883,8 @@ function attachHandlers(conflictIds){
     openOnlyPanel('showImport');
     render();
   };
+  const importMenuAssessmentsBtn = document.getElementById('importMenuAssessments');
+  if(importMenuAssessmentsBtn) importMenuAssessmentsBtn.onclick = ()=>{ state.showImportMenu = false; openAssessmentsPanel(state.date, true); };
   const importMenuRescheduleBtn = document.getElementById('importMenuReschedule');
   if(importMenuRescheduleBtn) importMenuRescheduleBtn.onclick = ()=>{
     state.showImportMenu = false;
@@ -10882,6 +10902,8 @@ function attachHandlers(conflictIds){
     addBlankCallRow();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  const navAddMenuAssessmentsBtn = document.getElementById('navAddMenuAssessments');
+  if(navAddMenuAssessmentsBtn) navAddMenuAssessmentsBtn.onclick = ()=>{ state.showNavAddMenu = false; hapticTap(); openAssessmentsPanel(state.date, true); };
   const navAddMenuRescheduleBtn = document.getElementById('navAddMenuReschedule');
   if(navAddMenuRescheduleBtn) navAddMenuRescheduleBtn.onclick = ()=>{
     state.showNavAddMenu = false;
@@ -10902,6 +10924,8 @@ function attachHandlers(conflictIds){
   if(emptyStateAddCallBtn) emptyStateAddCallBtn.onclick = ()=>{ addBlankCallRow(); };
   const importHubTabNewBtn = document.getElementById('importHubTabNew');
   if(importHubTabNewBtn) importHubTabNewBtn.onclick = ()=>{ state.showImport = true; state.showRescheduleImport = false; render(); };
+  const importHubTabAssessmentsBtn = document.getElementById('importHubTabAssessments');
+  if(importHubTabAssessmentsBtn) importHubTabAssessmentsBtn.onclick = ()=>{ openAssessmentsPanel(state.date, true); };
   const importHubTabRescheduleBtn = document.getElementById('importHubTabReschedule');
   if(importHubTabRescheduleBtn) importHubTabRescheduleBtn.onclick = ()=>{ state.showImport = false; state.showRescheduleImport = true; render(); };
   const importRound1stBtn = document.getElementById('importRound1st');
@@ -11370,6 +11394,7 @@ function attachHandlers(conflictIds){
   const clearTeamFilterBtn = document.getElementById('clearTeamFilterBtn');
   if(clearTeamFilterBtn) clearTeamFilterBtn.onclick = (e)=>{ e.stopPropagation(); state.teamFilter = null; render(); };
   document.querySelectorAll('.tab-btn').forEach(btn=>{
+    if(btn.id === 'tabAssessments'){ btn.onclick = ()=>{ openAssessmentsPanel(state.date, false); }; return; }
     btn.onclick = ()=>{ state.view = btn.dataset.view; state.filter = 'all'; state.selectedIds.clear(); render(); };
   });
 
@@ -15709,6 +15734,21 @@ window.addEventListener('keydown', (e)=>{
   // reliable pair. Ctrl+Shift+R (hard reload) is deliberately left alone.
   if(!e.shiftKey && (e.altKey || ctrlOrCmd) && !(e.altKey && ctrlOrCmd)){
     const k = (e.key||'').toLowerCase();
+    // Alt+A / Ctrl+A = add assessments. Ctrl+A is the browser's Select All, so it is only taken over when
+    // the cursor is NOT inside a text box; Alt+A works everywhere.
+    if(k==='a' && (e.altKey || !isTyping) && CURRENT_ROLE !== 'user' && CURRENT_ROLE !== 'team_lead'){
+      e.preventDefault();
+      state.showQuickJump = false;
+      state.showImportMenu = false;
+      closeAllPanels();
+      state.showAssessments = true;
+      state.assessDate = state.date || todayDateString();
+      render();
+      if(!state.assessmentsLoaded || state.assessmentsError) loadAssessments();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(()=>{ const el = document.getElementById('assessImportText'); if(el) el.focus(); }, 40);
+      return;
+    }
     if(k==='n' || k==='r'){
       e.preventDefault();
       closeAllPanels();
@@ -17286,6 +17326,8 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
   function setDate(d){ if(!d) return; state.assessDate = d; render(); }
   document.addEventListener('click', async function(e){
     const t = e.target; if(!inPanel(t)) return;
+    const hub = t.closest('[data-assess-hub]');
+    if(hub){ closeAllPanels(); if(hub.getAttribute('data-assess-hub') === 'new'){ state.showImport = true; state.importDefaultRound = '1st'; } else state.showRescheduleImport = true; render(); return; }
     const go = t.closest('[data-assess-goto]'); if(go){ setDate(go.getAttribute('data-assess-goto')); return; }
     const st = t.closest('[data-assess-step]'); if(st){ setDate(addDaysToDateStr(state.assessDate || todayDateString(), Number(st.getAttribute('data-assess-step')))); return; }
     if(t.closest('[data-assess-copy]')){
