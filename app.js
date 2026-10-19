@@ -10262,6 +10262,11 @@ function renderBackupsPanel(){
         </div>`);
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:14px">Automatic point-in-time snapshots taken right before import, Clear All, or Finalize for <b>${escapeHtml(state.date)}</b> — a real recovery point independent of the normal save path, in case anything ever goes wrong. Restoring replaces today's current calls with exactly what was saved at that moment (your current, unrestored state is itself backed up first, so restoring is never a one-way trip).</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px;border:1px dashed var(--border);border-radius:10px">
+      <button class="btn" id="restoreFromXlsxBtn" title="Rebuild this date's calls from a Coverage-Desk-YYYY-MM-DD.xlsx you exported earlier">📊 Restore from Excel export</button>
+      <input type="file" id="restoreXlsxInput" accept=".xlsx,.xls" style="display:none">
+      <span class="hint">Have an exported Coverage-Desk Excel file for ${escapeHtml(state.date)}? Upload it to bring every call back, with assignees.</span>
+    </div>
     ${body}
   </div>`;
 }
@@ -11351,6 +11356,58 @@ function deleteCallRow(id){
   undoToastTimer = setTimeout(()=>{ state.lastDeleted = null; render(); }, UNDO_TOAST_MS);
   markDirty(); render();
 }
+// ---- Restore a day's calls from an exported Coverage-Desk-<date>.xlsx ----
+function xlsxRowsToCalls(wb){
+  const sh = wb.Sheets['Calls'] || wb.Sheets[wb.SheetNames[0]];
+  if(!sh) return [];
+  const list = XLSX.utils.sheet_to_json(sh, {defval:''});
+  const out = [];
+  list.forEach(x=>{
+    const cand = String(x['Candidate']||'').trim();
+    if(!cand) return;
+    const t = String(x['Time']||'').trim();
+    const woi = /waiting for invite/i.test(t);
+    const asg = String(x['Assignee']||'').trim();
+    out.push({id:uid(), time: woi ? '' : t, company:String(x['Company']||'').trim(), candidate:cand,
+      round:String(x['Round']||'').trim() || '1st', duration:String(x['Duration']||'').trim(), woi,
+      assignee: /^unassigned$/i.test(asg) ? '' : asg, country:String(x['Country']||'').trim() || 'USA',
+      doubts:[], raw:'', interviewer:'', role:String(x['Role']||'').trim(), technicalPOC:'', importance:'',
+      onsite: /^yes$/i.test(String(x['Onsite']||'')), candidateFirstInterview:false,
+      drivingPerson:String(x['Driving Person']||'').trim()});
+  });
+  return out;
+}
+document.addEventListener('click', e=>{
+  const b = e.target.closest && e.target.closest('#restoreFromXlsxBtn');
+  if(!b) return;
+  const inp = document.getElementById('restoreXlsxInput');
+  if(inp) inp.click();
+});
+document.addEventListener('change', async e=>{
+  const inp = e.target;
+  if(!inp || inp.id !== 'restoreXlsxInput') return;
+  const f = inp.files && inp.files[0];
+  if(!f) return;
+  try{
+    if(typeof XLSX === 'undefined') throw new Error('The Excel library did not load — refresh the page and try again.');
+    const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+    const rows = xlsxRowsToCalls(wb);
+    if(!rows.length) throw new Error('No calls found in that file (expected the "Calls" sheet of a Coverage-Desk export).');
+    const names = rows.filter(r=>r.assignee).length;
+    let msg = `Restore ${rows.length} call(s) (${names} with assignees) into ${state.date}?`;
+    if(state.rows.length) msg += `\n\nThis REPLACES the ${state.rows.length} call(s) currently on this date (they are backed up first).`;
+    if(!confirm(msg)) return;
+    if(state.rows.length) await createBackup('pre-restore', state.date, state.rows);
+    state.rows = rows;
+    markDirty();
+    closeAllPanels();
+    render();
+    await saveAllChanges();
+    alert(`Restored ${rows.length} call(s) from ${f.name}.`);
+  }catch(err){
+    alert('Restore from Excel failed: ' + err.message);
+  }finally{ inp.value = ''; }
+});
 function addBlankCallRow(){
   state.rows.push({id:uid(), time:'', company:'', candidate:'', round: state.view==='2nd' ? '2nd Round' : '1st', duration:'', woi:false, assignee:'', country:'USA', doubts:[], raw:'', interviewer:'', role:'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
   markDirty(); render();
