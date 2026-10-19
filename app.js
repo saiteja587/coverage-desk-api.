@@ -16613,8 +16613,8 @@ const LIVEFEED_COMPANY_LOOKBACK_DAYS = 7; // Rule B window
 const LIVEFEED_REPEAT_NOSHOW_MIN = 2;     // Rule C: earlier rescheduled/cancelled/no-response outcomes
 const LIVEFEED_COMPANY_MIN_CALLS = 2;     // Rule B: min earlier assigned calls
 const LIVEFEED_STORE_KEY = 'coveragedesk_livefeed_v1';
-const LIVEFEED_MAX_ITEMS = 60;
-const LIVEFEED_MAX_TOASTS = 3;
+const LIVEFEED_MAX_ITEMS = 200;
+const LIVEFEED_MAX_TOASTS = 5;
 const LIVEFEED_TOAST_MS = 10000;
 
 function livefeedDayDiff(a, b){ // b - a, in whole days, both 'YYYY-MM-DD'
