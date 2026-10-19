@@ -95,7 +95,7 @@ let state = {
   showExpectedClosures: false,
   expectedClosures: [],
   expectedClosuresLoaded: false,
-  showAssessments: false, assessments: [], assessmentsLoaded: false, assessmentsError: '', assessDate: '', assessImportDraft: '', assessMsg: '', assessBusy: false, assessHandlerFilter: '',
+  showListCheck: false, listCheckText: '', listCheckResult: null, showAssessments: false, assessments: [], assessmentsLoaded: false, assessmentsError: '', assessDate: '', assessImportDraft: '', assessMsg: '', assessBusy: false, assessHandlerFilter: '',
   expectClosureRowId: null, // which board row's "flag as expected closure" note sheet is open, if any
   expectClosureSaving: false,
   expectClosureError: null,
@@ -1419,6 +1419,108 @@ function renderAssessmentsPanel(){
       <tbody>${rowsHtml}</tbody></table></div>` : '<div class="hint">No assessments on this day.</div>')}
   </div>`;
 }
+
+// ---------- Check against group list (added 2026-10-19) ----------
+// Paste the group's list for the open day: every call in it is matched with the app's calls for that
+// day and the result is sorted into Missing (in the list, not in the app), Extra (in the app, not in
+// the list), Different (same call, different time / round / company / role / duration) and Matched.
+function lcNameKey(n){ return (n || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function lcTimeKey(t){ return (t || '').replace(/\s+/g, '').replace('.', ':').toUpperCase(); }
+function lcSameName(a, b){ const x = lcNameKey(a), y = lcNameKey(b); return !!x && !!y && (x === y || sameCandidateFuzzyMatch(a, b)); }
+function lcSameCompany(a, b){ return !!a && !!b && (normalizeCompanyKey(a) === normalizeCompanyKey(b) || fuzzyCompanyKeyMatch(a, b)); }
+function lcRoundKey(r){ const m = (r || '').match(/(\d+)|final/i); return m ? m[0].toLowerCase() : (r || '').toLowerCase(); }
+function lcDiffs(L, A){
+  const out = [];
+  if(!L.woi && L.time && lcTimeKey(L.time) !== lcTimeKey(A.time)) out.push({ field: 'time', label: 'Time', list: L.time, app: A.time || (A.woi ? 'Waiting for invite' : '—') });
+  if(L.company && !lcSameCompany(L.company, A.company)) out.push({ field: 'company', label: 'Company', list: L.company, app: A.company || '—' });
+  const explicitRound = !(L.doubts || []).some(d => /Round wasn.t stated/.test(d));
+  if(explicitRound && L.round && lcRoundKey(L.round) !== lcRoundKey(A.round)) out.push({ field: 'round', label: 'Round', list: L.round, app: A.round || '—' });
+  if(L.duration && A.duration && (parseInt(L.duration, 10) || 0) !== (parseInt(A.duration, 10) || 0)) out.push({ field: 'duration', label: 'Duration', list: L.duration, app: A.duration });
+  if(L.role && A.role && normalizeCompanyKey(L.role) !== normalizeCompanyKey(A.role)) out.push({ field: 'role', label: 'Role', list: L.role, app: A.role });
+  return out;
+}
+function listCheckCompute(text){
+  const parsedAll = parseImportText(text, state.date, '1st');
+  const listRows = parsedAll.filter(r => !r._targetDate || r._targetDate === state.date);
+  const appRows = state.rows.slice();
+  const used = new Set(), pairs = [];
+  const take = (L, pred) => { const A = appRows.find(a => !used.has(a.id) && pred(a)); if(A){ used.add(A.id); pairs.push({ L, A }); return true; } return false; };
+  const left = listRows.slice();
+  // pass 1: same name + same company + same time
+  let rest = left.filter(L => !take(L, a => lcSameName(L.candidate, a.candidate) && lcSameCompany(L.company, a.company) && (L.woi ? !a.time : lcTimeKey(a.time) === lcTimeKey(L.time))));
+  // pass 2: same name + same company (time differs)
+  rest = rest.filter(L => !take(L, a => lcSameName(L.candidate, a.candidate) && lcSameCompany(L.company, a.company)));
+  // pass 3: same name + same time (company differs)
+  rest = rest.filter(L => !take(L, a => lcSameName(L.candidate, a.candidate) && !L.woi && L.time && lcTimeKey(a.time) === lcTimeKey(L.time)));
+  // pass 4: same name, and only one such call left on each side
+  rest = rest.filter(L => {
+    const sameL = rest.filter(x => lcSameName(x.candidate, L.candidate));
+    const sameA = appRows.filter(a => !used.has(a.id) && lcSameName(L.candidate, a.candidate));
+    return !(sameL.length === 1 && sameA.length === 1 && take(L, a => a === sameA[0]));
+  });
+  const matched = [], different = [];
+  pairs.forEach(p => { const d = lcDiffs(p.L, p.A); (d.length ? different : matched).push({ L: p.L, A: p.A, diffs: d }); });
+  const extra = appRows.filter(a => !used.has(a.id) && (a.candidate || '').trim());
+  return { total: listRows.length, appTotal: appRows.length, matched, different, missing: rest, extra, checkedAt: Date.now(), date: state.date };
+}
+async function listCheckAddMissing(idxs){
+  const res = state.listCheckResult; if(!res) return;
+  const rows = idxs.map(i => res.missing[i]).filter(Boolean);
+  if(!rows.length) return;
+  try{ await createBackup('pre-listcheck', state.date, state.rows.slice()); }catch(e){}
+  let routed = rows;
+  try{ routed = await autoRouteRows(rows, state.rows); }catch(e){ routed = rows; }
+  state.rows = state.rows.concat(routed);
+  state.lastImportedIds = routed.map(r => r.id); state.lastImportedCount = routed.length;
+  state.recentImportIds = new Set(routed.map(r => r.id));
+  markDirty();
+}
+function listCheckApplyDiffs(pairIdx, fields){
+  const res = state.listCheckResult; const p = res && res.different[pairIdx]; if(!p) return;
+  const A = state.rows.find(r => r.id === p.A.id); if(!A) return;
+  p.diffs.forEach(d => {
+    if(fields && !fields.includes(d.field)) return;
+    if(d.field === 'time'){ A.time = d.list; A.woi = false; }
+    else if(d.field === 'company') A.company = d.list;
+    else if(d.field === 'round') A.round = d.list;
+    else if(d.field === 'duration') A.duration = d.list;
+    else if(d.field === 'role') A.role = d.list;
+  });
+  markDirty();
+}
+function renderListCheckPanel(){
+  const esc = escapeHtml, r = state.listCheckResult;
+  const fmt = x => esc(x.time || (x.woi ? 'Waiting for invite' : '—'));
+  let body = '';
+  if(r){
+    const stale = r.date !== state.date;
+    const head = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><span class="notif-chip">List: <b>${r.total}</b></span><span class="notif-chip">App (${esc(state.date)}): <b>${state.rows.length}</b></span><span class="notif-chip" style="color:var(--teal)">Matched: <b>${r.matched.length}</b></span><span class="notif-chip" style="color:${r.different.length ? 'var(--coral)' : 'inherit'}">Different: <b>${r.different.length}</b></span><span class="notif-chip" style="color:${r.missing.length ? 'var(--coral)' : 'inherit'}">Missing: <b>${r.missing.length}</b></span><span class="notif-chip">Extra: <b>${r.extra.length}</b></span></div>${stale ? '<div class="hint" style="color:var(--coral)">The open date changed since this check — press Check again.</div>' : ''}`;
+    const ok = !r.missing.length && !r.different.length && !r.extra.length;
+    const miss = r.missing.length ? `<div style="margin-top:12px"><div style="font-weight:700;margin-bottom:6px">➕ Missing from the app (${r.missing.length}) <button class="btn primary" data-lc-addall style="font-size:11.5px;padding:3px 10px;margin-left:8px">Add all</button></div>${r.missing.map((L, i) => `<div class="notif-row"><div class="notif-name">${esc(L.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(L.company || 'no company')}${L.role ? ' · ' + esc(L.role) : ''}</span></div><div class="notif-detail"><span class="notif-chip">${fmt(L)}</span><span class="notif-chip">${esc(L.round || '')}</span>${L.duration ? `<span class="notif-chip">${esc(L.duration)}</span>` : ''}</div><button class="btn ghost" data-lc-add="${i}" style="font-size:11.5px;padding:3px 10px;margin-top:4px">Add this call</button></div>`).join('')}</div>` : '';
+    const diff = r.different.length ? `<div style="margin-top:12px"><div style="font-weight:700;margin-bottom:6px">⚠ Different from the list (${r.different.length}) <button class="btn primary" data-lc-fixall style="font-size:11.5px;padding:3px 10px;margin-left:8px">Use list values for all</button></div>${r.different.map((p, i) => `<div class="notif-row"><div class="notif-name">${esc(p.A.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(p.A.company || '')}</span></div>${p.diffs.map(d => `<div class="notif-detail"><b>${esc(d.label)}:</b> app <span class="notif-chip" style="text-decoration:line-through">${esc(d.app)}</span> → list <span class="notif-chip" style="color:var(--teal)">${esc(d.list)}</span> <button class="btn ghost" data-lc-fix="${i}" data-f="${d.field}" style="font-size:11px;padding:2px 8px">Use list</button></div>`).join('')}<button class="btn ghost" data-lc-fix="${i}" style="font-size:11.5px;padding:3px 10px;margin-top:4px">Use list values for this call</button></div>`).join('')}</div>` : '';
+    const ext = r.extra.length ? `<div style="margin-top:12px"><div style="font-weight:700;margin-bottom:6px">➖ In the app but not in the list (${r.extra.length})</div><div class="hint" style="margin-bottom:6px">Check these — the call may have been cancelled, moved to another day, or entered by mistake.</div>${r.extra.map(a => `<div class="notif-row"><div class="notif-name">${esc(a.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(a.company || '')}${a.role ? ' · ' + esc(a.role) : ''}</span></div><div class="notif-detail"><span class="notif-chip">${esc(a.time || (a.woi ? 'Waiting for invite' : '—'))}</span><span class="notif-chip">${esc(a.round || '')}</span>${a.assignee ? `<span class="notif-chip">${esc(a.assignee)}</span>` : ''}</div><button class="btn ghost" data-lc-del="${esc(a.id)}" style="font-size:11.5px;padding:3px 10px;margin-top:4px">Remove from app</button></div>`).join('')}</div>` : '';
+    body = head + (ok ? '<div class="hint" style="color:var(--teal)">✅ The app matches the list exactly.</div>' : '') + miss + diff + ext + (state.dirty ? '<div class="hint" style="margin-top:12px">Changes are not saved yet — use the normal Save button when you are happy.</div>' : '');
+  }
+  return `<div class="import-panel" id="listCheckPanel">
+    <div class="hint" style="margin-bottom:8px">Paste the group's list for <b>${esc(state.date)}</b> (the day open above). Nothing is changed until you press one of the buttons in the results.</div>
+    <textarea id="listCheckText" style="width:100%;min-height:150px" placeholder="1. Name (UK) – Interview – Company - Role – 2:30 PM IST – Duration: 30 Mins (1st Round)">${esc(state.listCheckText || '')}</textarea>
+    <div class="row" style="margin-top:8px"><span class="hint">Matches by candidate + company + time; the company spelling is matched loosely (AJ Boggs ≈ Aj boggs).</span><button class="btn primary" id="listCheckRun">🔍 Check</button></div>
+    ${body}
+  </div>`;
+}
+(function setupListCheckEvents(){
+  document.addEventListener('click', function(e){
+    const t = e.target; if(!t.closest || !t.closest('#listCheckPanel')) return;
+    const rerun = () => { state.listCheckResult = listCheckCompute(state.listCheckText || ''); render(); };
+    if(t.closest('#listCheckRun')){ const ta = document.getElementById('listCheckText'); state.listCheckText = ta ? ta.value : ''; try{ rerun(); }catch(err){ alert('Could not read that list: ' + err.message); } return; }
+    const add = t.closest('[data-lc-add]'); if(add){ listCheckAddMissing([Number(add.getAttribute('data-lc-add'))]).then(rerun); return; }
+    if(t.closest('[data-lc-addall]')){ const n = state.listCheckResult.missing.length; listCheckAddMissing(state.listCheckResult.missing.map((_, i) => i)).then(rerun); return; }
+    const fx = t.closest('[data-lc-fix]'); if(fx){ const f = fx.getAttribute('data-f'); listCheckApplyDiffs(Number(fx.getAttribute('data-lc-fix')), f ? [f] : null); rerun(); return; }
+    if(t.closest('[data-lc-fixall]')){ state.listCheckResult.different.forEach((_, i) => listCheckApplyDiffs(i, null)); rerun(); return; }
+    const del = t.closest('[data-lc-del]'); if(del){ const id = del.getAttribute('data-lc-del'); const row = state.rows.find(r => String(r.id) === id); if(row && confirm('Remove ' + row.candidate + ' (' + (row.company || '') + ') from ' + state.date + '?')){ deleteCallRow(row.id); rerun(); } return; }
+  });
+  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'listCheckText') state.listCheckText = e.target.value; });
+})();
 
 // ---------- Expected Closures (added 2026-10-01) ----------
 // "Flag this call as an expected closure, based on what the handler/
@@ -6005,6 +6107,7 @@ function closeAllPanels(){
   state.showClosures = false;
   state.showExpectedClosures = false;
   state.showAssessments = false;
+  state.showListCheck = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showUniversalSearch = false;
@@ -6040,6 +6143,7 @@ function getActivePanelName(){
   if(state.showClosures) return 'closures';
   if(state.showExpectedClosures) return 'expectedClosures';
   if(state.showAssessments) return 'assessments';
+  if(state.showListCheck) return 'listCheck';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showUniversalSearch) return 'universalSearch';
@@ -6080,6 +6184,7 @@ function renderActivePanel(name){
   if(name === 'closures') return renderClosuresPanel();
   if(name === 'expectedClosures') return renderExpectedClosuresPanel();
   if(name === 'assessments') return renderAssessmentsPanel();
+  if(name === 'listCheck') return renderListCheckPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
@@ -6102,7 +6207,7 @@ function panelTitle(name){
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
-    closures:'Closures / Job Offers', expectedClosures:'Expected Closures',
+    closures:'Closures / Job Offers', expectedClosures:'Expected Closures', listCheck:'Check against group list',
     studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
     duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts',
@@ -6432,6 +6537,7 @@ function render(){
             <div class="more-menu-section-label">Tools</div>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            <button class="more-menu-item" id="toggleListCheck" title="Paste the group's list for the open day and see what is missing, extra or different in the app">✅ Check against group list</button>
             <button class="more-menu-item" id="toggleAssessments" title="Online tests and 'interview through assessment' slots posted in the group — import the message, see each day's list">🧪 Assessments${state.assessmentsLoaded && assessmentsPendingToday() ? ' (' + assessmentsPendingToday() + ' today)' : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             ${CURRENT_ROLE==='admin' ? `<div class="more-menu-section-label">Admin</div><button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
@@ -7394,6 +7500,7 @@ const QUICK_JUMP_COMMANDS = [
   { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
+  { label: '✅ Check against group list', keywords: 'check list compare reconcile missing calls count group list match', action: ()=>{ openOnlyPanel('showListCheck'); } },
   { label: '🧪 Assessments', keywords: 'assessments assessment tests codility hackajob online test interview through assessment', action: ()=>{ openOnlyPanel('showAssessments'); if(!state.assessDate) state.assessDate = todayDateString(); if(!state.assessmentsLoaded) loadAssessments(); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
   { label: '🔔 Notifications', keywords: 'notifications notif absent absences', action: ()=>{ openOnlyPanel('showNotifications'); } },
@@ -13311,6 +13418,8 @@ function attachHandlers(conflictIds){
   };
 
   document.querySelectorAll('[data-open-assess]').forEach(el => { el.onclick = (ev)=>{ ev.stopPropagation(); openAssessmentsPanel(el.getAttribute('data-open-assess'), false); }; });
+  const toggleListCheckBtn = document.getElementById('toggleListCheck');
+  if(toggleListCheckBtn) toggleListCheckBtn.onclick = ()=>{ openOnlyPanel('showListCheck'); render(); };
   const toggleAssessmentsBtn = document.getElementById('toggleAssessments');
   if(toggleAssessmentsBtn) toggleAssessmentsBtn.onclick = ()=>{
     openOnlyPanel('showAssessments');
