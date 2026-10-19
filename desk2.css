@@ -217,3 +217,14 @@ body.d2-compact #tableScrollMain td,body.d2-compact #tableScrollMain th{font-siz
 /* Keep the toolbar (and its dropdown menus) above the table / filter bar / sticky header */
 @media (min-width:761px){.toolbar{position:relative;z-index:40}}
 #tableScrollMain{isolation:isolate}
+
+.d2-now{align-items:flex-start}
+.d2-now-h{flex-direction:column;align-items:flex-start;gap:6px;min-width:96px}
+.d2-now-h em{font-style:normal;font:600 11px var(--body);letter-spacing:0;text-transform:none;color:var(--teal)}
+.d2-more{border:0;background:none;color:var(--text-muted);font:600 11px var(--body);letter-spacing:0;text-transform:none;cursor:pointer;padding:0;text-decoration:underline dotted}
+.d2-more:hover{color:var(--teal)}
+.d2-nexts{flex-wrap:nowrap;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:6px;flex:1;scrollbar-width:thin}
+.d2-nexts.open{flex-wrap:wrap;overflow:visible}
+.d2-next{flex:none;min-width:170px;scroll-snap-align:start}
+.lf-toast{cursor:pointer}
+@media (max-width:760px){.d2-now-h{flex-direction:row;align-items:center;flex-wrap:wrap;width:100%}}
