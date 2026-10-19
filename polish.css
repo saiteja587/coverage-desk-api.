@@ -170,7 +170,8 @@ body{
 
 /* ───────── surfaces ───────── */
 .toolbar,.filter-bar,.summary,.import-panel,.tabs{border-radius:var(--r-lg);}
-.toolbar,.filter-bar{background:color-mix(in srgb,var(--surface-2) 82%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+/* No backdrop-filter here: it makes the toolbar a stacking context, which traps its dropdown menus underneath the table / bottom nav. */
+.toolbar,.filter-bar{background:color-mix(in srgb,var(--surface-2) 94%,var(--bg));}
 .import-panel{border:1px solid var(--border);box-shadow:var(--shadow-md);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 70%,var(--surface)),var(--surface));}
 .pz-enter{animation:pz-panel .38s var(--ease-out);}
 @keyframes pz-panel{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
