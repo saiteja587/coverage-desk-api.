@@ -1239,11 +1239,40 @@ async function addAssessments(rows){
 }
 async function updateAssessment(id, fields){
   const r = (state.assessments || []).find(x => x.id === id); if(r) Object.assign(r, fields);
+  _assessIdx.ref = null;
   await apiCall('assessments', { method: 'POST', body: { action: 'update', id, fields } });
 }
 async function deleteAssessment(id){
   await apiCall('assessments', { method: 'POST', body: { action: 'delete', id } });
   state.assessments = (state.assessments || []).filter(x => x.id !== id);
+}
+// ---- Assessment journey: interview round(s) → assessment → next round, per candidate + company ----
+let _assessIdx = { ref: null, len: -1, map: null };
+function assessIndex(){
+  const arr = state.assessments || [];
+  if(_assessIdx.ref !== arr || _assessIdx.len !== arr.length){
+    const m = new Map();
+    arr.forEach(a => { const k = normalizeNameKey(a.candidate); if(!k) return; if(!m.has(k)) m.set(k, []); m.get(k).push(a); });
+    _assessIdx = { ref: arr, len: arr.length, map: m };
+  }
+  return _assessIdx.map;
+}
+function assessmentsForCandidate(name, company){
+  const list = assessIndex().get(normalizeNameKey(name)) || [];
+  if(!company) return list;
+  return list.filter(a => !a.company || fuzzyCompanyKeyMatch(a.company, company));
+}
+function assessShortDate(d){ if(!d) return ''; const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); }
+// One candidate's path at one company, oldest first: calls (from every saved day) and assessments together.
+function assessJourney(a, rows){
+  const key = normalizeNameKey(a.candidate); const steps = [];
+  (rows || []).forEach(r => {
+    if(r.woi || !r.candidate || normalizeNameKey(r.candidate) !== key) return;
+    if(a.company && r.company && !fuzzyCompanyKeyMatch(a.company, r.company)) return;
+    steps.push({ kind: 'call', date: r._date || '', sort: timeToMinutes(r.time), label: (r.round || 'Call') + (r.status ? ' ↻' : ''), title: (r.round || 'Call') + ' on ' + (r._date || '') + (r.status ? ' (' + r.status.replace(/_/g, ' ') + ')' : '') });
+  });
+  assessmentsForCandidate(a.candidate, a.company).forEach(x => steps.push({ kind: 'assess', date: x.date, sort: timeToMinutes(x.time), label: '🧪 ' + (x.assessment || 'Assessment'), title: 'Assessment on ' + x.date, self: x.id === a.id }));
+  return steps.sort((p, q) => (p.date || '').localeCompare(q.date || '') || p.sort - q.sort);
 }
 function openAssessmentsPanel(day, focusImport){
   openOnlyPanel('showAssessments');
@@ -1273,6 +1302,11 @@ function renderAssessmentsPanel(){
   const d = state.assessDate || todayDateString();
   const list = assessmentsForDate(d);
   const esc = escapeHtml;
+  // calls from every saved day — needed once, for the Journey column
+  if(state.assessCalls === undefined){
+    state.assessCalls = null;
+    fetchAllRowsAcrossDates(false).then(r => { state.assessCalls = r || []; if(state.showAssessments) render(); }).catch(() => { state.assessCalls = []; });
+  }
   const byDate = {};
   (state.assessments || []).forEach(a => { (byDate[a.date] = byDate[a.date] || { n: 0, open: 0 }); byDate[a.date].n++; if(!a.done) byDate[a.date].open++; });
   const today = todayDateString();
@@ -1288,6 +1322,12 @@ function renderAssessmentsPanel(){
       <td style="min-width:150px">${inp(a, 'company', 'Company')}</td>
       <td style="min-width:130px">${inp(a, 'role', 'Role')}</td>
       <td style="min-width:170px">${inp(a, 'assessment', 'Assessment / platform')}</td>
+      <td style="min-width:170px;font-size:11.5px">${(() => {
+        if(state.assessCalls === undefined) return '';
+        const steps = assessJourney(a, state.assessCalls || []);
+        if(steps.length < 2) return '<span class="hint">—</span>';
+        return steps.map(x => `<span title="${esc(x.title)}" style="${x.self ? 'font-weight:700;color:var(--teal)' : ''}">${esc(x.label)} <span class="hint">${esc(assessShortDate(x.date))}</span></span>`).join(' → ');
+      })()}</td>
       <td style="text-align:center" title="Interview through assessment"><input type="checkbox" data-assess-id="${a.id}" data-assess-f="throughInterview" ${a.throughInterview ? 'checked' : ''} ${admin ? '' : 'disabled'}></td>
       <td style="text-align:center" title="Done"><input type="checkbox" data-assess-id="${a.id}" data-assess-f="done" ${a.done ? 'checked' : ''} ${admin ? '' : 'disabled'}></td>
       <td style="min-width:140px">${inp(a, 'note', 'Note')}</td>
@@ -1320,7 +1360,7 @@ function renderAssessmentsPanel(){
       </div>
     </div>` : ''}
     ${!state.assessmentsLoaded ? '<div class="hint"><span class="spinner"></span> Loading assessments…</div>' : (list.length ? `<div style="overflow-x:auto"><table class="ip-table" style="width:100%;border-collapse:collapse">
-      <thead><tr><th>Time (IST)</th><th>Candidate</th><th>Country</th><th>Company</th><th>Role</th><th>Assessment</th><th title="Interview through assessment">Via</th><th>Done</th><th>Note</th><th></th></tr></thead>
+      <thead><tr><th>Time (IST)</th><th>Candidate</th><th>Country</th><th>Company</th><th>Role</th><th>Assessment</th><th title="What happened before / after this assessment for the same candidate and company">Journey</th><th title="Interview through assessment">Via</th><th>Done</th><th>Note</th><th></th></tr></thead>
       <tbody>${rowsHtml}</tbody></table></div>` : '<div class="hint">No assessments on this day.</div>')}
   </div>`;
 }
@@ -7466,6 +7506,7 @@ function renderCandidateProfilePanel(){
   const events = [
     ...cpCalls.map(c => ({ kind:'call', sortKey: (c._date||'')+' '+String(businessDayMinutes(c.time)).padStart(5,'0'), data:c })),
     ...cpClosures.map(c => ({ kind:'closure', sortKey: (c.createdAt||'9999').slice(0,10)+' 99999', data:c })),
+    ...assessmentsForCandidate(state.candidateProfileName || '').filter(a => cpView !== 'company' || !a.company || sameCo(a.company)).map(a => ({ kind:'assessment', sortKey: (a.date||'')+' '+String(businessDayMinutes(a.time)).padStart(5,'0'), data:a })),
   ].sort((a,b)=> a.sortKey.localeCompare(b.sortKey));
   const firstCallDate = cpCalls.length ? cpCalls[0]._date : null;
   const hasClosure = data.closures.length > 0;
@@ -7483,6 +7524,18 @@ function renderCandidateProfilePanel(){
     (timeToClose !== null && timeToClose >= 0) ? `<span class="notif-chip">${timeToClose} day${timeToClose===1?'':'s'} to close</span>` : '',
   ].filter(Boolean).join(' ');
   const eventsHtml = events.map(ev=>{
+    if(ev.kind === 'assessment'){
+      const a = ev.data;
+      return `<div class="notif-row" style="border-left:3px solid var(--sky,#5DADE2);padding-left:10px">
+        <div class="notif-name">🧪 Assessment${a.assessment?` — ${escapeHtml(a.assessment)}`:''}${a.throughInterview?' <span class="notif-chip">interview through assessment</span>':''}${a.done?' <span class="notif-chip">✓ done</span>':''}</div>
+        <div class="notif-detail">
+          <span class="notif-chip">${escapeHtml(a.date)}</span>
+          <span class="notif-chip">${escapeHtml(a.time||'time n/a')}</span>
+          <span class="notif-chip">${escapeHtml(a.company||'no company')}</span>
+          ${a.role?`<span class="notif-chip">${escapeHtml(a.role)}</span>`:''}
+        </div>
+      </div>`;
+    }
     if(ev.kind === 'closure'){
       const c = ev.data;
       return `<div class="notif-row" style="border-left:3px solid var(--teal);padding-left:10px">
@@ -10555,7 +10608,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client; ${escapeHtml(repeatFlag.occurrences.map(o=>o.date).filter(Boolean).slice(0,6).join(', '))}) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); if(!sameClient) return ''; const roleDiff = !!(sameClient.role && r.role && sameClient.role.trim().toLowerCase() !== r.role.trim().toLowerCase()); return `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}${roleDiff ? ' — DIFFERENT role this time (was: '+escapeHtml(sameClient.role)+'), so this may be a new opening, not a repeat round' : (sameClient.role && r.role ? ' — same role' : '')}">${roleDiff ? '↻≠' : '↻'}</span>`; })()}${(()=>{
+        ${(()=>{ const as = r.candidate ? assessmentsForCandidate(r.candidate, r.company) : []; return as.length ? `<span class="mini-badge" title="${escapeHtml('Assessment: ' + as.map(a => assessShortDate(a.date) + (a.assessment ? ' (' + a.assessment + ')' : '')).join(', '))}" style="cursor:pointer" data-open-assess="${escapeHtml(as[0].date)}">🧪</span>` : ''; })()}${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client; ${escapeHtml(repeatFlag.occurrences.map(o=>o.date).filter(Boolean).slice(0,6).join(', '))}) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); if(!sameClient) return ''; const roleDiff = !!(sameClient.role && r.role && sameClient.role.trim().toLowerCase() !== r.role.trim().toLowerCase()); return `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}${roleDiff ? ' — DIFFERENT role this time (was: '+escapeHtml(sameClient.role)+'), so this may be a new opening, not a repeat round' : (sameClient.role && r.role ? ' — same role' : '')}">${roleDiff ? '↻≠' : '↻'}</span>`; })()}${(()=>{
   const info = studentMatchBadgeInfo(r.candidate);
   if(!info) return '';
   if(info.kind === 'confirm'){
@@ -13170,6 +13223,7 @@ function attachHandlers(conflictIds){
     if(!_allRowsAcrossDatesCache) fetchAllRowsAcrossDates(false).then(()=>render());
   };
 
+  document.querySelectorAll('[data-open-assess]').forEach(el => { el.onclick = (ev)=>{ ev.stopPropagation(); openAssessmentsPanel(el.getAttribute('data-open-assess'), false); }; });
   const toggleAssessmentsBtn = document.getElementById('toggleAssessments');
   if(toggleAssessmentsBtn) toggleAssessmentsBtn.onclick = ()=>{
     openOnlyPanel('showAssessments');
@@ -17674,6 +17728,9 @@ function deskRoleFix(rows){
           (badOnes.length ? '<div class="dt-note">↻ <b>' + badOnes.length + '</b> rescheduled / cancelled / no-response call' + (badOnes.length > 1 ? 's' : '') + ': ' + badOnes.map(b => esc(b.date) + (b.company ? ' (' + esc(b.company) + ')' : '')).join(', ') + (badOnes.length >= REPEAT_NO_SHOW_MIN_COUNT ? ' — <b>a pattern worth watching</b>' : '') + '</div>' : '') +
           (rel.length ? '<div class="dt-note">Could also be the same person? Tap to include / exclude: ' + rel.map(c => '<button class="lf-act' + (dt.extra.has(c.key) ? ' primary' : '') + '" data-dt-extra="' + esc(c.key) + '" style="margin:2px 4px 2px 0">' + esc(c.name) + ' · ' + c.n + '</button>').join('') + '</div>' : '') +
           tl.map((t, ti) => '<div class="dt-row"><div class="dt-main"><b>' + esc(t.date) + '</b> ' + esc(t.time) + ' — ' + esc(t.company || 'no company') + (t.role ? ' · <i>' + esc(t.role) + '</i>' : '') + ' ' + roleTagChip(tl, ti) + chip(t.round || '1st') + (t.status ? chip(t.status.replace('_', ' '), 'warn') : '') + (t.woi ? chip('WOI') : '') + '<div class="dt-sub">' + (t.assignee ? 'Handled by ' + esc(t.assignee) : 'No assignee') + (t.driver && !namesEquivalent(t.driver, t.assignee) ? ' · 🚗 Driving: ' + esc(t.driver) : '') + (t.reason ? ' · ' + esc(t.reason) : '') + (t.typedAs !== base.name ? ' · typed as "' + esc(t.typedAs) + '"' : '') + '</div></div><button class="lf-act" data-dt-gotodate="' + esc(t.date) + '">Open day</button></div>').join('');
+        const asm = (state.assessments || []).filter(a => keys.includes(R.keyOf(a.candidate))).sort((a, b) => b.date.localeCompare(a.date));
+        if(asm.length) html += '<div class="dt-note" style="margin-top:8px"><b>🧪 ' + asm.length + ' assessment' + (asm.length > 1 ? 's' : '') + '</b> — they sit between the interview rounds above</div>' +
+          asm.map(a => '<div class="dt-row"><div class="dt-main"><b>' + esc(a.date) + '</b> ' + esc(a.time) + ' — ' + esc(a.company || 'no company') + (a.role ? ' · <i>' + esc(a.role) + '</i>' : '') + ' ' + chip('assessment') + (a.throughInterview ? chip('interview through assessment') : '') + (a.done ? chip('done') : '') + '<div class="dt-sub">' + esc(a.assessment || '') + '</div></div></div>').join('');
       }
       return html;
     }
