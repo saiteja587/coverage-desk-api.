@@ -95,6 +95,7 @@ let state = {
   showExpectedClosures: false,
   expectedClosures: [],
   expectedClosuresLoaded: false,
+  showAssessments: false, assessments: [], assessmentsLoaded: false, assessmentsError: '', assessDate: '', assessImportDraft: '', assessMsg: '', assessBusy: false,
   expectClosureRowId: null, // which board row's "flag as expected closure" note sheet is open, if any
   expectClosureSaving: false,
   expectClosureError: null,
@@ -1107,6 +1108,176 @@ async function saveNewClosures(rows){
   await apiCall('closures', {method:'POST', body:{rows: payload}});
   await loadClosures(); // re-fetch rather than guess IDs/timestamps locally — keeps "recorded by" and ordering exactly what the server actually stored
 }
+// ---------- Assessments (added 2026-10-19) ----------
+// The group posts lists like "Saturday assessments (17-10-2026)" followed by
+// "Name (UK) - Company (Codility technical assessment) - 11am IST". Those are online tests or
+// "interview through assessment" slots, not interview calls, so they have their own table, panel and
+// importer (More → Tools → Assessments). Nothing here touches the calls table.
+const ASSESS_WORD_RE = /\b(?:assess\w*|tests?|codility|hackerrank|hackajob|coderpad|codesignal|cognitive|aptitude|psychometric|personality|screening|online|vmock|pymetrics|shl|saville|talent\s?q)\b/i;
+const ASSESS_THROUGH_RE = /(?:interview\s+)?through\s+(?:the\s+)?assess\w*|interview\s+through|assess\w*\s+interview/i;
+function assessParseDate(text){
+  const s = String(text || '');
+  let m = s.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](20\d{2})\b/);
+  if(m) return m[3] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0');
+  m = s.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/);
+  if(m) return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+  return '';
+}
+function assessTimeFrom(text){
+  const m = String(text || '').match(/(\d{1,2})(?:[:.](\d{2}))?\s*([AaPp])\.?\s*[Mm]\b/);
+  if(!m) return '';
+  const h = Number(m[1]), mi = Number(m[2] || 0);
+  if(h < 1 || h > 12 || mi > 59) return '';
+  return h + ':' + String(mi).padStart(2, '0') + ' ' + m[3].toUpperCase() + 'M';
+}
+// Returns { rows, skipped:[lines], dates:[...] }. A line that holds a date but no time is a heading
+// ("Saturday assessments (17-10-2026)") and sets the date for the lines after it.
+function parseAssessmentText(text, defaultDate){
+  const rows = [], skipped = [], dates = new Set();
+  let curDate = defaultDate || '';
+  String(text || '').split(/\r?\n/).forEach(rawLine => {
+    let line = rawLine.replace(/[​‌‍⁠﻿]/g, '').trim();
+    if(!line) return;
+    line = line.replace(/^\[[^\]]*\]\s*[^:]{1,40}:\s*/, '');            // WhatsApp "[10:12, 15/10/2026] Name: " prefix
+    if(/^@/.test(line) && !assessTimeFrom(line)) return;                  // "@Gopi Anna Vij" tag lines
+    const hasTime = !!assessTimeFrom(line);
+    const dateInLine = assessParseDate(line);
+    if(dateInLine && !hasTime){ curDate = dateInLine; return; }           // heading
+    if(!hasTime && !/[-–—]/.test(line)) { if(!/^@/.test(line) && line.length > 3) skipped.push(rawLine.trim()); return; }
+    line = line.replace(/^\s*\d{1,3}[\.\)]\s+/, '');
+    // mask dashes inside brackets so "(Interview - through assessment)" is not split
+    const masked = line.replace(/\(([^()]*)\)/g, (m, inner) => '(' + inner.replace(/[-–—]/g, '\u0001') + ')');
+    const segs = masked.split(/\s*--+\s*|\s+-\s+|\s*[–—]+\s*/).map(x => x.replace(/\u0001/g, '-').trim()).filter(Boolean);
+    if(segs.length < 2){ skipped.push(rawLine.trim()); return; }
+    const parensOf = t => { const out = []; String(t).replace(/\(([^()]*)\)/g, (m, i) => { out.push(i.trim()); return m; }); return out; };
+    const bare = t => String(t).replace(/\([^()]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+    const nameParens = parensOf(segs[0]);
+    const candidate = bare(segs[0]).replace(/[-–—:,]+$/, '').trim();
+    let country = '';
+    nameParens.forEach(p => { const t = normalizeCountryParenText(p); if(/^(uk|ireland|ir|canada|germany)$/.test(t)) country = t === 'ir' ? 'Ireland' : (t === 'uk' ? 'UK' : t.charAt(0).toUpperCase() + t.slice(1)); });
+    const timeSegIdx = (() => { for(let i = segs.length - 1; i >= 1; i--) if(assessTimeFrom(segs[i])) return i; return -1; })();
+    const time = timeSegIdx >= 0 ? assessTimeFrom(segs[timeSegIdx]) : '';
+    let through = false, role = '';
+    const typeBits = [], companyBits = [], noteBits = [];
+    const handleParen = p => {
+      if(!p) return;
+      if(ASSESS_THROUGH_RE.test(p)){ through = true; return; }
+      if(JOB_WORD_RE.test(p) && !ASSESS_WORD_RE.test(p)){ role = role || p; return; }
+      if(/^(?:uk|ireland|ir|canada|germany)$/i.test(p.trim())) return;
+      typeBits.push(p);
+    };
+    const mids = [];
+    for(let i = 1; i < segs.length; i++){
+      if(i === timeSegIdx){ parensOf(segs[i]).forEach(handleParen); continue; }
+      mids.push({ t: bare(segs[i]), ps: parensOf(segs[i]) });
+    }
+    const hasNonAssess = mids.some(m => m.t && !ASSESS_WORD_RE.test(m.t));
+    mids.forEach(m => {
+      if(m.t){ if(ASSESS_WORD_RE.test(m.t) && hasNonAssess) typeBits.push(m.t); else companyBits.push(m.t); }
+      m.ps.forEach(handleParen);
+    });
+    if(ASSESS_THROUGH_RE.test(line)) through = true;
+    const company = companyBits.join(' - ');
+    const assessment = typeBits.join(' · ');
+    const date = curDate;
+    if(!candidate || !date){ skipped.push(rawLine.trim()); return; }
+    const issues = [];
+    if(!time) issues.push('no time');
+    if(!company) issues.push('no company');
+    dates.add(date);
+    rows.push({ date, time, candidate, country, company, role, assessment, throughInterview: through, done: false, note: '', raw: rawLine.trim(), issues });
+  });
+  return { rows, skipped, dates: Array.from(dates).sort() };
+}
+function assessKey(r){ return [r.date, String(r.candidate || '').trim().toLowerCase(), String(r.company || '').trim().toLowerCase(), r.time || ''].join('|'); }
+async function loadAssessments(){
+  if(!API_BASE_URL){ state.assessmentsLoaded = true; return; }
+  try{
+    const data = await apiCall('assessments', {});
+    state.assessments = (data.rows || []).map(r => ({ id: r.id, date: r.date, time: r.time || '', candidate: r.candidate || '', country: r.country || '', company: r.company || '', role: r.role || '', assessment: r.assessment || '', throughInterview: !!r.throughInterview, done: !!r.done, note: r.note || '' }));
+    state.assessmentsLoaded = true; state.assessmentsError = '';
+  }catch(e){ state.assessmentsError = String(e && e.message || e); }
+  render();
+}
+async function addAssessments(rows){
+  if(!API_BASE_URL) throw new Error('Assessments need the backend to be connected.');
+  await apiCall('assessments', { method: 'POST', body: { rows } });
+  await loadAssessments();
+}
+async function updateAssessment(id, fields){
+  const r = (state.assessments || []).find(x => x.id === id); if(r) Object.assign(r, fields);
+  await apiCall('assessments', { method: 'POST', body: { action: 'update', id, fields } });
+}
+async function deleteAssessment(id){
+  await apiCall('assessments', { method: 'POST', body: { action: 'delete', id } });
+  state.assessments = (state.assessments || []).filter(x => x.id !== id);
+}
+function assessmentsForDate(d){ return (state.assessments || []).filter(a => a.date === d).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time) || a.candidate.localeCompare(b.candidate)); }
+function assessmentsPendingToday(){ return assessmentsForDate(todayDateString()).filter(a => !a.done).length; }
+function assessDateLabel(d){
+  if(!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+}
+function assessmentsText(date){
+  const list = assessmentsForDate(date);
+  if(!list.length) return 'No assessments on ' + assessDateLabel(date) + '.';
+  const L = ['Assessments — ' + assessDateLabel(date)];
+  list.forEach((a, i) => L.push((i + 1) + '. ' + (a.time || '—') + ' IST – ' + a.candidate + (a.country ? ' (' + a.country + ')' : '') + ' – ' + (a.company || 'no company') + (a.role ? ' – ' + a.role : '') + (a.assessment ? ' – ' + a.assessment : '') + (a.throughInterview ? ' (interview through assessment)' : '') + (a.done ? ' ✓' : '')));
+  return L.join('\n');
+}
+function renderAssessmentsPanel(){
+  const admin = CURRENT_ROLE === 'admin';
+  const d = state.assessDate || todayDateString();
+  const list = assessmentsForDate(d);
+  const esc = escapeHtml;
+  const byDate = {};
+  (state.assessments || []).forEach(a => { (byDate[a.date] = byDate[a.date] || { n: 0, open: 0 }); byDate[a.date].n++; if(!a.done) byDate[a.date].open++; });
+  const today = todayDateString();
+  const chips = Object.keys(byDate).sort().filter(x => x >= addDaysToDateStr(today, -7)).slice(0, 24).map(x =>
+    `<button class="btn ghost ${x === d ? 'active' : ''}" data-assess-goto="${x}" style="font-size:11px;padding:4px 9px">${esc(x.slice(8) + '/' + x.slice(5, 7))} · ${byDate[x].n}${byDate[x].open ? '' : ' ✓'}</button>`).join(' ');
+  const inp = (a, f, ph, w) => admin
+    ? `<input class="cell-input" data-assess-id="${a.id}" data-assess-f="${f}" value="${esc(a[f] || '')}" placeholder="${ph || ''}" style="${w ? 'min-width:' + w + 'px' : ''}">`
+    : esc(a[f] || '');
+  const rowsHtml = list.map(a => `<tr class="${a.done ? 'assess-done' : ''}">
+      <td style="width:96px">${inp(a, 'time', 'time')}</td>
+      <td style="min-width:160px">${inp(a, 'candidate', 'Candidate')}</td>
+      <td style="width:78px">${inp(a, 'country', 'UK')}</td>
+      <td style="min-width:150px">${inp(a, 'company', 'Company')}</td>
+      <td style="min-width:130px">${inp(a, 'role', 'Role')}</td>
+      <td style="min-width:170px">${inp(a, 'assessment', 'Assessment / platform')}</td>
+      <td style="text-align:center" title="Interview through assessment"><input type="checkbox" data-assess-id="${a.id}" data-assess-f="throughInterview" ${a.throughInterview ? 'checked' : ''} ${admin ? '' : 'disabled'}></td>
+      <td style="text-align:center" title="Done"><input type="checkbox" data-assess-id="${a.id}" data-assess-f="done" ${a.done ? 'checked' : ''} ${admin ? '' : 'disabled'}></td>
+      <td style="min-width:140px">${inp(a, 'note', 'Note')}</td>
+      <td style="width:36px;text-align:right">${admin ? `<button class="row-del" data-assess-del="${a.id}" title="Remove this assessment">✕</button>` : ''}</td>
+    </tr>`).join('');
+  return `<div class="import-panel" id="assessPanel">
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
+      <button class="btn ghost" data-assess-step="-1" title="Previous day">‹</button>
+      <input type="date" id="assessDateInput" class="cell-input" value="${esc(d)}" style="width:auto">
+      <button class="btn ghost" data-assess-step="1" title="Next day">›</button>
+      <button class="btn ghost" data-assess-goto="${today}">Today</button>
+      <span class="hint">${esc(assessDateLabel(d))} — <b>${list.length}</b> assessment${list.length === 1 ? '' : 's'}${list.length ? ', ' + list.filter(a => a.done).length + ' done' : ''}</span>
+      <span style="flex:1"></span>
+      <button class="btn ghost" data-assess-copy ${list.length ? '' : 'disabled'} title="Copy this day's list as text">📋 Copy list</button>
+    </div>
+    ${chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"><span class="hint" style="align-self:center">Days with assessments:</span>${chips}</div>` : ''}
+    ${state.assessmentsError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${esc(state.assessmentsError)}</div>` : ''}
+    ${admin ? `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--surface-2)">
+      <div style="font-weight:700;font-size:13px;margin-bottom:6px">＋ Import assessments</div>
+      <div class="hint" style="margin-bottom:8px">Paste the group message as it is. A heading such as <i>Saturday assessments (17-10-2026)</i> sets the date for the lines under it; lines with no heading go to the day shown above.</div>
+      <textarea id="assessImportText" style="width:100%;min-height:120px" placeholder="Saturday assessments (17-10-2026)&#10;&#10;Anisha vempalli (UK) - Zema Global Data Corporation (Codility technical assessment) - 11am IST&#10;Sai Sreekanth korukonda (UK) -- Transport for London -- 4:00pm IST">${esc(state.assessImportDraft || '')}</textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="btn primary" id="assessImportBtn" ${state.assessBusy ? 'disabled' : ''}>${state.assessBusy ? 'Adding…' : 'Add assessments'}</button>
+        <span class="hint" id="assessImportMsg">${esc(state.assessMsg || '')}</span>
+      </div>
+    </div>` : ''}
+    ${!state.assessmentsLoaded ? '<div class="hint"><span class="spinner"></span> Loading assessments…</div>' : (list.length ? `<div style="overflow-x:auto"><table class="ip-table" style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Time (IST)</th><th>Candidate</th><th>Country</th><th>Company</th><th>Role</th><th>Assessment</th><th title="Interview through assessment">Via</th><th>Done</th><th>Note</th><th></th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table></div>` : '<div class="hint">No assessments on this day.</div>')}
+  </div>`;
+}
+
 // ---------- Expected Closures (added 2026-10-01) ----------
 // "Flag this call as an expected closure, based on what the handler/
 // driving person told you after the call, and let me follow up on it
@@ -5660,6 +5831,7 @@ function closeAllPanels(){
   state.closureReview = null;
   state.showClosures = false;
   state.showExpectedClosures = false;
+  state.showAssessments = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showUniversalSearch = false;
@@ -5694,6 +5866,7 @@ function getActivePanelName(){
   if(state.closureReview) return 'closureReview';
   if(state.showClosures) return 'closures';
   if(state.showExpectedClosures) return 'expectedClosures';
+  if(state.showAssessments) return 'assessments';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showUniversalSearch) return 'universalSearch';
@@ -5733,6 +5906,7 @@ function renderActivePanel(name){
   if(name === 'closureReview') return renderClosureConfirmPanel();
   if(name === 'closures') return renderClosuresPanel();
   if(name === 'expectedClosures') return renderExpectedClosuresPanel();
+  if(name === 'assessments') return renderAssessmentsPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
@@ -6084,6 +6258,7 @@ function render(){
             <div class="more-menu-section-label">Tools</div>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            <button class="more-menu-item" id="toggleAssessments" title="Online tests and 'interview through assessment' slots posted in the group — import the message, see each day's list">🧪 Assessments${state.assessmentsLoaded && assessmentsPendingToday() ? ' (' + assessmentsPendingToday() + ' today)' : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
             ${CURRENT_ROLE==='admin' ? `<div class="more-menu-section-label">Admin</div><button class="more-menu-item" id="toggleSummary">📊 Summary</button>` : ''}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="exportExcelBtn" title="Download this date's calls as an Excel file, grouped by team">📊 Export to Excel</button>` : ''}
@@ -7043,6 +7218,7 @@ const QUICK_JUMP_COMMANDS = [
   { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
+  { label: '🧪 Assessments', keywords: 'assessments assessment tests codility hackajob online test interview through assessment', action: ()=>{ openOnlyPanel('showAssessments'); if(!state.assessDate) state.assessDate = todayDateString(); if(!state.assessmentsLoaded) loadAssessments(); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
   { label: '🔔 Notifications', keywords: 'notifications notif absent absences', action: ()=>{ openOnlyPanel('showNotifications'); } },
   { label: '🩺 Data Health', keywords: 'data health triage unmatched stale', action: ()=>{
@@ -12917,6 +13093,14 @@ function attachHandlers(conflictIds){
     if(!_allRowsAcrossDatesCache) fetchAllRowsAcrossDates(false).then(()=>render());
   };
 
+  const toggleAssessmentsBtn = document.getElementById('toggleAssessments');
+  if(toggleAssessmentsBtn) toggleAssessmentsBtn.onclick = ()=>{
+    openOnlyPanel('showAssessments');
+    if(!state.assessDate) state.assessDate = todayDateString();
+    render();
+    if(!state.assessmentsLoaded || state.assessmentsError) loadAssessments();
+  };
+
   const toggleExpectedClosuresBtn = document.getElementById('toggleExpectedClosures');
   if(toggleExpectedClosuresBtn) toggleExpectedClosuresBtn.onclick = ()=>{
     openOnlyPanel('showExpectedClosures');
@@ -14218,6 +14402,7 @@ async function startApp(){
   loadStudentsMaster().then(()=>{ render(); }).catch(()=>{});
   loadClosures().catch(()=>{});
   loadExpectedClosures().catch(()=>{});
+  loadAssessments().catch(()=>{});
   loadAppSettings().catch(()=>{});
 }
 // The repeat-candidate scan (scanForRepeatCandidates) groups occurrences by
@@ -17040,6 +17225,58 @@ const ASK_HELP = ['I can answer these from your saved calls (exact numbers, noth
     if(!ask.open) return;
     if(e.key === 'Escape'){ close(); return; }
     if(e.key === 'Enter' && e.target && e.target.id === 'askInput' && !e.isComposing){ e.preventDefault(); send(e.target.value); }
+  });
+})();
+
+// ---- Assessments panel events (document-level so they survive render()) ----
+(function setupAssessmentsEvents(){
+  const inPanel = t => t && t.closest && t.closest('#assessPanel');
+  function setDate(d){ if(!d) return; state.assessDate = d; render(); }
+  document.addEventListener('click', async function(e){
+    const t = e.target; if(!inPanel(t)) return;
+    const go = t.closest('[data-assess-goto]'); if(go){ setDate(go.getAttribute('data-assess-goto')); return; }
+    const st = t.closest('[data-assess-step]'); if(st){ setDate(addDaysToDateStr(state.assessDate || todayDateString(), Number(st.getAttribute('data-assess-step')))); return; }
+    if(t.closest('[data-assess-copy]')){
+      const txt = assessmentsText(state.assessDate || todayDateString());
+      try{ await navigator.clipboard.writeText(txt); state.assessMsg = 'Copied.'; }catch(err){ state.assessMsg = 'Copy failed — select the text manually.'; }
+      const m = document.getElementById('assessImportMsg'); if(m) m.textContent = state.assessMsg; return;
+    }
+    const del = t.closest('[data-assess-del]');
+    if(del && CURRENT_ROLE === 'admin'){
+      const id = Number(del.getAttribute('data-assess-del')); const a = (state.assessments || []).find(x => x.id === id);
+      if(!a || !confirm('Remove the assessment for ' + a.candidate + '?')) return;
+      try{ await deleteAssessment(id); }catch(err){ alert('Could not remove it: ' + err.message); }
+      render(); return;
+    }
+    if(t.closest('#assessImportBtn') && CURRENT_ROLE === 'admin'){
+      const ta = document.getElementById('assessImportText'); const text = ta ? ta.value : '';
+      const day = state.assessDate || todayDateString();
+      const res = parseAssessmentText(text, day);
+      if(!res.rows.length){ state.assessMsg = 'No assessment lines were found in that text.' + (res.skipped.length ? ' (' + res.skipped.length + ' line(s) not understood)' : ''); render(); return; }
+      const have = new Set((state.assessments || []).map(assessKey)); const seen = new Set(); let dup = 0;
+      const fresh = res.rows.filter(r => { const k = assessKey(r); if(have.has(k) || seen.has(k)){ dup++; return false; } seen.add(k); return true; });
+      state.assessBusy = true; state.assessImportDraft = text; state.assessMsg = ''; render();
+      try{
+        if(fresh.length) await addAssessments(fresh.map(r => { const o = Object.assign({}, r); delete o.issues; return o; }));
+        const noTime = fresh.filter(r => r.issues.includes('no time')).length;
+        state.assessMsg = '✓ Added ' + fresh.length + (dup ? ', skipped ' + dup + ' already on file' : '') + (res.skipped.length ? ', ' + res.skipped.length + ' line(s) not understood' : '') + (noTime ? ', ' + noTime + ' without a time' : '') + '. Dates: ' + res.dates.join(', ');
+        state.assessImportDraft = '';
+        if(fresh.length) state.assessDate = fresh[0].date;
+      }catch(err){ state.assessMsg = '⚠ ' + err.message; }
+      state.assessBusy = false; render();
+    }
+  });
+  document.addEventListener('change', async function(e){
+    const t = e.target; if(!inPanel(t)) return;
+    if(t.id === 'assessDateInput'){ setDate(t.value); return; }
+    const id = Number(t.getAttribute && t.getAttribute('data-assess-id')); const f = t.getAttribute && t.getAttribute('data-assess-f');
+    if(!id || !f || CURRENT_ROLE !== 'admin') return;
+    const val = t.type === 'checkbox' ? t.checked : t.value;
+    try{ await updateAssessment(id, { [f]: val }); }catch(err){ alert('Could not save that change: ' + err.message); }
+    if(t.type === 'checkbox') render();
+  });
+  document.addEventListener('input', function(e){
+    const t = e.target; if(t && t.id === 'assessImportText') state.assessImportDraft = t.value;
   });
 })();
 
