@@ -128,6 +128,7 @@ function setCors(req, res) {
 const RATE_LIMIT_WINDOW_MINUTES = 15;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 async function isRateLimited(db, identifier) {
+  return false; // login lockout removed (2026-10-15) — a wrong saved password was locking everyone out
   try {
     const [rows] = await db.query(
       `SELECT COUNT(*) AS cnt FROM login_attempts WHERE identifier = ? AND attempted_at > (NOW() - INTERVAL ? MINUTE)`,
@@ -139,6 +140,7 @@ async function isRateLimited(db, identifier) {
   }
 }
 async function recordFailedAttempt(db, identifier) {
+  return; // no longer recorded — lockout removed
   try { await db.query('INSERT INTO login_attempts (identifier) VALUES (?)', [identifier]); }
   catch (e) { /* best-effort — a logging failure should never break the response */ }
   // FIX: this table previously had nothing pruning it, so it grew forever —
@@ -265,6 +267,7 @@ module.exports = async (req, res) => {
     if (resource === 'closures') return await handleClosures(req, res, db);
     if (resource === 'closure_manual_match') return await handleClosureManualMatch(req, res, db);
     if (resource === 'expected_closures') return await handleExpectedClosures(req, res, db);
+    if (resource === 'assessments') return await handleAssessments(req, res, db);
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
@@ -273,7 +276,7 @@ module.exports = async (req, res) => {
       if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
     }
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|app_settings|push_subscription|users|chat|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|app_settings|push_subscription|users|chat|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -1049,6 +1052,92 @@ async function handleExpectedClosures(req, res, db) {
     if (values.some(v => !v[2] || !v[3])) return res.status(400).json({ error: 'Each row needs at least a candidate and a company' });
     await db.query(
       'INSERT INTO expected_closures (call_id, call_date, candidate, company, round_text, note, flagged_by) VALUES ?',
+      [values]
+    );
+    return res.status(200).json({ ok: true, count: values.length });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ---------- assessments: online tests / "interview through assessment" slots ----------
+// Added 2026-10-19 — the group posts lists such as "Saturday assessments (17-10-2026)" followed by
+// "Name (UK) - Company (Codility technical assessment) - 11am IST". They are NOT interview calls, so
+// they live in their own table instead of the calls table. The table creates itself on first use
+// (no SQL to run by hand). GET returns every assessment (optionally one ?date=YYYY-MM-DD); POST
+// inserts {rows:[...]}, or {action:'update', id, fields}, or {action:'delete', id}.
+let assessmentsTableReady = false;
+async function ensureAssessmentsTable(db) {
+  if (assessmentsTableReady) return;
+  await db.query(`CREATE TABLE IF NOT EXISTS assessments (
+    id                INT AUTO_INCREMENT PRIMARY KEY,
+    assess_date       VARCHAR(10)  NOT NULL,
+    time_text         VARCHAR(20)  NOT NULL DEFAULT '',
+    candidate         VARCHAR(255) NOT NULL,
+    country           VARCHAR(20)  NOT NULL DEFAULT '',
+    company           VARCHAR(255) NOT NULL DEFAULT '',
+    role              VARCHAR(255) NOT NULL DEFAULT '',
+    assessment        VARCHAR(255) NOT NULL DEFAULT '',
+    through_interview TINYINT(1)   NOT NULL DEFAULT 0,
+    done              TINYINT(1)   NOT NULL DEFAULT 0,
+    note              TEXT         NULL,
+    raw_text          TEXT         NULL,
+    created_by        VARCHAR(100) NULL,
+    created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_assess_date (assess_date)
+  ) ENGINE=InnoDB`);
+  assessmentsTableReady = true;
+}
+async function handleAssessments(req, res, db) {
+  await ensureAssessmentsTable(db);
+  const cols = `id, assess_date AS date, time_text AS time, candidate, country, company, role, assessment,
+                through_interview AS throughInterview, done, note, created_by AS createdBy, created_at AS createdAt`;
+  if (req.method === 'GET') {
+    const date = req.query.date;
+    const [rows] = date
+      ? await db.query(`SELECT ${cols} FROM assessments WHERE assess_date = ? ORDER BY id`, [String(date)])
+      : await db.query(`SELECT ${cols} FROM assessments ORDER BY assess_date DESC, id LIMIT 3000`);
+    return res.status(200).json({ rows: rows.map(r => ({ ...r, throughInterview: !!r.throughInterview, done: !!r.done })) });
+  }
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    if (body.action === 'delete') {
+      const id = Number(body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      await db.query('DELETE FROM assessments WHERE id = ?', [id]);
+      return res.status(200).json({ ok: true });
+    }
+    if (body.action === 'update') {
+      const id = Number(body.id);
+      if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
+      const f = body.fields || {};
+      const map = { date: 'assess_date', time: 'time_text', candidate: 'candidate', country: 'country', company: 'company',
+                    role: 'role', assessment: 'assessment', throughInterview: 'through_interview', done: 'done', note: 'note' };
+      const lim = { assess_date: 10, time_text: 20, candidate: 255, country: 20, company: 255, role: 255, assessment: 255 };
+      const sets = [], vals = [];
+      Object.keys(map).forEach(k => {
+        if (!Object.prototype.hasOwnProperty.call(f, k)) return;
+        const col = map[k];
+        let v = f[k];
+        if (col === 'through_interview' || col === 'done') v = v ? 1 : 0;
+        else { v = String(v == null ? '' : v); if (lim[col]) v = v.slice(0, lim[col]); }
+        sets.push(col + ' = ?'); vals.push(v);
+      });
+      if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+      vals.push(id);
+      await db.query('UPDATE assessments SET ' + sets.join(', ') + ' WHERE id = ?', vals);
+      return res.status(200).json({ ok: true });
+    }
+    const rows = body.rows;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows[] required' });
+    const by = req.headers['x-username'] || 'admin';
+    const values = rows.map(r => [
+      String(r.date || '').slice(0, 10), String(r.time || '').slice(0, 20), String(r.candidate || '').trim().slice(0, 255),
+      String(r.country || '').slice(0, 20), String(r.company || '').trim().slice(0, 255), String(r.role || '').trim().slice(0, 255),
+      String(r.assessment || '').trim().slice(0, 255), r.throughInterview ? 1 : 0, r.done ? 1 : 0, r.note || '', r.raw || '', by,
+    ]);
+    if (values.some(v => !v[0] || !v[2])) return res.status(400).json({ error: 'Each row needs a date and a candidate' });
+    await db.query(
+      'INSERT INTO assessments (assess_date, time_text, candidate, country, company, role, assessment, through_interview, done, note, raw_text, created_by) VALUES ?',
       [values]
     );
     return res.status(200).json({ ok: true, count: values.length });
