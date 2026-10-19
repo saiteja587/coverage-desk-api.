@@ -95,7 +95,7 @@ let state = {
   showExpectedClosures: false,
   expectedClosures: [],
   expectedClosuresLoaded: false,
-  showListCheck: false, listCheckText: '', listCheckResult: null, showAssessments: false, assessments: [], assessmentsLoaded: false, assessmentsError: '', assessDate: '', assessImportDraft: '', assessMsg: '', assessBusy: false, assessHandlerFilter: '',
+  showOnsites: false, onsites: [], onsitesLoaded: false, onsitesError: '', onsiteDate: '', onsiteImportDraft: '', onsiteMsg: '', onsiteBusy: false, showDeskChecks: false, deskTab: 'unassigned', deskDate: '', deskWeek: '', deskCalls: null, deskLoading: false, results: {}, resultRows: [], resultsLoaded: false, resultsError: '', showListCheck: false, listCheckText: '', listCheckResult: null, showAssessments: false, assessments: [], assessmentsLoaded: false, assessmentsError: '', assessDate: '', assessImportDraft: '', assessMsg: '', assessBusy: false, assessHandlerFilter: '',
   expectClosureRowId: null, // which board row's "flag as expected closure" note sheet is open, if any
   expectClosureSaving: false,
   expectClosureError: null,
@@ -1420,6 +1420,328 @@ function renderAssessmentsPanel(){
   </div>`;
 }
 
+// ---------- Onsite interviews (added 2026-10-19) ----------
+// Onsite / in-person interviews are posted as their own list ("Onsite interviews (20-10-2026)") and never fit
+// the daily call list, so they live in their own table + panel (More → 🏢 Onsite interviews, Alt+O),
+// with several handlers per interview, a status, and a link to the candidate's other calls.
+const ONSITE_HEAD_RE = /\b(?:on[\s-]?sites?|in[\s-]?person|face[\s-]?to[\s-]?face)\b/i;
+const ONSITE_STATUSES = ['Scheduled', 'Done', 'Rescheduled', 'Cancelled'];
+function onsiteKey(r){ return [r.date, normalizeNameKey(r.candidate), normalizeCompanyKey(r.company), (r.time || '').replace(/\s+/g, '')].join('|'); }
+function parseOnsiteText(text, defaultDate){
+  const rows = [], skipped = [], dates = new Set();
+  let curDate = defaultDate || '';
+  String(text || '').split(/\r?\n/).forEach(rawLine => {
+    let line = rawLine.replace(/[​‌‍⁠﻿]/g, '').trim();
+    if(!line) return;
+    line = line.replace(/^\[[^\]]*\]\s*[^:]{1,40}:\s*/, '');
+    if(/^@/.test(line) && !assessTimeFrom(line)) return;
+    const d = assessParseDate(line);
+    if(d && !assessTimeFrom(line)){ curDate = d; return; }
+    if(!assessTimeFrom(line) && !/[-–—]/.test(line) && ONSITE_HEAD_RE.test(line)) return;       // heading without a date
+    let handlers = [];
+    const am = line.match(/\s*(?:->|→)\s*(.+)$/);
+    if(am){ handlers = assessResolveHandlers(am[1]); line = line.slice(0, am.index).trim(); }
+    let location = '';
+    const lm = line.match(/(?:location|venue|address|office)\s*[:\-–]\s*([^()–—|]+?)(?=\s*(?:\(|–|—|\s-\s|$))/i);
+    if(lm){ location = lm[1].trim(); line = line.replace(lm[0], ' ').replace(/\s{2,}/g, ' '); }
+    else { const pm = line.match(/\((?:on[\s-]?site|in[\s-]?person)[^)]*?\b(?:at|@|-|:)\s*([^)]+)\)/i); if(pm){ location = pm[1].trim(); line = line.replace(pm[0], ' (OnSite) '); } }
+    let parsed = [];
+    try{ parsed = parseImportText(line, curDate || todayDateString(), '1st'); }catch(e){ parsed = []; }
+    const p = parsed && parsed[0];
+    if(!p || !p.candidate){ skipped.push(rawLine.trim()); return; }
+    const date = curDate || todayDateString(); dates.add(date);
+    rows.push({ date, time: p.time || '', candidate: p.candidate, country: p.country || '', company: p.company || '', role: p.role || '', round: p.round || '', location, interviewer: p.interviewer || '', handlers, status: 'Scheduled', note: '', raw: rawLine.trim() });
+  });
+  return { rows, skipped, dates: Array.from(dates) };
+}
+function splitOnsiteLines(text){
+  const onsiteLines = [], rest = [];
+  let inO = false;
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const t = line.trim();
+    if(!t){ (inO ? onsiteLines : rest).push(line); return; }
+    const hasTime = !!assessTimeFrom(t);
+    const isHeading = !hasTime && (!!assessParseDate(t) || /call'?s?\s+for\s+/i.test(t) || (ONSITE_HEAD_RE.test(t) && !/[-–—]/.test(t) && t.length < 80));
+    if(isHeading){ inO = ONSITE_HEAD_RE.test(t); (inO ? onsiteLines : rest).push(line); return; }
+    if(inO && !/\b\d{1,2}(?:st|nd|rd|th)\s*round\b[^]*\bduration\b/i.test(t)){ onsiteLines.push(line); return; }
+    if(inO){ rest.push(line); return; }
+    if(/^\s*(?:\d+[.)]\s*)?[^\n]*\blocation\s*[:\-–]/i.test(t) && ONSITE_HEAD_RE.test(t)){ onsiteLines.push(line); return; }
+    rest.push(line);
+  });
+  return { onsiteLines, rest: rest.join('\n') };
+}
+async function loadOnsites(){
+  if(!API_BASE_URL){ state.onsitesLoaded = true; return; }
+  try{
+    const data = await apiCall('onsites', {});
+    state.onsites = (data.rows || []).map(r => ({ id: r.id, date: r.date, time: r.time || '', candidate: r.candidate || '', country: r.country || '', company: r.company || '', role: r.role || '', round: r.round || '', location: r.location || '', interviewer: r.interviewer || '', handlers: String(r.handlers || '').split(/\s*,\s*/).filter(Boolean), status: r.status || 'Scheduled', note: r.note || '' }));
+    state.onsitesLoaded = true; state.onsitesError = '';
+  }catch(e){ state.onsitesError = String(e && e.message || e); }
+  render();
+}
+async function updateOnsite(id, fields){
+  const r = (state.onsites || []).find(x => x.id === id); if(r) Object.assign(r, fields);
+  const send = Object.assign({}, fields); if(Array.isArray(send.handlers)) send.handlers = assessHandlersStr(send.handlers);
+  await apiCall('onsites', { method: 'POST', body: { action: 'update', id, fields: send } });
+}
+async function importOnsiteText(text, day){
+  const res = parseOnsiteText(text, day);
+  if(!res.rows.length) return { msg: 'No onsite interview lines were found in that text.' + (res.skipped.length ? ' (' + res.skipped.length + ' line(s) not understood)' : ''), firstDate: '', added: 0 };
+  if(!API_BASE_URL) throw new Error('Onsite interviews need the backend to be connected.');
+  if(!state.onsitesLoaded) await loadOnsites();
+  const have = new Set((state.onsites || []).map(onsiteKey)), seen = new Set(); let dup = 0;
+  const fresh = res.rows.filter(r => { const k = onsiteKey(r); if(have.has(k) || seen.has(k)){ dup++; return false; } seen.add(k); return true; });
+  if(fresh.length){ await apiCall('onsites', { method: 'POST', body: { rows: fresh.map(r => Object.assign({}, r, { handlers: assessHandlersStr(r.handlers) })) } }); await loadOnsites(); }
+  return { added: fresh.length, firstDate: (fresh[0] || res.rows[0]).date, msg: '✓ Added ' + fresh.length + ' onsite interview' + (fresh.length === 1 ? '' : 's') + (dup ? ', skipped ' + dup + ' already on file' : '') + (res.skipped.length ? ', ' + res.skipped.length + ' line(s) not understood' : '') + '. Dates: ' + res.dates.join(', ') };
+}
+function onsitesForDate(d){ return (state.onsites || []).filter(o => o.date === d).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time)); }
+function onsitesPendingToday(){ const t = todayDateString(); return (state.onsites || []).filter(o => o.date === t && o.status === 'Scheduled').length; }
+function onsitesForCandidate(name, company){ const k = normalizeNameKey(name); return (state.onsites || []).filter(o => normalizeNameKey(o.candidate) === k && (!company || !o.company || assessCompanyMatch(o.company, company))); }
+function onsitesText(d){
+  const list = onsitesForDate(d); const L = ['Onsite interviews — ' + assessDateLabel(d)];
+  list.forEach((o, i) => L.push((i + 1) + '. ' + (o.time || '—') + ' – ' + o.candidate + (o.country ? ' (' + o.country + ')' : '') + ' – ' + (o.company || 'no company') + (o.role ? ' – ' + o.role : '') + (o.round ? ' (' + o.round + ')' : '') + (o.location ? ' – 📍 ' + o.location : '') + ((o.handlers || []).length ? ' → ' + o.handlers.join(', ') : '') + (o.status !== 'Scheduled' ? ' [' + o.status + ']' : '')));
+  return L.join('\n');
+}
+function renderOnsitesPanel(){
+  const admin = CURRENT_ROLE === 'admin', esc = escapeHtml;
+  const d = state.onsiteDate || todayDateString(), today = todayDateString();
+  const list = onsitesForDate(d);
+  const names = (state.roster || []).map(p => p.name).filter(Boolean);
+  const days = {}; (state.onsites || []).forEach(o => { days[o.date] = (days[o.date] || 0) + 1; });
+  const chips = Object.keys(days).sort().reverse().slice(0, 10).map(k => `<button class="btn ghost" data-on-goto="${esc(k)}" style="font-size:11.5px;padding:3px 9px;${k === d ? 'border-color:var(--teal)' : ''}">${esc(assessShortDate(k))} · ${days[k]}</button>`).join('');
+  const inp = (o, f, w) => admin ? `<input class="cell-input" data-on-f="${f}" data-id="${o.id}" value="${esc(o[f] || '')}" style="width:${w}px">` : esc(o[f] || '');
+  const rowsHtml = list.map(o => {
+    const free = names.filter(n => !(o.handlers || []).includes(n));
+    const hs = (o.handlers || []).map(h => `<span class="notif-chip">${esc(h)}${admin ? ` <a href="#" data-on-rmh="${o.id}" data-h="${esc(h)}" title="Remove">✕</a>` : ''}</span>`).join(' ');
+    const add = admin ? `<select data-on-addh="${o.id}" style="font-size:11.5px"><option value="">+ handler</option>${free.map(n => `<option>${esc(n)}</option>`).join('')}</select>` : '';
+    const st = admin ? `<select data-on-st="${o.id}">${ONSITE_STATUSES.map(s => `<option ${s === o.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(o.status);
+    return `<tr><td>${inp(o, 'time', 78)}</td><td>${inp(o, 'candidate', 150)}</td><td>${inp(o, 'country', 60)}</td><td>${inp(o, 'company', 150)}</td><td>${inp(o, 'role', 150)}</td><td>${inp(o, 'round', 80)}</td><td>${inp(o, 'location', 160)}</td><td>${inp(o, 'interviewer', 120)}</td><td>${hs} ${add}</td><td>${st}</td><td>${inp(o, 'note', 140)}</td><td>${admin ? `<button class="row-del" data-on-del="${o.id}" title="Remove">✕</button>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="import-panel" id="onsitePanel">
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
+      <button class="btn ghost" data-on-step="-1">‹</button><input type="date" id="onsiteDateInput" class="cell-input" value="${esc(d)}" style="width:auto"><button class="btn ghost" data-on-step="1">›</button>
+      <button class="btn ghost" data-on-goto="${today}">Today</button>
+      <span class="hint">${esc(assessDateLabel(d))} — <b>${list.length}</b> onsite interview${list.length === 1 ? '' : 's'}</span>
+      <span style="flex:1"></span><button class="btn ghost" data-on-copy ${list.length ? '' : 'disabled'}>📋 Copy list</button>
+    </div>
+    ${chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"><span class="hint" style="align-self:center">Days with onsites:</span>${chips}</div>` : ''}
+    ${state.onsitesError ? `<div class="hint" style="color:var(--coral)">⚠ ${esc(state.onsitesError)}</div>` : ''}
+    ${admin ? `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--surface-2)">
+      <div style="font-weight:700;font-size:13px;margin-bottom:6px">＋ Import onsite interviews</div>
+      <div class="hint" style="margin-bottom:8px">Paste the message as posted. A heading like <i>Onsite interviews (20-10-2026)</i> sets the date; add <i>Location: …</i> on a line for the place and <i>-> Priya, Ravi</i> for handlers. The same heading works in the normal Calls import too.</div>
+      <textarea id="onsiteImportText" style="width:100%;min-height:110px" placeholder="Onsite interviews (20-10-2026)&#10;1. Name (UK) – Interview – Company - Role – 10:00 AM IST – Location: Leeds office (1st Round) -> Priya, Ravi">${esc(state.onsiteImportDraft || '')}</textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="btn primary" id="onsiteImportBtn" ${state.onsiteBusy ? 'disabled' : ''}>${state.onsiteBusy ? 'Adding…' : 'Add onsite interviews'}</button><span class="hint" id="onsiteImportMsg">${esc(state.onsiteMsg || '')}</span></div></div>` : ''}
+    ${!state.onsitesLoaded ? '<div class="hint"><span class="spinner"></span> Loading…</div>' : (list.length ? `<div style="overflow-x:auto"><table class="ip-table" style="width:100%;border-collapse:collapse"><thead><tr><th>Time</th><th>Candidate</th><th>Country</th><th>Company</th><th>Role</th><th>Round</th><th>Location</th><th>Interviewer</th><th>Handlers</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<div class="hint">No onsite interviews on this day.</div>')}
+  </div>`;
+}
+(function setupOnsiteEvents(){
+  const inPanel = t => t && t.closest && t.closest('#onsitePanel');
+  const setDate = d => { if(d){ state.onsiteDate = d; render(); } };
+  document.addEventListener('click', async function(e){
+    const t = e.target; if(!inPanel(t)) return;
+    const go = t.closest('[data-on-goto]'); if(go){ setDate(go.getAttribute('data-on-goto')); return; }
+    const st = t.closest('[data-on-step]'); if(st){ setDate(addDaysToDateStr(state.onsiteDate || todayDateString(), Number(st.getAttribute('data-on-step')))); return; }
+    if(t.closest('[data-on-copy]')){ try{ await navigator.clipboard.writeText(onsitesText(state.onsiteDate || todayDateString())); state.onsiteMsg = 'Copied.'; }catch(err){ state.onsiteMsg = 'Copy failed.'; } const m = document.getElementById('onsiteImportMsg'); if(m) m.textContent = state.onsiteMsg; return; }
+    const rmh = t.closest('[data-on-rmh]');
+    if(rmh && CURRENT_ROLE === 'admin'){ e.preventDefault(); const id = Number(rmh.getAttribute('data-on-rmh')), h = rmh.getAttribute('data-h'); const o = (state.onsites || []).find(x => x.id === id); if(o){ try{ await updateOnsite(id, { handlers: (o.handlers || []).filter(x => x !== h) }); }catch(err){ alert('Could not save: ' + err.message); } render(); } return; }
+    const del = t.closest('[data-on-del]');
+    if(del && CURRENT_ROLE === 'admin'){ const id = Number(del.getAttribute('data-on-del')); const o = (state.onsites || []).find(x => x.id === id); if(!o || !confirm('Remove the onsite interview for ' + o.candidate + '?')) return; try{ await apiCall('onsites', { method: 'POST', body: { action: 'delete', id } }); state.onsites = state.onsites.filter(x => x.id !== id); }catch(err){ alert('Could not remove it: ' + err.message); } render(); return; }
+    if(t.closest('#onsiteImportBtn') && CURRENT_ROLE === 'admin'){
+      const ta = document.getElementById('onsiteImportText'); const txt = ta ? ta.value : ''; state.onsiteImportDraft = txt; state.onsiteBusy = true; render();
+      try{ const r = await importOnsiteText(txt, state.onsiteDate || todayDateString()); state.onsiteMsg = r.msg; if(r.added) state.onsiteImportDraft = ''; if(r.firstDate) state.onsiteDate = r.firstDate; }
+      catch(err){ state.onsiteMsg = 'Could not save: ' + err.message; }
+      state.onsiteBusy = false; render();
+    }
+  });
+  document.addEventListener('change', async function(e){
+    const t = e.target; if(!inPanel(t)) return;
+    if(t.id === 'onsiteDateInput'){ setDate(t.value); return; }
+    if(CURRENT_ROLE !== 'admin') return;
+    const addh = t.getAttribute && t.getAttribute('data-on-addh');
+    if(addh && t.value){ const id = Number(addh); const o = (state.onsites || []).find(x => x.id === id); if(o){ try{ await updateOnsite(id, { handlers: (o.handlers || []).concat([t.value]) }); }catch(err){ alert('Could not save: ' + err.message); } render(); } return; }
+    const stt = t.getAttribute && t.getAttribute('data-on-st');
+    if(stt){ try{ await updateOnsite(Number(stt), { status: t.value }); }catch(err){ alert('Could not save: ' + err.message); } render(); return; }
+    const f = t.getAttribute && t.getAttribute('data-on-f');
+    if(f){ try{ await updateOnsite(Number(t.getAttribute('data-id')), { [f]: t.value }); }catch(err){ alert('Could not save: ' + err.message); } }
+  });
+  document.addEventListener('input', function(e){ if(e.target && e.target.id === 'onsiteImportText') state.onsiteImportDraft = e.target.value; });
+})();
+
+// ---------- Desk checks (added 2026-10-19) ----------
+// One panel, five tabs: Unassigned sweep, Workload, Next round not booked, Results (Passed / Failed / Waiting
+// + pass rate per company) and Weekly summary. Reads calls from every saved day plus assessments and onsites.
+function dcMonday(d){ const dt = new Date(d + 'T00:00:00'); return addDaysToDateStr(d, -((dt.getDay() + 6) % 7)); }
+function dcCalls(){ return state.deskCalls || []; }
+function dcCallKey(r){ return [r._date, normalizeNameKey(r.candidate), normalizeCompanyKey(r.company), (r.time || '').replace(/\s+/g, '')].join('|'); }
+function dcResult(kind, key){ return (state.results || {})[kind + '|' + key] || ''; }
+function dcItems(d){
+  const out = [];
+  dcCalls().filter(r => r._date === d && (r.candidate || '').trim()).forEach(r => out.push({ kind: 'call', key: dcCallKey(r), date: d, time: r.time, candidate: r.candidate, company: r.company, round: r.round, who: [r.assignee].filter(Boolean), status: r.status, woi: r.woi }));
+  (state.assessments || []).filter(a => a.date === d).forEach(a => out.push({ kind: 'assessment', key: String(a.id), date: d, time: a.time, candidate: a.candidate, company: a.company, round: 'Assessment', who: a.handlers || [] }));
+  (state.onsites || []).filter(o => o.date === d).forEach(o => out.push({ kind: 'onsite', key: String(o.id), date: d, time: o.time, candidate: o.candidate, company: o.company, round: o.round || 'Onsite', who: o.handlers || [], status: o.status === 'Cancelled' ? 'cancelled' : '' }));
+  return out.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+}
+async function loadResults(){
+  if(!API_BASE_URL){ state.resultsLoaded = true; return; }
+  try{ const data = await apiCall('results', {}); const m = {}; state.resultRows = data.rows || []; state.resultRows.forEach(r => { m[r.kind + '|' + r.refKey] = r.result; }); state.results = m; state.resultsLoaded = true; }
+  catch(e){ state.resultsError = String(e && e.message || e); state.resultsLoaded = true; }
+}
+async function setResult(item, result){
+  const cur = dcResult(item.kind, item.key); const next = cur === result ? '' : result;
+  await apiCall('results', { method: 'POST', body: { kind: item.kind, refKey: item.key, result: next, date: item.date, candidate: item.candidate, company: item.company } });
+  state.results = state.results || {}; state.resultRows = (state.resultRows || []).filter(r => !(r.kind === item.kind && r.refKey === item.key));
+  if(next){ state.results[item.kind + '|' + item.key] = next; state.resultRows.push({ kind: item.kind, refKey: item.key, result: next, date: item.date, candidate: item.candidate, company: item.company }); }
+  else delete state.results[item.kind + '|' + item.key];
+}
+function openDeskChecks(tab){
+  closeAllPanels(); state.showDeskChecks = true; if(tab) state.deskTab = tab;
+  if(!state.deskDate) state.deskDate = todayDateString();
+  if(!state.deskWeek) state.deskWeek = dcMonday(todayDateString());
+  render(); loadDeskData();
+}
+async function loadDeskData(){
+  state.deskLoading = true;
+  try{
+    await Promise.all([
+      fetchAllRowsAcrossDates(true).then(r => { state.deskCalls = r || []; }).catch(() => { state.deskCalls = state.deskCalls || []; }),
+      state.assessmentsLoaded ? null : loadAssessments(), state.onsitesLoaded ? null : loadOnsites(), loadResults(),
+      state.closuresLoaded ? null : (typeof loadClosures === 'function' ? loadClosures() : null),
+    ]);
+  }catch(e){}
+  state.deskLoading = false; render();
+}
+// Candidate + company journeys across calls, assessments and onsites (for "next round not booked").
+function dcClusters(){
+  const items = [];
+  dcCalls().forEach(r => { if((r.candidate || '').trim()) items.push({ kind: 'call', date: r._date, key: dcCallKey(r), candidate: r.candidate, company: r.company || '', round: r.round || '', status: r.status, woi: r.woi }); });
+  (state.assessments || []).forEach(a => items.push({ kind: 'assessment', date: a.date, key: String(a.id), candidate: a.candidate, company: a.company || '', round: 'Assessment' }));
+  (state.onsites || []).forEach(o => items.push({ kind: 'onsite', date: o.date, key: String(o.id), candidate: o.candidate, company: o.company || '', round: o.round || 'Onsite', status: o.status === 'Cancelled' ? 'cancelled' : '' }));
+  items.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const byCand = new Map();
+  items.forEach(it => { const k = normalizeNameKey(it.candidate); if(!k) return; if(!byCand.has(k)) byCand.set(k, []); byCand.get(k).push(it); });
+  const clusters = [];
+  byCand.forEach(list => {
+    const cs = [];
+    list.forEach(it => { let c = cs.find(x => !it.company || !x.company || assessCompanyMatch(x.company, it.company)); if(!c){ c = { candidate: it.candidate, company: it.company, items: [] }; cs.push(c); } if(!c.company) c.company = it.company; c.items.push(it); });
+    cs.forEach(c => clusters.push(c));
+  });
+  return clusters;
+}
+function dcNextRoundMissing(){
+  const today = todayDateString(), out = [];
+  const closed = (state.closures || []).map(c => normalizeNameKey(c.candidate) + '|' + normalizeCompanyKey(c.company || ''));
+  dcClusters().forEach(c => {
+    const live = c.items.filter(i => !i.status && !i.woi);
+    if(!live.length) return;
+    const last = live[live.length - 1];
+    if(last.date >= today) return;
+    if(closed.some(k => k === normalizeNameKey(c.candidate) + '|' + normalizeCompanyKey(c.company || ''))) return;
+    const res = dcResult(last.kind, last.key);
+    if(res === 'Failed') return;
+    const age = Math.round((new Date(today + 'T00:00:00') - new Date(last.date + 'T00:00:00')) / 86400000);
+    if(res === 'Passed') out.push({ c, last, res, age, strong: true });
+    else if(age >= 2 && age <= 21) out.push({ c, last, res, age, strong: false });
+  });
+  return out.sort((a, b) => (b.strong - a.strong) || (a.age - b.age));
+}
+function dcWeeklyText(w){
+  const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDaysToDateStr(w, i)), set = new Set(days);
+  const calls = dcCalls().filter(r => set.has(r._date) && (r.candidate || '').trim());
+  const live = calls.filter(r => !r.status), ass = (state.assessments || []).filter(a => set.has(a.date)), ons = (state.onsites || []).filter(o => set.has(o.date));
+  const rnd = { '1st': 0, '2nd': 0, '3rd+': 0 }; live.forEach(r => { const m = (r.round || '').match(/\d+/); const n = m ? Number(m[0]) : (/final/i.test(r.round || '') ? 3 : 1); rnd[n === 1 ? '1st' : n === 2 ? '2nd' : '3rd+']++; });
+  const cnt = (arr, f) => { const m = {}; arr.forEach(x => { const k = f(x); if(k) m[k] = (m[k] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+  const resRows = (state.resultRows || []).filter(r => set.has(r.date));
+  const L = ['Weekly summary — ' + assessShortDate(days[0]) + ' to ' + assessShortDate(days[6]), '',
+    'Calls: ' + calls.length + ' (' + live.length + ' held/planned, ' + (calls.length - live.length) + ' rescheduled/cancelled)',
+    'By round: 1st ' + rnd['1st'] + ' · 2nd ' + rnd['2nd'] + ' · 3rd+ ' + rnd['3rd+'],
+    'Assessments: ' + ass.length + ' · Onsite interviews: ' + ons.length,
+    'Results: ' + resRows.filter(r => r.result === 'Passed').length + ' passed, ' + resRows.filter(r => r.result === 'Failed').length + ' failed, ' + resRows.filter(r => r.result === 'Waiting').length + ' waiting', '',
+    'Top companies: ' + (cnt(live, r => (r.company || '').trim()).slice(0, 8).map(x => x[0] + ' (' + x[1] + ')').join(', ') || '—'),
+    'By handler: ' + (cnt(live, r => (r.assignee || '').trim() || 'Unassigned').slice(0, 12).map(x => x[0] + ' (' + x[1] + ')').join(', ') || '—'),
+    'Busiest days: ' + cnt(live, r => r._date).slice(0, 3).map(x => assessShortDate(x[0]) + ' (' + x[1] + ')').join(', ')];
+  return L.join('\n');
+}
+function renderDeskChecksPanel(){
+  const esc = escapeHtml, tab = state.deskTab || 'unassigned', admin = CURRENT_ROLE === 'admin';
+  const tabs = [['unassigned', '🚫 Unassigned'], ['workload', '⚖ Workload'], ['nextround', '➡ Next round'], ['results', '✅ Results'], ['weekly', '📅 Weekly']];
+  const today = todayDateString();
+  let body = '';
+  if(state.deskLoading && !state.deskCalls) body = '<div class="hint"><span class="spinner"></span> Loading every day…</div>';
+  else if(tab === 'unassigned'){
+    const days = [today, addDaysToDateStr(today, 1)];
+    body = days.map(d => {
+      const its = dcItems(d).filter(i => i.kind === 'call' ? (!(i.who[0] || '').trim() && !i.status && !i.woi) : (!i.who.length && !i.status));
+      return `<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:6px">${esc(assessDateLabel(d))} — ${its.length} with nobody assigned</div>${its.length ? its.map(i => `<div class="notif-row"><div class="notif-name">${esc(i.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(i.company || '')}</span></div><div class="notif-detail"><span class="notif-chip">${esc(i.time || '—')}</span><span class="notif-chip">${i.kind === 'call' ? esc(i.round || 'Call') : i.kind === 'assessment' ? '🧪 Assessment' : '🏢 Onsite'}</span></div></div>`).join('') : '<div class="hint" style="color:var(--teal)">✅ Everything has a handler.</div>'}</div>`;
+    }).join('');
+  } else if(tab === 'workload'){
+    const d = state.deskDate || today, its = dcItems(d).filter(i => !i.status), m = {};
+    const bump = (n, k) => { m[n] = m[n] || { call: 0, assessment: 0, onsite: 0 }; m[n][k]++; };
+    its.forEach(i => { if(i.kind === 'call') bump((i.who[0] || '').trim() || 'Unassigned', 'call'); else if(!i.who.length) bump('Unassigned', i.kind); else i.who.forEach(w => bump(w, i.kind)); });
+    const rows = Object.entries(m).map(([n, v]) => ({ n, v, t: v.call + v.assessment + v.onsite })).sort((a, b) => b.t - a.t);
+    const named = rows.filter(r => r.n !== 'Unassigned'), avg = named.length ? named.reduce((s, r) => s + r.t, 0) / named.length : 0, max = Math.max(1, ...rows.map(r => r.t));
+    body = `<div class="row" style="gap:8px;margin-bottom:10px;align-items:center"><button class="btn ghost" data-dc-dstep="-1">‹</button><input type="date" id="dcDate" class="cell-input" value="${esc(d)}" style="width:auto"><button class="btn ghost" data-dc-dstep="1">›</button><button class="btn ghost" data-dc-dgo="${today}">Today</button><span class="hint">${its.length} items · average ${avg.toFixed(1)} per handler</span></div>
+      <table class="ip-table" style="width:100%"><thead><tr><th>Handler</th><th>Calls</th><th>Assessments</th><th>Onsites</th><th>Total</th><th style="width:35%"></th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.n)}${r.n !== 'Unassigned' && avg && r.t >= Math.max(5, avg * 1.5) ? ' <span class="notif-chip" style="color:var(--coral)">heavy</span>' : ''}</td><td>${r.v.call}</td><td>${r.v.assessment}</td><td>${r.v.onsite}</td><td><b>${r.t}</b></td><td><div style="height:8px;border-radius:4px;background:${r.n === 'Unassigned' ? 'var(--coral)' : 'var(--teal)'};width:${Math.round(r.t / max * 100)}%"></div></td></tr>`).join('') || '<tr><td colspan="6" class="hint">Nothing on this day.</td></tr>'}</tbody></table>`;
+  } else if(tab === 'nextround'){
+    const list = dcNextRoundMissing();
+    const row = x => `<div class="notif-row"><div class="notif-name">${esc(x.c.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(x.c.company || '')}</span></div><div class="notif-detail"><span class="notif-chip">last: ${esc(x.last.kind === 'call' ? (x.last.round || 'call') : x.last.kind)} · ${esc(assessShortDate(x.last.date))} (${x.age}d ago)</span>${x.res ? `<span class="notif-chip" style="color:var(--teal)">${esc(x.res)}</span>` : '<span class="notif-chip">result not marked</span>'}</div></div>`;
+    const strong = list.filter(x => x.strong), weak = list.filter(x => !x.strong);
+    body = `<div class="hint" style="margin-bottom:10px">Candidates whose latest call, assessment or onsite is in the past with nothing booked after it. Marking results (Results tab) makes this list accurate; failed ones and closures are left out.</div>
+      <div style="font-weight:700;margin-bottom:6px">✅ Passed — next step not booked (${strong.length})</div>${strong.map(row).join('') || '<div class="hint">None.</div>'}
+      <div style="font-weight:700;margin:14px 0 6px">❓ Result not marked, 2–21 days ago (${weak.length})</div>${weak.slice(0, 60).map(row).join('') || '<div class="hint">None.</div>'}`;
+  } else if(tab === 'results'){
+    const d = state.deskDate || today, its = dcItems(d).filter(i => !i.status);
+    const btn = (i, r) => `<button class="btn ${dcResult(i.kind, i.key) === r ? 'primary' : 'ghost'}" data-dc-res="${r}" data-kind="${i.kind}" data-key="${esc(i.key)}" data-cand="${esc(i.candidate)}" data-co="${esc(i.company || '')}" data-date="${d}" style="font-size:11px;padding:2px 8px" ${admin ? '' : 'disabled'}>${r}</button>`;
+    const stats = {}; (state.resultRows || []).forEach(r => { const k = (r.company || '').trim(); if(!k) return; const s = stats[k] = stats[k] || { P: 0, F: 0, W: 0 }; if(r.result === 'Passed') s.P++; else if(r.result === 'Failed') s.F++; else s.W++; });
+    const srows = Object.entries(stats).sort((a, b) => (b[1].P + b[1].F + b[1].W) - (a[1].P + a[1].F + a[1].W)).slice(0, 25);
+    body = `<div class="row" style="gap:8px;margin-bottom:10px;align-items:center"><button class="btn ghost" data-dc-dstep="-1">‹</button><input type="date" id="dcDate" class="cell-input" value="${esc(d)}" style="width:auto"><button class="btn ghost" data-dc-dstep="1">›</button><button class="btn ghost" data-dc-dgo="${today}">Today</button><span class="hint">${its.length} items</span></div>
+      ${state.resultsError ? `<div class="hint" style="color:var(--coral)">⚠ ${esc(state.resultsError)}</div>` : ''}
+      ${its.map(i => `<div class="notif-row"><div class="notif-name">${esc(i.candidate)} <span class="notif-detail" style="font-weight:400">— ${esc(i.company || '')} · ${esc(i.time || '')} · ${i.kind === 'call' ? esc(i.round || '') : i.kind}</span></div><div style="display:flex;gap:6px;margin-top:4px">${['Passed', 'Failed', 'Waiting'].map(r => btn(i, r)).join('')}</div></div>`).join('') || '<div class="hint">Nothing on this day.</div>'}
+      <div style="font-weight:700;margin:16px 0 6px">Pass rate by company (all marked results)</div>
+      <table class="ip-table" style="width:100%"><thead><tr><th>Company</th><th>Passed</th><th>Failed</th><th>Waiting</th><th>Pass rate</th></tr></thead><tbody>${srows.map(([k, s]) => `<tr><td>${esc(k)}</td><td>${s.P}</td><td>${s.F}</td><td>${s.W}</td><td>${s.P + s.F ? Math.round(s.P / (s.P + s.F) * 100) + '%' : '—'}</td></tr>`).join('') || '<tr><td colspan="5" class="hint">No results marked yet.</td></tr>'}</tbody></table>`;
+  } else {
+    const w = state.deskWeek || dcMonday(today);
+    body = `<div class="row" style="gap:8px;margin-bottom:10px;align-items:center"><button class="btn ghost" data-dc-wstep="-7">‹ Prev week</button><span class="hint">${esc(assessShortDate(w))} – ${esc(assessShortDate(addDaysToDateStr(w, 6)))}</span><button class="btn ghost" data-dc-wstep="7">Next week ›</button><button class="btn ghost" data-dc-wstep="0">This week</button><span style="flex:1"></span><button class="btn ghost" data-dc-wcopy>📋 Copy</button></div><pre id="dcWeekly" style="white-space:pre-wrap;font-size:13px;background:var(--surface-2);padding:12px;border-radius:8px">${esc(dcWeeklyText(w))}</pre>`;
+  }
+  return `<div class="import-panel" id="deskPanel"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px">${tabs.map(([k, l]) => `<button class="btn ${tab === k ? 'primary' : 'ghost'}" data-dc-tab="${k}">${l}</button>`).join('')}<span style="flex:1"></span><button class="btn ghost" data-dc-refresh title="Reload every day">${state.deskLoading ? '…' : '↻'}</button></div>${body}</div>`;
+}
+(function setupDeskEvents(){
+  const inPanel = t => t && t.closest && t.closest('#deskPanel');
+  document.addEventListener('click', async function(e){
+    const t = e.target; if(!inPanel(t)) return;
+    const tb = t.closest('[data-dc-tab]'); if(tb){ state.deskTab = tb.getAttribute('data-dc-tab'); render(); return; }
+    if(t.closest('[data-dc-refresh]')){ loadDeskData(); render(); return; }
+    const ds = t.closest('[data-dc-dstep]'); if(ds){ state.deskDate = addDaysToDateStr(state.deskDate || todayDateString(), Number(ds.getAttribute('data-dc-dstep'))); render(); return; }
+    const dg = t.closest('[data-dc-dgo]'); if(dg){ state.deskDate = dg.getAttribute('data-dc-dgo'); render(); return; }
+    const ws = t.closest('[data-dc-wstep]'); if(ws){ const n = Number(ws.getAttribute('data-dc-wstep')); state.deskWeek = n === 0 ? dcMonday(todayDateString()) : addDaysToDateStr(state.deskWeek || dcMonday(todayDateString()), n); render(); return; }
+    if(t.closest('[data-dc-wcopy]')){ try{ await navigator.clipboard.writeText(dcWeeklyText(state.deskWeek || dcMonday(todayDateString()))); }catch(err){} return; }
+    const rs = t.closest('[data-dc-res]');
+    if(rs && CURRENT_ROLE === 'admin'){
+      const item = { kind: rs.getAttribute('data-kind'), key: rs.getAttribute('data-key'), candidate: rs.getAttribute('data-cand'), company: rs.getAttribute('data-co'), date: rs.getAttribute('data-date') };
+      try{ await setResult(item, rs.getAttribute('data-dc-res')); }catch(err){ alert('Could not save the result: ' + err.message); }
+      render();
+    }
+  });
+  document.addEventListener('change', function(e){ if(e.target && e.target.id === 'dcDate' && inPanel(e.target) && e.target.value){ state.deskDate = e.target.value; render(); } });
+})();
+// Calls for the same client on the same day (e.g. AJ Boggs: Manoj + Hanmanth) — a small marker on the board
+// so they can go to the same handler.
+let _scCache = { ref: null, len: -1, map: null };
+function sameClientPeers(r){
+  const rows = state.rows || [];
+  if(_scCache.ref !== rows || _scCache.len !== rows.length){
+    const map = new Map();
+    const withCo = rows.filter(x => (x.company || '').trim() && (x.candidate || '').trim() && !x.status);
+    withCo.forEach(a => { const peers = withCo.filter(b => b !== a && normalizeNameKey(b.candidate) !== normalizeNameKey(a.candidate) && assessCompanyMatch(a.company, b.company)); if(peers.length) map.set(a.id, peers); });
+    _scCache = { ref: rows, len: rows.length, map };
+  }
+  return _scCache.map.get(r.id) || [];
+}
+function sameClientBadge(r){
+  const p = sameClientPeers(r); if(!p.length) return '';
+  return `<span class="mini-badge" title="${escapeHtml('Same client today: ' + p.map(x => x.candidate + ' (' + (x.time || '?') + (x.assignee ? ', ' + x.assignee : ', unassigned') + ')').join('; '))}">🔗${p.length + 1}</span>`;
+}
+
+
 // ---------- Check against group list (added 2026-10-19) ----------
 // Paste the group's list for the open day: every call in it is matched with the app's calls for that
 // day and the result is sorted into Missing (in the list, not in the app), Extra (in the app, not in
@@ -1504,7 +1826,7 @@ function renderListCheckPanel(){
   return `<div class="import-panel" id="listCheckPanel">
     <div class="hint" style="margin-bottom:8px">Paste the group's list for <b>${esc(state.date)}</b> (the day open above). Nothing is changed until you press one of the buttons in the results.</div>
     <textarea id="listCheckText" style="width:100%;min-height:150px" placeholder="1. Name (UK) – Interview – Company - Role – 2:30 PM IST – Duration: 30 Mins (1st Round)">${esc(state.listCheckText || '')}</textarea>
-    <div class="row" style="margin-top:8px"><span class="hint">Matches by candidate + company + time; the company spelling is matched loosely (AJ Boggs ≈ Aj boggs).</span><button class="btn primary" id="listCheckRun">🔍 Check</button></div>
+    <div class="row" style="margin-top:8px"><span class="hint">Matches by candidate + company + time; the company spelling is matched loosely (AJ Boggs ≈ Aj boggs).</span><span style="display:flex;gap:6px"><button class="btn ghost" id="listCheckReread" title="Re-read the original lines saved with today's calls and show where company, role, time or round now read differently">🔁 Re-read saved lines</button><button class="btn primary" id="listCheckRun">🔍 Check</button></span></div>
     ${body}
   </div>`;
 }
@@ -1512,6 +1834,12 @@ function renderListCheckPanel(){
   document.addEventListener('click', function(e){
     const t = e.target; if(!t.closest || !t.closest('#listCheckPanel')) return;
     const rerun = () => { state.listCheckResult = listCheckCompute(state.listCheckText || ''); render(); };
+    if(t.closest('#listCheckReread')){
+      const lines = state.rows.map(x => x.raw).filter(x => x && x.trim());
+      if(!lines.length){ alert('None of today\u2019s calls kept their original line, so there is nothing to re-read. Paste the list instead.'); return; }
+      state.listCheckText = lines.join('\n'); try{ state.listCheckResult = listCheckCompute(state.listCheckText); state.listCheckResult.missing = []; state.listCheckResult.extra = []; render(); }catch(err){ alert('Could not re-read the saved lines: ' + err.message); }
+      return;
+    }
     if(t.closest('#listCheckRun')){ const ta = document.getElementById('listCheckText'); state.listCheckText = ta ? ta.value : ''; try{ rerun(); }catch(err){ alert('Could not read that list: ' + err.message); } return; }
     const add = t.closest('[data-lc-add]'); if(add){ listCheckAddMissing([Number(add.getAttribute('data-lc-add'))]).then(rerun); return; }
     if(t.closest('[data-lc-addall]')){ const n = state.listCheckResult.missing.length; listCheckAddMissing(state.listCheckResult.missing.map((_, i) => i)).then(rerun); return; }
@@ -2479,10 +2807,36 @@ function checkTimeSensitiveAlerts(){
     }
   });
 }
+// Early warnings (added 2026-10-19): ~1 hour before a call / assessment / onsite that still has nobody on it.
+function checkEarlyWarnings(){
+  if(!state.alertsEnabled) return;
+  if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if(state.date !== todayDateString()) return;
+  const now = new Date(), nowMin = now.getHours()*60 + now.getMinutes();
+  const fire = (key, title, body) => {
+    if(state.alertedRowIds.has(key)) return; state.alertedRowIds.add(key);
+    try{ const n = new Notification(title, { body, tag: 'cd-early-' + key }); n.onclick = ()=>{ try{ window.focus(); }catch(e){} }; }catch(e){}
+  };
+  (state.rows||[]).forEach(r=>{
+    if(r.woi || (r.assignee && r.assignee.trim()) || r.status) return;
+    const m = timeToMinutes(r.time); if(m === 9999) return;
+    const diff = m - nowMin;
+    if(diff <= 60 && diff > ALERT_WINDOW_BEFORE_MIN) fire('60|' + r.id, 'Call in about an hour \u2014 nobody assigned', `${r.candidate||'(no name)'}${r.company?' \u2014 '+r.company:''} at ${r.time||'?'}.`);
+  });
+  const today = todayDateString();
+  (state.assessments||[]).filter(a => a.date === today && !a.done && !(a.handlers||[]).length).forEach(a => {
+    const diff = timeToMinutes(a.time) - nowMin; if(timeToMinutes(a.time) !== 9999 && diff <= 60 && diff >= -10) fire('A' + a.id, 'Assessment soon \u2014 no handler', `${a.candidate}${a.company?' \u2014 '+a.company:''} at ${a.time}.`);
+  });
+  (state.onsites||[]).filter(o => o.date === today && o.status === 'Scheduled' && !(o.handlers||[]).length).forEach(o => {
+    const diff = timeToMinutes(o.time) - nowMin; if(timeToMinutes(o.time) !== 9999 && diff <= 90 && diff >= -10) fire('O' + o.id, 'Onsite soon \u2014 no handler', `${o.candidate}${o.company?' \u2014 '+o.company:''} at ${o.time}${o.location?' @ '+o.location:''}.`);
+  });
+}
 function setupTimeSensitiveAlerts(){
   try{ state.alertsEnabled = localStorage.getItem('cd_alerts_enabled') === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted'; }catch(e){ state.alertsEnabled = false; }
   setInterval(checkTimeSensitiveAlerts, 60000);
+  setInterval(checkEarlyWarnings, 60000);
   checkTimeSensitiveAlerts();
+  checkEarlyWarnings();
 }
 // ---------- Background push (added 2026-10-02) ----------
 // The real follow-on flagged when foreground-only alerts shipped
@@ -6108,6 +6462,8 @@ function closeAllPanels(){
   state.showExpectedClosures = false;
   state.showAssessments = false;
   state.showListCheck = false;
+  state.showOnsites = false;
+  state.showDeskChecks = false;
   state.showStudentsMaster = false;
   state.showConflicts = false;
   state.showUniversalSearch = false;
@@ -6144,6 +6500,8 @@ function getActivePanelName(){
   if(state.showExpectedClosures) return 'expectedClosures';
   if(state.showAssessments) return 'assessments';
   if(state.showListCheck) return 'listCheck';
+  if(state.showOnsites) return 'onsites';
+  if(state.showDeskChecks) return 'deskChecks';
   if(state.showStudentsMaster) return 'studentsMaster';
   if(state.showConflicts) return 'conflicts';
   if(state.showUniversalSearch) return 'universalSearch';
@@ -6185,6 +6543,8 @@ function renderActivePanel(name){
   if(name === 'expectedClosures') return renderExpectedClosuresPanel();
   if(name === 'assessments') return renderAssessmentsPanel();
   if(name === 'listCheck') return renderListCheckPanel();
+  if(name === 'onsites') return renderOnsitesPanel();
+  if(name === 'deskChecks') return renderDeskChecksPanel();
   if(name === 'studentsMaster') return renderStudentsMasterPanel();
   if(name === 'conflicts') return renderConflictsPanel();
   if(name === 'universalSearch') return renderUniversalSearchPanel();
@@ -6207,7 +6567,7 @@ function panelTitle(name){
     notifications:'Notifications', portalSync:'Team Sync', incentives:'Incentives', backups:'Backups',
     roster:'Team Roster', importHub:'Import',
     rescheduleReview:'Confirm Reschedule/Cancel', closureReview:'Confirm Closures',
-    closures:'Closures / Job Offers', expectedClosures:'Expected Closures', listCheck:'Check against group list',
+    closures:'Closures / Job Offers', expectedClosures:'Expected Closures', listCheck:'Check against group list', onsites:'Onsite interviews', deskChecks:'Desk checks',
     studentsMaster:'Students Master', conflicts:'Resolve Conflicts',
     universalSearch:'Search Everywhere', missedCheck:'Check for Missed Messages', missedCheckReview:'Confirm Missing Calls',
     duplicatesReview:'Confirm Remove Duplicates', clearAllReview:'Confirm Clear All', calendarView:'Calendar', help:'Help & Shortcuts',
@@ -6537,6 +6897,8 @@ function render(){
             <div class="more-menu-section-label">Tools</div>
             <button class="more-menu-item" id="toggleMissedCheck" title="Upload a WhatsApp 'Export Chat' file and check for call messages that don't have a matching row yet">🔍 Check for Missed Messages${(new Date().getHours() >= MISSED_CHECK_NUDGE_HOUR && !getLastMissedCheckRunAt(state.date)) ? ` <span class="notif-info-badge" title="Not yet run for ${escapeHtml(state.date)} today">not run today</span>` : ''}</button>
             <button class="more-menu-item" id="togglePortalSync" title="Pull assignments &amp; incentives from the Interview Portal — also refreshes the 📡 badge on any row where the Portal shows a different assignee">📡 Team Sync</button>
+            <button class="more-menu-item" id="toggleOnsites" title="Onsite / in-person interviews posted in the group">🏢 Onsite interviews${state.onsitesLoaded && onsitesPendingToday() ? ' (' + onsitesPendingToday() + ' today)' : ''}</button>
+            <button class="more-menu-item" id="toggleDeskChecks" title="Unassigned sweep, workload, next round not booked, results and weekly summary">🧭 Desk checks</button>
             <button class="more-menu-item" id="toggleListCheck" title="Paste the group's list for the open day and see what is missing, extra or different in the app">✅ Check against group list</button>
             <button class="more-menu-item" id="toggleAssessments" title="Online tests and 'interview through assessment' slots posted in the group — import the message, see each day's list">🧪 Assessments${state.assessmentsLoaded && assessmentsPendingToday() ? ' (' + assessmentsPendingToday() + ' today)' : ''}</button>
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleStudentsMaster">🎓 Students Master</button>` : ''}
@@ -7500,6 +7862,8 @@ const QUICK_JUMP_COMMANDS = [
   { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
+  { label: '🏢 Onsite interviews', keywords: 'onsite on-site in person face to face interviews', action: ()=>{ openOnlyPanel('showOnsites'); if(!state.onsiteDate) state.onsiteDate = todayDateString(); if(!state.onsitesLoaded) loadOnsites(); } },
+  { label: '🧭 Desk checks', keywords: 'desk checks unassigned sweep workload next round not booked results pass fail weekly summary', action: ()=>{ openDeskChecks(); } },
   { label: '✅ Check against group list', keywords: 'check list compare reconcile missing calls count group list match', action: ()=>{ openOnlyPanel('showListCheck'); } },
   { label: '🧪 Assessments', keywords: 'assessments assessment tests codility hackajob online test interview through assessment', action: ()=>{ openOnlyPanel('showAssessments'); if(!state.assessDate) state.assessDate = todayDateString(); if(!state.assessmentsLoaded) loadAssessments(); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
@@ -10802,7 +11166,7 @@ function renderTable(rows, conflictIds, clientConflicts){
       <td class="select-cell" data-label=""><input type="checkbox" class="row-select" data-id="${r.id}" ${state.selectedIds.has(r.id)?'checked':''}></td>
       <td class="time" data-label="Time">${isConflict?`<span class="flag-icon" title="${escapeHtml(conflictReason + '\n\nFree at ' + r.time + ': ' + (findFreePeopleAtTime(r.time, advancedRound).join(', ') || 'nobody free right now'))}">⚠</span>`:''}<input class="cell-input time-input" data-field="time" value="${escapeHtml(r.time)}" placeholder="e.g. 1:30 AM" title="Edit if the source data had a typo (e.g. should be AM not PM)"></td>
       <td data-label="Candidate">
-        ${(()=>{ const as = r.candidate ? assessmentsForCandidate(r.candidate, r.company) : []; return as.length ? `<span class="mini-badge" title="${escapeHtml('Assessment: ' + as.map(a => assessShortDate(a.date) + (a.assessment ? ' (' + a.assessment + ')' : '')).join(', '))}" style="cursor:pointer" data-open-assess="${escapeHtml(as[0].date)}">🧪</span>` : ''; })()}${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client; ${escapeHtml(repeatFlag.occurrences.map(o=>o.date).filter(Boolean).slice(0,6).join(', '))}) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); if(!sameClient) return ''; const roleDiff = !!(sameClient.role && r.role && sameClient.role.trim().toLowerCase() !== r.role.trim().toLowerCase()); return `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}${roleDiff ? ' — DIFFERENT role this time (was: '+escapeHtml(sameClient.role)+'), so this may be a new opening, not a repeat round' : (sameClient.role && r.role ? ' — same role' : '')}">${roleDiff ? '↻≠' : '↻'}</span>`; })()}${(()=>{
+        ${(()=>{ const as = r.candidate ? assessmentsForCandidate(r.candidate, r.company) : []; return as.length ? `<span class="mini-badge" title="${escapeHtml('Assessment: ' + as.map(a => assessShortDate(a.date) + (a.assessment ? ' (' + a.assessment + ')' : '')).join(', '))}" style="cursor:pointer" data-open-assess="${escapeHtml(as[0].date)}">🧪</span>` : ''; })()}${(()=>{ const os = r.candidate ? onsitesForCandidate(r.candidate, r.company) : []; return os.length ? `<span class="mini-badge" title="${escapeHtml('Onsite: ' + os.map(o => assessShortDate(o.date) + (o.location ? ' @ ' + o.location : '')).join(', '))}" style="cursor:pointer" data-open-onsite="${escapeHtml(os[0].date)}">🏢</span>` : ''; })()}${sameClientBadge(r)}${(state.recentImportIds && state.recentImportIds.has(r.id))?`<span class="mini-badge mini-badge-recent-import" title="Added or updated by the most recent import">🆕</span>`:''}${r.status?`<span class="prior-badge" style="color:${statusBadgeInfo(r.status).colorVar};border-color:${statusBadgeInfo(r.status).colorVar}" title="${escapeHtml((r.statusFields||[]).map(f=>f.label+': '+f.value).join(', ')||'')}">${statusBadgeInfo(r.status).icon} ${statusBadgeInfo(r.status).shortLabel}</span><button class="clear-status-btn" data-id="${r.id}" title="This call was NOT actually ${statusBadgeInfo(r.status).label.toLowerCase()} — clear the tag but keep the call">✕</button>`:''}${hasDoubts?`<span class="flag-icon doubt-icon" title="${escapeHtml(r.doubts.join(' '))}">❔</span>`:''}${category?`<span class="cat-badge cat-${category.toLowerCase()}" title="${category}">${category==='Healthcare'?'⚕':'🎓'}</span>`:''}${r.roundType?(()=>{ const rt = roundTypeBadgeInfo(r.roundType); return rt ? `<span class="round-type-badge round-type-${r.roundType}" title="${escapeHtml(rt.label)}">${rt.shortLabel}</span>` : ''; })():''}<span class="badge-row">${(()=>{ const reschedWarn = findPriorRescheduleWarning(r); return reschedWarn ? `<span class="mini-badge mini-badge-resched" title="⚠ Same client (${escapeHtml(reschedWarn.company)}) — this candidate\u2019s call here was already ${escapeHtml(statusBadgeInfo(reschedWarn.status).label.toLowerCase())} on ${escapeHtml(reschedWarn.date)}${reschedWarn.assignee?', handled by '+escapeHtml(reschedWarn.assignee):''}. Double-check this isn\u2019t the same call resurfacing before treating it as new.">!</span>` : ''; })()}${(()=>{ const repeatFlag = findRepeatNoShowFlag(r); return repeatFlag ? `<span class="mini-badge mini-badge-noshow" title="\u26a0 This candidate has ${repeatFlag.count} prior rescheduled/cancelled/no-response outcome(s) across earlier calls (any client; ${escapeHtml(repeatFlag.occurrences.map(o=>o.date).filter(Boolean).slice(0,6).join(', '))}) \u2014 worth a quick gut-check before assuming this one goes ahead as planned.">${repeatFlag.count}\u00d7!</span>` : ''; })()}${(()=>{ const prior = findPriorOccurrence(r); return prior ? `<span class="mini-badge mini-badge-prior" title="Handled before: ${escapeHtml(prior.assignee||'unassigned')} — ${escapeHtml(prior.date)}, ${escapeHtml(prior.round||'round n/a')}${prior.company?', '+escapeHtml(prior.company):''}">P</span>` : ''; })()}${(r.candidate && expectedClosureKeys.has(normalizeNameKey(r.candidate)+'|'+normalizeCompanyKey(r.company||''))) ? `<span class="mini-badge mini-badge-expectclosure" title="Flagged as an expected closure — see 🎯 Expected for the note and to follow up">🎯</span>` : ''}${(()=>{ const sameClient = findPriorSameClientOccurrence(r); if(!sameClient) return ''; const roleDiff = !!(sameClient.role && r.role && sameClient.role.trim().toLowerCase() !== r.role.trim().toLowerCase()); return `<span class="mini-badge mini-badge-round" title="Same client, prior round: ${escapeHtml(sameClient.round||'round n/a')} on ${escapeHtml(sameClient.date)}${sameClient.assignee?', handled by '+escapeHtml(sameClient.assignee):''}${roleDiff ? ' — DIFFERENT role this time (was: '+escapeHtml(sameClient.role)+'), so this may be a new opening, not a repeat round' : (sameClient.role && r.role ? ' — same role' : '')}">${roleDiff ? '↻≠' : '↻'}</span>`; })()}${(()=>{
   const info = studentMatchBadgeInfo(r.candidate);
   if(!info) return '';
   if(info.kind === 'confirm'){
@@ -13046,6 +13410,16 @@ function attachHandlers(conflictIds){
         : `⚠ MISMATCH: ${accountedFor} accounted for, but ${totalDataLines} were found in the paste. Something may be missing — please review carefully.`,
       trulyNewRows.length ? `\nIf this added anything unwanted, use the ↩ Undo import banner at the top to remove just the ${trulyNewRows.length} new call(s) in one click.` : null
     ].filter(Boolean);
+    // Auto-check (added 2026-10-19): compare the pasted list with what the app now holds for this date.
+    try{
+      if(totalDataLines >= 8){
+        const chk = listCheckCompute(text);
+        state.listCheckText = text; state.listCheckResult = chk;
+        if(chk.missing.length || chk.different.length){
+          reconciliationLines.push(`\nCheck against the pasted list: ${chk.missing.length} missing, ${chk.different.length} read differently. Open More \u2192 \u2705 Check against group list to review them.`);
+        } else reconciliationLines.push(`\n\u2705 Check against the pasted list: everything matches.`);
+      }
+    }catch(e){}
     alert(reconciliationLines.join('\n'));
 
     if(otherDateSummaries.length){
@@ -13090,6 +13464,23 @@ function attachHandlers(conflictIds){
         closeAllPanels(); state.showAssessments = true; state.assessDate = r.firstDate || day; state.assessMsg = r.msg; render(); return;
       }
       alert('🧪 ' + r.msg + '\nThe remaining lines are being imported as calls.');
+    }
+    // "Onsite interviews (dd-mm-yyyy)" sections go to the Onsite table, never onto the call board.
+    {
+      const ta3 = document.getElementById('importText');
+      const so = splitOnsiteLines(ta3 ? ta3.value : '');
+      if(so.onsiteLines.some(l => l.trim())){
+        const dateInput = document.getElementById('importDate');
+        const day = (dateInput && dateInput.value) || state.date;
+        let r;
+        try{ r = await importOnsiteText(so.onsiteLines.join('\n'), day); }
+        catch(e){ alert('Could not save the onsite interviews: ' + e.message + '\nNothing was imported \u2014 please try again.'); return; }
+        { const ta4 = document.getElementById('importText'); if(ta4) ta4.value = so.rest; const d4 = document.getElementById('importDate'); if(d4 && day) d4.value = day; }
+        if(!so.rest.trim()){
+          closeAllPanels(); state.showOnsites = true; state.onsiteDate = r.firstDate || day; state.onsiteMsg = r.msg; render(); return;
+        }
+        alert('\ud83c\udfe2 ' + r.msg + '\nThe remaining lines are being imported as calls.');
+      }
     }
     runImportNow(null);
   };
@@ -13418,6 +13809,11 @@ function attachHandlers(conflictIds){
   };
 
   document.querySelectorAll('[data-open-assess]').forEach(el => { el.onclick = (ev)=>{ ev.stopPropagation(); openAssessmentsPanel(el.getAttribute('data-open-assess'), false); }; });
+  const toggleOnsitesBtn = document.getElementById('toggleOnsites');
+  if(toggleOnsitesBtn) toggleOnsitesBtn.onclick = ()=>{ openOnlyPanel('showOnsites'); if(!state.onsiteDate) state.onsiteDate = todayDateString(); render(); if(!state.onsitesLoaded || state.onsitesError) loadOnsites(); };
+  const toggleDeskChecksBtn = document.getElementById('toggleDeskChecks');
+  if(toggleDeskChecksBtn) toggleDeskChecksBtn.onclick = ()=>{ openDeskChecks(); };
+  document.querySelectorAll('[data-open-onsite]').forEach(el => { el.onclick = (ev)=>{ ev.stopPropagation(); closeAllPanels(); state.showOnsites = true; state.onsiteDate = el.getAttribute('data-open-onsite'); render(); }; });
   const toggleListCheckBtn = document.getElementById('toggleListCheck');
   if(toggleListCheckBtn) toggleListCheckBtn.onclick = ()=>{ openOnlyPanel('showListCheck'); render(); };
   const toggleAssessmentsBtn = document.getElementById('toggleAssessments');
@@ -14730,6 +15126,7 @@ async function startApp(){
   loadClosures().catch(()=>{});
   loadExpectedClosures().catch(()=>{});
   loadAssessments().catch(()=>{});
+  loadOnsites().catch(()=>{});
   loadAppSettings().catch(()=>{});
 }
 // The repeat-candidate scan (scanForRepeatCandidates) groups occurrences by
@@ -15997,6 +16394,13 @@ window.addEventListener('keydown', (e)=>{
       if(!state.assessmentsLoaded || state.assessmentsError) loadAssessments();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setTimeout(()=>{ const el = document.getElementById('assessImportText'); if(el) el.focus(); }, 40);
+      return;
+    }
+    if(k==='o' && e.altKey && CURRENT_ROLE !== 'user' && CURRENT_ROLE !== 'team_lead'){
+      e.preventDefault();
+      state.showQuickJump = false; state.showImportMenu = false;
+      closeAllPanels(); state.showOnsites = true; state.onsiteDate = state.date || todayDateString(); render();
+      if(!state.onsitesLoaded || state.onsitesError) loadOnsites();
       return;
     }
     if(k==='n' || k==='r'){
