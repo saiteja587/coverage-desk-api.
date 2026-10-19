@@ -213,3 +213,7 @@ body.d2-compact #tableScrollMain td,body.d2-compact #tableScrollMain th{font-siz
 .d2-tl-b.k-ponly{border:1.5px dashed var(--violet);background:color-mix(in srgb,var(--violet) 8%,transparent);cursor:default}
 .d2-bd{position:absolute;top:2px;right:4px;font:800 9px var(--mono);font-style:normal;padding:0 4px;border-radius:5px;background:var(--sky);color:#04201c}
 .d2-bd.d{background:var(--amber)}.d2-bd.o{background:var(--violet);color:#fff}
+
+/* Keep the toolbar (and its dropdown menus) above the table / filter bar / sticky header */
+.toolbar{position:relative;z-index:40}
+#tableScrollMain{isolation:isolate}
