@@ -293,8 +293,14 @@
       var absent = false; try{ absent = typeof isAbsent==='function' && isAbsent(p.name, state.date); }catch(x){}
       list.push({name:p.name, team:p.team||'', load:mine.length, clash:clash, absent:absent, advanced:!!p.advanced});
     });
+    var teams = {}; roster.forEach(function(p){ if(p.team) teams[p.team]=1; }); t.forEach(function(n){ teams[n]=1; });
+    var teamList = Object.keys(teams).filter(function(n){ return n && n!=='Needs Team Assignment'; }).sort().map(function(n){
+      var cnt = rows().filter(function(r){ return r.id!==row.id && r.assignee===n && !r.woi; }).length;
+      var members = roster.filter(function(p){ return p.team===n && !t.has(p.name); }).length;
+      return {name:n, team:'Team assignment'+(members?' · '+members+' members':''), load:cnt, isTeam:true};
+    });
     list.sort(function(a,b){ return (a.absent-b.absent) || ((!!a.clash)-(!!b.clash)) || (a.load-b.load) || a.name.localeCompare(b.name); });
-    return list;
+    return teamList.concat(list);
   }
   function assignTo(id, name){
     var r = rows().find(function(x){ return x.id===id; }); if(!r) return;
@@ -314,15 +320,18 @@
     function paint(){
       var q = Q.value.trim().toLowerCase();
       var f = list.filter(function(h){ return !q || h.name.toLowerCase().indexOf(q)>=0 || h.team.toLowerCase().indexOf(q)>=0; });
+      var lastTeam = null, fi = q ? 0 : Math.max(0, f.findIndex(function(h){ return !h.isTeam; }));
       L.innerHTML = f.map(function(h,i){
+        var head = (lastTeam!==!!h.isTeam) ? '<div class="d2-pop-sec">'+(h.isTeam?'Teams':'People')+'</div>' : ''; lastTeam = !!h.isTeam;
+        if(h.isTeam) return head+'<button class="d2-pop-i team'+(i===fi?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av team">\u25C6</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span><em class="tm">team</em></button>';
         var tag = h.absent ? '<em class="bad">absent</em>' : h.clash ? '<em class="bad">⚠ clashes '+esc(h.clash.time||'')+'</em>' : '<em class="ok">free</em>';
-        return '<button class="d2-pop-i'+(i===0?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av">'+esc(h.name.charAt(0).toUpperCase())+'</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span>'+tag+'</button>';
+        return head+'<button class="d2-pop-i'+(i===fi?' first':'')+'" data-n="'+esc(h.name)+'"><span class="d2-av">'+esc(h.name.charAt(0).toUpperCase())+'</span><span class="d2-pop-n">'+esc(h.name)+'<small>'+esc(h.team)+'</small></span><span class="d2-pop-m">'+h.load+' call'+(h.load===1?'':'s')+'</span>'+tag+'</button>';
       }).join('') || '<div class="d2-quiet" style="padding:12px">No match</div>';
     }
     paint(); Q.oninput = paint;
     L.onclick = function(e){ var b=e.target.closest('.d2-pop-i'); if(!b) return; var n=b.dataset.n; closePop(); assignTo(id,n); if(tlOpen) setTimeout(renderTimeline,0); };
     var un = $('.d2-pop-un',pop); if(un) un.onclick=function(){ closePop(); assignTo(id,''); };
-    Q.onkeydown = function(e){ if(e.key==='Enter'){ var b=$('.d2-pop-i',L); if(b) b.click(); } };
+    Q.onkeydown = function(e){ if(e.key==='Enter'){ var b=$('.d2-pop-i.first',L)||$('.d2-pop-i',L); if(b) b.click(); } };
     var rc = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : {left:innerWidth/2-150,bottom:innerHeight/3,top:innerHeight/3,width:0};
     var w = 320, left = Math.max(8, Math.min(innerWidth-w-8, rc.left)), top = rc.bottom+6;
     if(top+380>innerHeight) top = Math.max(8, rc.top-386);
