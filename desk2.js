@@ -151,10 +151,10 @@
     density:'<path d="M4 6h16"/><path d="M4 10h16"/><path d="M4 14h16"/><path d="M4 18h16"/>',
     cmd:'<path d="M9 9V7a2.5 2.5 0 1 0-2.5 2.5H18A2.5 2.5 0 1 0 15.5 7v10a2.5 2.5 0 1 0 2.5-2.5H6.5A2.5 2.5 0 1 0 9 17V9Z"/>'
   };
-  var stripShown = false;
+  var stripShown = false, railOpen = LS.get('d2.railOpen','0')==='1';
   var loadOpen = LS.get('d2.loadOpen','0')==='1';
   function stripHtml(){
-    var up = isToday() ? upcoming(3) : [];
+    var allUp = isToday() ? upcoming(60) : [], up = railOpen ? allUp : allUp.slice(0,8);
     var nb = nowBd();
     var chips = up.map(function(r){
       var m = bd(r.time)-nb, un = !r.assignee;
@@ -169,7 +169,7 @@
      +'<button class="d2-tool" data-d2="density" title="Row density"><i data-d2i="density"></i><span>'+(LS.get('d2.density','comfy')==='compact'?'Compact':'Comfortable')+'</span></button>'
      +'<button class="d2-tool" data-d2="cmd" title="Command bar (Alt+K)"><i data-d2i="cmd"></i><span>Commands</span></button>';
     return '<div class="d2-strip" id="d2Strip">'
-      +'<div class="d2-strip-top"><div class="d2-now"><div class="d2-now-h"><i class="d2-live"></i>Right now</div><div class="d2-nexts">'+(isToday()?chips:'<span class="d2-quiet">Live countdown shows on today’s date</span>')+'</div></div>'
+      +'<div class="d2-strip-top"><div class="d2-now"><div class="d2-now-h"><i class="d2-live"></i>Right now'+(allUp.length?'<em>'+allUp.length+' coming up</em>':'')+(allUp.length>8?'<button class="d2-more" data-d2="rail">'+(railOpen?'Show fewer':'Show all '+allUp.length)+'</button>':'')+'</div><div class="d2-nexts'+(railOpen?' open':'')+'">'+(isToday()?chips:'<span class="d2-quiet">Live countdown shows on today’s date</span>')+'</div></div>'
       +'<div class="d2-spark" id="d2Spark"></div></div>'
       +'<div class="d2-strip-bot"><div class="d2-tools">'+tools+'</div><button class="d2-loadtoggle" data-d2="load">'+(loadOpen?'Hide':'Show')+' handler load</button></div>'
       +(loadOpen?loadHtml():'')+'</div>';
@@ -569,11 +569,16 @@
       case 'ho-print': var w=window.open('','_blank'); if(w){ w.document.write('<pre style="font:14px/1.5 system-ui;white-space:pre-wrap;padding:24px">'+esc(handoverText())+'</pre>'); w.document.close(); w.print(); } break;
       case 'density': LS.set('d2.density', LS.get('d2.density','comfy')==='compact'?'comfy':'compact'); render(); break;
       case 'cmd': openCmd(); break;
+      case 'rail': railOpen=!railOpen; LS.set('d2.railOpen', railOpen?'1':'0'); mountStrip(); break;
       case 'load': loadOpen=!loadOpen; LS.set('d2.loadOpen', loadOpen?'1':'0'); mountStrip(); break;
       case 'e-import': var ib=$('#toggleImportHub'); if(ib) ib.click(); break;
       case 'e-backups': var mm=$('#toggleBackups'); if(mm) mm.click(); else { var mb=$('.more-menu-wrap button'); if(mb){ mb.click(); setTimeout(function(){ var b2=$('#toggleBackups'); if(b2) b2.click(); },60); } } break;
       case 'e-prev': var pb=$('#prevDay'); if(pb) pb.click(); break;
     }
+  });
+  document.addEventListener('click', function(e){
+    var lt = e.target.closest && e.target.closest('.lf-toast');
+    if(lt && /more alerts/i.test(lt.textContent) && !e.target.closest('button')){ var bell=$('.lf-bell'); if(bell) bell.click(); }
   });
   document.addEventListener('click', function(e){
     var b=e.target.closest&&e.target.closest('.d2-tl-b'); if(b && isAdmin() && !b.dataset.ghost && !e.defaultPrevented){ openAssignPop(b.dataset.id, b); }
