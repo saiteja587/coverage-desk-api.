@@ -1064,3 +1064,9 @@ tbody tr[data-id]{touch-action:pan-y;}
 tbody tr.row-ref{background:rgba(245,176,65,.16);}
 tbody tr.row-ref td:first-child{box-shadow:inset 4px 0 0 var(--amber,#f5b041);}
 tbody tr.row-ref select[data-field="country"]{font-weight:700;color:var(--amber,#f5b041);}
+
+/* Assessments panel */
+#assessPanel .ip-table th{font-size:11px;text-align:left;padding:6px 6px;color:var(--text-dim,#8B93A0);border-bottom:1px solid var(--border)}
+#assessPanel .ip-table td{padding:4px 4px;border-bottom:1px solid var(--border)}
+#assessPanel tr.assess-done td{opacity:.55}
+#assessPanel textarea{background:var(--surface,#14171C);color:inherit;border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit}
