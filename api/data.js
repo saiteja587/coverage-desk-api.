@@ -1077,6 +1077,7 @@ async function ensureAssessmentsTable(db) {
     company           VARCHAR(255) NOT NULL DEFAULT '',
     role              VARCHAR(255) NOT NULL DEFAULT '',
     assessment        VARCHAR(255) NOT NULL DEFAULT '',
+    handlers          VARCHAR(500) NOT NULL DEFAULT '',
     through_interview TINYINT(1)   NOT NULL DEFAULT 0,
     done              TINYINT(1)   NOT NULL DEFAULT 0,
     note              TEXT         NULL,
@@ -1085,11 +1086,14 @@ async function ensureAssessmentsTable(db) {
     created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_assess_date (assess_date)
   ) ENGINE=InnoDB`);
+  // table created by an earlier deploy has no `handlers` column yet — add it once (ignore "duplicate column")
+  try { await db.query("ALTER TABLE assessments ADD COLUMN handlers VARCHAR(500) NOT NULL DEFAULT ''"); }
+  catch (e) { if (!(e && (e.errno === 1060 || /duplicate column/i.test(String(e.message))))) throw e; }
   assessmentsTableReady = true;
 }
 async function handleAssessments(req, res, db) {
   await ensureAssessmentsTable(db);
-  const cols = `id, assess_date AS date, time_text AS time, candidate, country, company, role, assessment,
+  const cols = `id, assess_date AS date, time_text AS time, candidate, country, company, role, assessment, handlers,
                 through_interview AS throughInterview, done, note, created_by AS createdBy, created_at AS createdAt`;
   if (req.method === 'GET') {
     const date = req.query.date;
@@ -1111,8 +1115,8 @@ async function handleAssessments(req, res, db) {
       if (!id || !Number.isInteger(id)) return res.status(400).json({ error: 'id (integer) required' });
       const f = body.fields || {};
       const map = { date: 'assess_date', time: 'time_text', candidate: 'candidate', country: 'country', company: 'company',
-                    role: 'role', assessment: 'assessment', throughInterview: 'through_interview', done: 'done', note: 'note' };
-      const lim = { assess_date: 10, time_text: 20, candidate: 255, country: 20, company: 255, role: 255, assessment: 255 };
+                    role: 'role', assessment: 'assessment', handlers: 'handlers', throughInterview: 'through_interview', done: 'done', note: 'note' };
+      const lim = { assess_date: 10, time_text: 20, candidate: 255, country: 20, company: 255, role: 255, assessment: 255, handlers: 500 };
       const sets = [], vals = [];
       Object.keys(map).forEach(k => {
         if (!Object.prototype.hasOwnProperty.call(f, k)) return;
@@ -1133,11 +1137,11 @@ async function handleAssessments(req, res, db) {
     const values = rows.map(r => [
       String(r.date || '').slice(0, 10), String(r.time || '').slice(0, 20), String(r.candidate || '').trim().slice(0, 255),
       String(r.country || '').slice(0, 20), String(r.company || '').trim().slice(0, 255), String(r.role || '').trim().slice(0, 255),
-      String(r.assessment || '').trim().slice(0, 255), r.throughInterview ? 1 : 0, r.done ? 1 : 0, r.note || '', r.raw || '', by,
+      String(r.assessment || '').trim().slice(0, 255), String(r.handlers || '').trim().slice(0, 500), r.throughInterview ? 1 : 0, r.done ? 1 : 0, r.note || '', r.raw || '', by,
     ]);
     if (values.some(v => !v[0] || !v[2])) return res.status(400).json({ error: 'Each row needs a date and a candidate' });
     await db.query(
-      'INSERT INTO assessments (assess_date, time_text, candidate, country, company, role, assessment, through_interview, done, note, raw_text, created_by) VALUES ?',
+      'INSERT INTO assessments (assess_date, time_text, candidate, country, company, role, assessment, handlers, through_interview, done, note, raw_text, created_by) VALUES ?',
       [values]
     );
     return res.status(200).json({ ok: true, count: values.length });
