@@ -821,3 +821,11 @@ button.d6-lab:hover{background:var(--surface-2)}
 .mini-badge-clienthist:hover{background:color-mix(in srgb,var(--teal) 20%,transparent)}
 .mini-badge.mini-badge-clienthist{width:auto;height:auto;min-height:17px;padding:2px 7px;border-radius:99px;font-size:10px;margin:0 6px 3px 0}
 @media (max-width:899px){.mini-badge.mini-badge-clienthist{width:auto;height:auto;font-size:11px}}
+
+/* notifications: swipe + remove */
+.lf-toast,.d2-toast,.undo-toast,#liveFeedPanel .lf-item{touch-action:pan-y}
+#liveFeedPanel .lf-item{position:relative}
+.lf-item .lf-rm{position:absolute;top:8px;right:8px;opacity:.55}
+.lf-item .lf-rm:hover{opacity:1}
+@media (hover:none){.lf-item .lf-rm{opacity:.75;width:30px;height:30px}}
+#liveFeedPanel .lf-item-main{padding-right:34px}
