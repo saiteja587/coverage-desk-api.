@@ -815,3 +815,9 @@ button.d6-lab:hover{background:var(--surface-2)}
   .d4-filter-btn{padding:8px 11px}
 }
 .more-menu-dropdown.d6{scroll-padding-top:58px}
+
+/* client-history badge in the Company cell */
+.mini-badge-clienthist{color:var(--teal);border:1px solid color-mix(in srgb,var(--teal) 55%,var(--border));background:color-mix(in srgb,var(--teal) 9%,transparent);white-space:nowrap}
+.mini-badge-clienthist:hover{background:color-mix(in srgb,var(--teal) 20%,transparent)}
+.mini-badge.mini-badge-clienthist{width:auto;height:auto;min-height:17px;padding:2px 7px;border-radius:99px;font-size:10px;margin:0 6px 3px 0}
+@media (max-width:899px){.mini-badge.mini-badge-clienthist{width:auto;height:auto;font-size:11px}}
