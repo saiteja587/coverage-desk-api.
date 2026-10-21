@@ -723,7 +723,7 @@ body.d5-side-open #d4Mini{right:380px}
 .d5-hr span:nth-child(n+2){white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted)}
 .d5-foot{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border)}
 .d5-foot .btn{padding:6px 12px;font-size:12px}
-@media (max-width:899px){#d5Side{display:none}}
+
 @media print{#d5Side,#d5Menu{display:none!important}}
 @media (prefers-reduced-motion:reduce){#d5Side{transition:none}#d5Menu{animation:none}.d5-rm.dot-amber i{animation:none}}
 
@@ -753,3 +753,65 @@ button.d6-lab:hover{background:var(--surface-2)}
 .d6 .more-menu-item:focus-visible{outline:2px solid var(--teal);outline-offset:-2px}
 .d6 .more-menu-divider{margin:6px 8px}
 .d6 #headerLogoutBtn{margin:0 6px;width:calc(100% - 12px)}
+/* ===== mobile: compact cards + bottom sheet ===== */
+.m-sum,#d5Back,.d5-grab,.m-only{display:none}
+@media (max-width:899px){
+  html{overflow-x:hidden}body{overflow-x:hidden}
+  /* compact call card */
+  html.m-on #tableScrollMain tbody tr.m-card{padding:11px 14px 12px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .12s,background .15s}
+  html.m-on #tableScrollMain tbody tr.m-card:active{transform:scale(.985);background:var(--surface-2)}
+  html.m-on #tableScrollMain tr.m-card>td:not(.m-sum){display:none!important}
+  html.m-on #tableScrollMain tr.m-card>td.m-sum{display:block!important;flex:1 1 100%;padding:0;border:0}
+  html.m-on #tableScrollMain td.m-sum::before{display:none}
+  .m-l1{display:flex;align-items:baseline;gap:8px;min-width:0}
+  .m-time{font:700 12.5px var(--mono);color:var(--teal);flex:none;min-width:58px}
+  .m-name{font:700 15.5px var(--body);color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .m-l2{margin:3px 0 0 66px;font-size:12.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .m-l3{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:8px 0 0 66px}
+  .m-as{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:4px 11px 4px 4px;border-radius:99px;font:700 12.5px var(--body);border:1px solid var(--border);background:var(--surface-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .m-as i{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:800 10.5px var(--display);font-style:normal;background:linear-gradient(135deg,var(--teal),var(--sky));color:#04201c;flex:none}
+  .m-as.none{padding:4px 12px;color:var(--coral);border-color:color-mix(in srgb,var(--coral) 55%,var(--border));background:color-mix(in srgb,var(--coral) 9%,transparent)}
+  .m-as.woi{padding:4px 12px;color:var(--amber);border-color:color-mix(in srgb,var(--amber) 50%,var(--border))}
+  .m-meta{font:500 11.5px var(--mono);color:var(--text-faint)}
+  .m-b{font:700 10px var(--mono);font-style:normal;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:99px;background:var(--surface-3);color:var(--text-muted);flex:none}
+  .m-b.v{color:var(--violet);background:color-mix(in srgb,var(--violet) 15%,transparent)}
+  .m-b.warn{color:var(--amber);background:color-mix(in srgb,var(--amber) 15%,transparent)}
+  .m-b.o{color:var(--onsite);background:var(--onsite-dim)}.m-b.t{color:var(--teal);background:color-mix(in srgb,var(--teal) 14%,transparent)}
+  /* expanded card keeps the full form, with a slim header */
+  html.m-on #tableScrollMain tr.m-open>td.m-sum{display:flex!important;order:-1;flex:1 1 100%;align-items:center;justify-content:space-between;padding:0 0 8px}
+  tr.m-open .m-l2,tr.m-open .m-l3{display:none}
+  tr.m-open .m-l1{flex:1}
+  .m-collapse{display:none;border:1px solid var(--border);background:var(--surface-2);color:var(--teal);font:700 12px var(--body);border-radius:99px;padding:6px 14px;cursor:pointer}
+  tr.m-open .m-collapse{display:inline-block}
+  tr.m-open{box-shadow:0 0 0 1.5px var(--teal)}
+  /* bottom sheet */
+  #d5Back{display:block;position:fixed;inset:0;z-index:290;background:rgba(3,7,12,.6);opacity:0;pointer-events:none;transition:opacity .25s}
+  body.d5-side-open #d5Back{opacity:1;pointer-events:auto}
+  body.d5-side-open{overflow:hidden}
+  #d5Side{top:auto;left:0;right:0;bottom:0;width:100%;max-height:86vh;height:auto;z-index:300;border-left:0;border-top:1px solid var(--border);border-radius:22px 22px 0 0;box-shadow:0 -18px 50px rgba(0,0,0,.5);transform:translateY(105%);padding-bottom:env(safe-area-inset-bottom)}
+  #d5Side.open{transform:none}
+  .d5-grab{display:flex;justify-content:center;padding:9px 0 2px;touch-action:none}.d5-grab i{width:42px;height:4px;border-radius:99px;background:var(--border)}
+  .d5-h{padding:8px 14px 10px;touch-action:none}
+  .d5-body{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .d5-pick{padding:7px 14px 7px 6px;font-size:13.5px}.d5-pick .d5-av{width:26px;height:26px}
+  .d5-nav button{width:36px;height:36px}
+  .d5-f input{font-size:16px;padding:10px 12px}
+  .d5-foot{padding:10px 14px}.d5-foot .btn{padding:9px 14px;font-size:13px}
+  .m-only{display:inline-flex}
+  /* the sheet and the scroll-to-top button must not collide */
+  body.d5-side-open .scroll-to-top-btn,body.d5-side-open .bottom-nav{visibility:hidden}
+}
+@media (max-width:899px) and (prefers-reduced-motion:reduce){#d5Back{transition:none}tr.m-card{transition:none}}
+@media (max-width:899px){
+  /* the bottom bar already has Add / Admin / Reports — drop the duplicates from the top */
+  #addRow,#toggleToolsMenu{display:none}
+  html.m-on #tableScrollMain tbody tr.m-card{padding-bottom:10px}
+  .m-l3{margin-top:7px}
+}
+@media (max-width:899px){.d6-search kbd{display:none}.d6 .more-menu-item{padding:11px 12px}}
+@media (max-width:899px){
+  .search-row{min-width:0}
+  .search-row input[type=search],.search-row input[type=text],.search-row .search-input{min-width:0;flex:1 1 0}
+  .d4-filter-btn{padding:8px 11px}
+}
+.more-menu-dropdown.d6{scroll-padding-top:58px}
