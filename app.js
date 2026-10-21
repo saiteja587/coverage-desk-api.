@@ -8057,9 +8057,34 @@ function renderCandidateProfilePanel(){
   const cpCo = state.candidateProfileCompany || '';
   const cpView = (cpCo && state.candidateProfileView === 'company') ? 'company' : 'whole';
   const sameCo = (x) => !!x && fuzzyCompanyKeyMatch(x, cpCo);
+  // One display spelling per company group in this timeline: the most
+  // frequent cleaned spelling among the calls that match the same company,
+  // so "walgreens", "Walgreens" and "wallgreens" read as one client.
+  const coDisplay = (() => {
+    const groups = [];
+    data.calls.concat(data.closures).forEach(c => {
+      const raw = stripCompanyNoise(c.company); if(!raw) return;
+      let g = groups.find(g => fuzzyCompanyKeyMatch(g.key, raw));
+      if(!g){ g = { key: raw, spell: {} }; groups.push(g); }
+      g.spell[raw] = (g.spell[raw] || 0) + 1;
+    });
+    groups.forEach(g => {
+      g.best = Object.entries(g.spell).sort((a, b) => (b[1] - a[1]) || ((/[A-Z]/.test(b[0]) ? 1 : 0) - (/[A-Z]/.test(a[0]) ? 1 : 0)))[0][0];
+    });
+    return (raw) => {
+      const c = stripCompanyNoise(raw); if(!c) return '';
+      const g = groups.find(g => fuzzyCompanyKeyMatch(g.key, c));
+      return g ? g.best : c;
+    };
+  })();
+  const coChip = (raw, fallback) => {
+    const shown = coDisplay(raw) || fallback;
+    const changed = raw && shown !== raw;
+    return `<span class="notif-chip"${changed ? ` title="Recorded as: ${escapeHtml(raw)}"` : ''}>${escapeHtml(shown)}</span>`;
+  };
   const cpCalls = cpView === 'company' ? data.calls.filter(c => sameCo(c.company)) : data.calls;
   const cpClosures = cpView === 'company' ? data.closures.filter(c => sameCo(c.company)) : data.closures;
-  const viewTabs = cpCo ? `<div class="dt-tabs" style="margin-bottom:10px"><button class="dt-tab ${cpView==='company'?'active':''}" data-cp-view="company">🏢 ${escapeHtml(cpCo)} (${data.calls.filter(c => sameCo(c.company)).length})</button><button class="dt-tab ${cpView==='whole'?'active':''}" data-cp-view="whole">📋 Whole timeline (${data.calls.length})</button></div>` : '';
+  const viewTabs = cpCo ? `<div class="dt-tabs" style="margin-bottom:10px"><button class="dt-tab ${cpView==='company'?'active':''}" data-cp-view="company">🏢 ${escapeHtml(coDisplay(cpCo) || cpCo)} (${data.calls.filter(c => sameCo(c.company)).length})</button><button class="dt-tab ${cpView==='whole'?'active':''}" data-cp-view="whole">📋 Whole timeline (${data.calls.length})</button></div>` : '';
   const events = [
     ...cpCalls.map(c => ({ kind:'call', sortKey: (c._date||'')+' '+String(businessDayMinutes(c.time)).padStart(5,'0'), data:c })),
     ...cpClosures.map(c => ({ kind:'closure', sortKey: (c.createdAt||'9999').slice(0,10)+' 99999', data:c })),
@@ -8088,7 +8113,7 @@ function renderCandidateProfilePanel(){
         <div class="notif-detail">
           <span class="notif-chip">${escapeHtml(a.date)}</span>
           <span class="notif-chip">${escapeHtml(a.time||'time n/a')}</span>
-          <span class="notif-chip">${escapeHtml(a.company||'no company')}</span>
+          ${coChip(a.company, 'no company')}
           ${a.role?`<span class="notif-chip">${escapeHtml(a.role)}</span>`:''}
           ${(a.handlers||[]).map(h=>`<span class="notif-chip" title="Handler">👤 ${escapeHtml(h)}</span>`).join('')}
         </div>
@@ -8110,7 +8135,7 @@ function renderCandidateProfilePanel(){
       <div class="notif-detail">
         <span class="notif-chip">${escapeHtml(r._date)}</span>
         <span class="notif-chip">${escapeHtml(r.time||'time n/a')}</span>
-        <span class="notif-chip">${escapeHtml(r.company||'no company')}</span>
+        ${coChip(r.company, 'no company')}
         ${r.assignee?`<span class="notif-chip">${escapeHtml(r.assignee)}</span>`:''}
         ${r.drivingPerson && !namesEquivalent(r.drivingPerson, r.assignee)?`<span class="notif-chip" title="Driving person (from portal sync)" style="border-color:var(--accent,#2dd4bf);color:var(--accent,#2dd4bf)">🚗 ${escapeHtml(r.drivingPerson)}</span>`:''}
       </div>
@@ -8144,7 +8169,7 @@ function renderCandidateProfilePanel(){
   }
   return `<div class="import-panel">
     ${viewTabs}
-    <div class="hint" style="margin-bottom:10px">${cpView==='company' ? `Calls and closures for <b>${escapeHtml(state.candidateProfileName)}</b> at <b>${escapeHtml(cpCo)}</b> only` : `Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>`}, oldest first.</div>
+    <div class="hint" style="margin-bottom:10px">${cpView==='company' ? `Calls and closures for <b>${escapeHtml(state.candidateProfileName)}</b> at <b>${escapeHtml(coDisplay(cpCo) || cpCo)}</b> only` : `Every call and closure on file for <b>${escapeHtml(state.candidateProfileName)}</b>`}, oldest first.</div>
     <div style="margin-bottom:12px">${summaryChips}</div>
     ${closureFormHtml}
     ${eventsHtml}
@@ -10817,8 +10842,25 @@ function classifyCompany(company){
 // really is the same company. Stripping everything but letters/numbers
 // before comparing means spacing, punctuation, and casing differences no
 // longer matter, while still keeping the original text for display.
+// Status text that sometimes ends up INSIDE the company field ("walgreens -
+// waiting for invite", "Acme (WOI)", "Acme - 2nd round") is not part of the
+// company's name. Left in, it makes the same client look like a different
+// company and splits one candidate's rounds apart (2026-10-21 report: a
+// candidate's 3 Walgreens rounds not grouping under one company). Stripped
+// for matching AND for display; the stored text itself is never altered.
+function stripCompanyNoise(company){
+  let c = String(company == null ? '' : company);
+  for(let i = 0; i < 3; i++){
+    const before = c;
+    c = c.replace(/\s*[-\u2013\u2014:|(\[]\s*(?:waiting|wiating|watiting|awaiting)\b[^)\]]*[)\]]?\s*$/i, '')
+         .replace(/\s*[-\u2013\u2014:|(\[]\s*(?:woi|invite\s+(?:pending|awaited)|time\s+(?:n\/a|tbd|pending))\s*[)\]]?\s*$/i, '')
+         .replace(/\s*[-\u2013\u2014:|(\[]\s*(?:\d+\s*(?:st|nd|rd|th)|first|second|third|fourth|final)\s*(?:round|rd)\s*[)\]]?\s*$/i, '');
+    if(c === before) break;
+  }
+  return c.replace(/\s+/g, ' ').trim();
+}
 function normalizeCompanyKey(company){
-  return (company||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  return stripCompanyNoise(company).toLowerCase().replace(/[^a-z0-9]/g,'');
 }
 // Manually-curated company aliases (2026-09-27) — reported real case: a
 // closure recorded as "LSUHSC-Shreveport" is genuinely the same client as
@@ -11196,7 +11238,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="Ref" ${r.country==='Ref'?'selected':''}>Ref (reference call)</option>
         </select>
       </td>
-      <td data-label="Company">${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
       <td data-label="Assigned to">
         ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
@@ -12893,7 +12935,7 @@ function attachHandlers(conflictIds){
   // hover state at all. A tap now shows the same text directly. The N
   // (unmatched student) badge already has its own tap action (opens the
   // add-student form), so it's deliberately excluded here.
-  document.querySelectorAll('.mini-badge:not(.quick-add-student):not(.mini-badge-confirm-student), .flag-icon, .cat-badge, .prior-badge').forEach(badge=>{
+  document.querySelectorAll('.mini-badge:not(.quick-add-student):not(.mini-badge-confirm-student):not(.mini-badge-clienthist), .flag-icon, .cat-badge, .prior-badge').forEach(badge=>{
     const info = badge.getAttribute('title');
     if(!info) return;
     badge.style.cursor = 'pointer';
@@ -15256,20 +15298,40 @@ function findPriorRescheduleWarning(row){
 // In practice that round-progression info (2nd Round last week, now back
 // for 3rd Round with the same client) is exactly what's useful to see at a
 // glance — this badge is that missing signal.
-function findPriorSameClientOccurrence(row){
-  if(!row.candidate || !row.company || !state.notifications) return null;
-  const rowCompanyKey = normalizeCompanyKey(row.company);
-  if(!rowCompanyKey) return null;
+// Every earlier call of THIS candidate at THIS client (newest first). Uses the
+// same tolerant company matching as everything else, so "Walgreens",
+// "wallgreens" and "walgreens - waiting for invite" count as one client.
+function findSameClientHistory(row){
+  if(!row.candidate || !row.company || !state.notifications) return [];
+  if(!normalizeCompanyKey(row.company)) return [];
   const entry = findNotificationEntryForCandidate(row.candidate);
-  if(!entry) return null;
-  const matches = entry.occurrences.filter(o =>
-    !(o.date === state.date && o.time === row.time && o.round === row.round) &&
-    normalizeCompanyKey(o.company) === rowCompanyKey
-  );
+  if(!entry) return [];
   // entry.occurrences is already sorted most-recent-first, and filter()
-  // preserves that order, so the first match here is the most recent one.
-  return matches.length ? matches[0] : null;
+  // preserves that order.
+  return entry.occurrences.filter(o =>
+    !(o.date === state.date && o.time === row.time && o.round === row.round) &&
+    fuzzyCompanyKeyMatch(o.company, row.company)
+  );
 }
+function findPriorSameClientOccurrence(row){
+  const h = findSameClientHistory(row);
+  return h.length ? h[0] : null;
+}
+// Company-cell badge (2026-10-21): "this candidate has been through this
+// client before" — shows how many earlier calls, with every round listed on
+// hover; click opens the candidate's timeline scoped to this client.
+function clientHistoryBadge(r){
+  const h = findSameClientHistory(r);
+  if(!h.length) return '';
+  const lines = h.slice(0, 8).map(o => (o.round || 'round n/a') + ' \u2014 ' + (o.date || '') + (o.time ? ' ' + o.time : '') + (o.assignee ? ' \u2014 ' + o.assignee : '')).join('\n');
+  return `<span class="mini-badge mini-badge-clienthist" data-cp-name="${escapeHtml(r.candidate)}" data-cp-company="${escapeHtml(stripCompanyNoise(r.company))}" title="${escapeHtml((r.candidate||'This candidate') + ' has had ' + h.length + ' earlier call' + (h.length===1?'':'s') + ' with ' + stripCompanyNoise(r.company) + ':\n' + lines + (h.length>8?'\n\u2026':'') + '\n\nClick for the full timeline')}" style="cursor:pointer">\ud83c\udfe2 ${h.length} earlier</span>`;
+}
+document.addEventListener('click', (e)=>{
+  const b = e.target.closest && e.target.closest('.mini-badge-clienthist');
+  if(!b) return;
+  e.stopPropagation();
+  openCandidateProfile(b.dataset.cpName, { scopeCompany: b.dataset.cpCompany });
+});
 
 // Candidate-level (not client-scoped) history check — deliberately broader
 // than findPriorRescheduleWarning() above, which only fires for a repeat at
@@ -15301,9 +15363,21 @@ function findRepeatNoShowFlag(row){
 async function scanClientHistoryAllRounds(forceRefresh){
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
   const byCompany = {};
+  // One bucket per client even when spellings drift ("Walgreens" /
+  // "wallgreens"): each distinct normalized key joins the first existing
+  // bucket it fuzzy-matches (decided once per distinct key, not per row).
+  const bucketOf = {};
+  const bucketKeys = [];
   allRows.forEach(row=>{
     if(!row.company) return;
-    const key = normalizeCompanyKey(row.company);
+    const own = normalizeCompanyKey(row.company);
+    if(!own) return;
+    if(!(own in bucketOf)){
+      const hit = bucketKeys.find(k => fuzzyCompanyKeyMatch(k, row.company));
+      bucketOf[own] = hit || own;
+      if(!hit) bucketKeys.push(own);
+    }
+    const key = bucketOf[own];
     byCompany[key] = byCompany[key] || [];
     byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
   });
@@ -15318,7 +15392,7 @@ async function scanClientHistoryAllRounds(forceRefresh){
     const uniqueCandidates = new Set(occ.map(o=>(o.candidate||'').trim().toLowerCase()));
     if(occ.length > 1 && uniqueCandidates.size > 1){
       occ.sort((a,b)=> b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
-      results.push({ company: occ[0].company, occurrences: occ });
+      results.push({ company: stripCompanyNoise(occ[0].company) || occ[0].company, occurrences: occ });
     }
   });
   results.sort((a,b)=> b.occurrences[0].date.localeCompare(a.occurrences[0].date));
@@ -15327,7 +15401,7 @@ async function scanClientHistoryAllRounds(forceRefresh){
 function findPriorClientOccurrence(row){
   if(!row.company || !state.clientHistory) return null;
   const key = normalizeCompanyKey(row.company);
-  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key);
+  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key) || state.clientHistory.find(n => fuzzyCompanyKeyMatch(n.company, row.company));
   if(!entry) return null;
   const rowCandidate = (row.candidate||'').trim().toLowerCase();
   // Always points to a genuinely DIFFERENT candidate — otherwise, if this
