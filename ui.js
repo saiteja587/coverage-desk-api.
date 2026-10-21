@@ -1851,3 +1851,181 @@
   document.addEventListener('touchend', finish, {passive:true});
   document.addEventListener('touchcancel', function(){ if(st){ reset(true); st=null; } }, {passive:true});
 })();
+
+/* ===== 2nd-round pipeline (country-wise, for upcoming calls) ===== */
+(function(){
+  'use strict';
+  if(window.__d7) return; window.__d7 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var LS = { get:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var RANGES = [['today','Today'],['week','Next 7 days'],['month','Next 30 days'],['upcoming','All upcoming'],['past','Past 30 days'],['all','Everything']];
+  var el = null, M = { range: LS.get('d7.range','week'), country: '', round: '', cancelled: false, data: null, loading: false };
+
+  function plus(d,n){ try{ return addDaysToDateStr(d,n); }catch(e){ return d; } }
+  function inRange(date, r){
+    var t = todayDateString();
+    if(r==='all') return true;
+    if(r==='today') return date===t;
+    if(r==='week') return date>=t && date<=plus(t,6);
+    if(r==='month') return date>=t && date<=plus(t,29);
+    if(r==='upcoming') return date>=t;
+    if(r==='past') return date<=t && date>=plus(t,-29);
+    return true;
+  }
+  function country(c){
+    var t = String(c||'').trim(); if(!t) return 'Unknown';
+    if(/^(us|usa|u\.s\.a?\.?|united states.*|america)$/i.test(t)) return 'USA';
+    if(/^(uk|u\.k\.?|united kingdom|england|gb|britain|great britain)$/i.test(t)) return 'UK';
+    if(/^(ie|ire|ireland|eire)$/i.test(t)) return 'Ireland';
+    if(/^(ca|can|canada)$/i.test(t)) return 'Canada';
+    return t.replace(/\b\w/g,function(m){ return m.toUpperCase(); });
+  }
+  function roundN(r){ var t=String(r||''); if(/final|last/i.test(t)) return 99; var m=t.match(/(\d+)/); return m ? +m[1] : 2; }
+  function roundLabel(n){ return n===99 ? 'Final' : n===2 ? '2nd' : n===3 ? '3rd' : '4th+'; }
+  function bucket(n){ return n===99 ? 'Final' : n<=2 ? '2nd' : n===3 ? '3rd' : '4th+'; }
+  function bdm(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } }
+
+  function load(force){
+    M.loading = true; paint();
+    var p = (typeof fetchAllRowsAcrossDates==='function') ? fetchAllRowsAcrossDates(!!force) : Promise.resolve([]);
+    p.then(function(all){
+      all = (all||[]).filter(function(r){ return r._date !== state.date; });
+      (state.rows||[]).forEach(function(r){ all.push(Object.assign({}, r, { _date: state.date })); });
+      M.data = all; M.loading = false; paint();
+    }).catch(function(){ M.data = (state.rows||[]).map(function(r){ return Object.assign({}, r, { _date: state.date }); }); M.loading = false; paint(); });
+  }
+
+  function compute(){
+    var bad = (typeof RESCHED_STATUSES!=='undefined') ? RESCHED_STATUSES : [];
+    var calls = (M.data||[]).filter(function(r){
+      if(!r.candidate || !r._date) return false;
+      if(!inRange(r._date, M.range)) return false;
+      var adv = false; try{ adv = isAdvancedRound(r.round); }catch(e){}
+      if(!adv) return false;
+      if(!M.cancelled && r.status && bad.indexOf(r.status)>=0) return false;
+      return true;
+    }).map(function(r){
+      var key=''; try{ key = normalizeNameKey(r.candidate); }catch(e){ key = String(r.candidate).toLowerCase(); }
+      return { date:r._date, time:r.time||'', candidate:r.candidate, key:key, company:r.company||'', country:country(r.country), round:r.round||'', n:roundN(r.round), assignee:r.assignee||'', woi:!!r.woi };
+    });
+    var cands = {};
+    calls.forEach(function(c){
+      var k = c.key + '|' + c.country; // same person, same country → one candidate
+      var x = cands[k] || (cands[k] = { key:c.key, name:c.candidate, country:c.country, calls:[], maxN:0 });
+      x.calls.push(c); if(c.n > x.maxN) x.maxN = c.n;
+    });
+    var list = Object.keys(cands).map(function(k){ return cands[k]; });
+    list.forEach(function(x){
+      x.calls.sort(function(a,b){ return a.date.localeCompare(b.date) || bdm(a.time)-bdm(b.time); });
+      var t = todayDateString(), nxt = x.calls.filter(function(c){ return c.date>=t; })[0];
+      x.show = nxt || x.calls[x.calls.length-1];
+      x.unassigned = x.calls.some(function(c){ return !c.assignee && !c.woi; });
+    });
+    var by = {}, rounds = { '2nd':0,'3rd':0,'4th+':0,'Final':0 }, comp = {}, days = {};
+    list.forEach(function(x){
+      var b = by[x.country] || (by[x.country] = { name:x.country, cands:0, calls:0, un:0, woi:0 });
+      b.cands++; b.calls += x.calls.length; if(x.unassigned) b.un++; if(x.calls.some(function(c){ return c.woi; })) b.woi++;
+      rounds[bucket(x.maxN)]++;
+      var ck=''; try{ ck = normalizeCompanyKey(x.show.company); }catch(e){ ck = x.show.company.toLowerCase(); }
+      if(ck){ var c = comp[ck] || (comp[ck] = { name: (typeof stripCompanyNoise==='function'?stripCompanyNoise(x.show.company):x.show.company), n:0 }); c.n++; }
+    });
+    calls.forEach(function(c){ days[c.date] = (days[c.date]||0)+1; });
+    var countries = Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return b.cands-a.cands; });
+    var companies = Object.keys(comp).map(function(k){ return comp[k]; }).sort(function(a,b){ return b.n-a.n; }).slice(0,6);
+    return { calls:calls, list:list, countries:countries, rounds:rounds, companies:companies, days:days };
+  }
+
+  function visible(R){
+    return R.list.filter(function(x){ return (!M.country || x.country===M.country) && (!M.round || bucket(x.maxN)===M.round); })
+      .sort(function(a,b){ return a.show.date.localeCompare(b.show.date) || bdm(a.show.time)-bdm(b.show.time); });
+  }
+  function rangeText(){
+    var t = todayDateString();
+    return M.range==='today' ? t : M.range==='week' ? t+' → '+plus(t,6) : M.range==='month' ? t+' → '+plus(t,29) : M.range==='upcoming' ? 'from '+t : M.range==='past' ? plus(t,-29)+' → '+t : 'all dates on file';
+  }
+  function summaryText(R){
+    var L = ['2nd-round pipeline — ' + (RANGES.filter(function(r){return r[0]===M.range;})[0]||[])[1] + ' (' + rangeText() + ')',
+      R.list.length + ' candidates · ' + R.calls.length + ' calls',
+      R.countries.map(function(c){ return c.name+' '+c.cands; }).join(' · '),
+      'Rounds: ' + Object.keys(R.rounds).filter(function(k){ return R.rounds[k]; }).map(function(k){ return k+' '+R.rounds[k]; }).join(' · ')];
+    var un = R.list.filter(function(x){ return x.unassigned; }).length; if(un) L.push('Still to assign: ' + un);
+    return L.join('\n');
+  }
+
+  function paint(){
+    if(!el) return;
+    var card = $('.d7-body', el); if(!card) return;
+    if(M.loading || !M.data){ card.innerHTML = '<div class="d2-empty" style="margin:30px"><h3>Counting…</h3><p>Reading every saved date.</p></div>'; return; }
+    var R = compute(), vis = visible(R), max = Math.max.apply(null, R.countries.map(function(c){ return c.cands; }).concat([1]));
+    var dayKeys = Object.keys(R.days).sort().slice(0, 21), dmax = Math.max.apply(null, dayKeys.map(function(k){ return R.days[k]; }).concat([1]));
+    var unTotal = R.list.filter(function(x){ return x.unassigned; }).length;
+    var html = '';
+    html += '<div class="d7-tiles"><div><b>'+R.list.length+'</b><span>candidates in 2nd+ rounds</span></div><div><b>'+R.calls.length+'</b><span>calls</span></div><div><b>'+R.countries.length+'</b><span>countries</span></div><div class="'+(unTotal?'warn':'')+'"><b>'+unTotal+'</b><span>still to assign</span></div></div>';
+    html += '<h4>By country <small>tap a country to filter the list</small></h4><div class="d7-bars">' + (R.countries.length ? R.countries.map(function(c){
+      return '<button class="d7-bar'+(M.country===c.name?' on':'')+'" data-d7c="'+esc(c.name)+'"><span class="d7-n">'+esc(c.name)+'</span><span class="d7-track"><i style="width:'+Math.max(4,Math.round(c.cands/max*100))+'%"></i></span><span class="d7-v"><b>'+c.cands+'</b> <em>'+c.calls+' call'+(c.calls===1?'':'s')+(c.un?' · '+c.un+' to assign':'')+'</em></span></button>';
+    }).join('') : '<div class="d2-quiet" style="padding:8px 0">No 2nd-round or later calls in this period.</div>') + '</div>';
+    html += '<h4>By round <small>highest round each candidate has reached</small></h4><div class="d7-chips">' + Object.keys(R.rounds).map(function(k){
+      return '<button class="d7-chip'+(M.round===k?' on':'')+'" data-d7r="'+k+'"><b>'+R.rounds[k]+'</b> '+k+'</button>'; }).join('') + '</div>';
+    if(dayKeys.length > 1) html += '<h4>Calls per day</h4><div class="d7-days">'+dayKeys.map(function(k){ var n=R.days[k]; return '<div title="'+esc(k)+': '+n+' call'+(n===1?'':'s')+'"><i style="height:'+Math.max(6,Math.round(n/dmax*56))+'px"></i><span>'+esc(k.slice(5))+'</span><b>'+n+'</b></div>'; }).join('')+'</div>';
+    if(R.companies.length) html += '<h4>Top clients</h4><div class="d7-chips">'+R.companies.map(function(c){ return '<span class="d7-chip static"><b>'+c.n+'</b> '+esc(c.name)+'</span>'; }).join('')+'</div>';
+    html += '<h4>Candidates <small>'+vis.length+(M.country||M.round?' shown ('+[M.country,M.round].filter(Boolean).join(' · ')+')':'')+'</small>'+((M.country||M.round)?' <button class="d7-clear" data-d7="clear">Clear filter</button>':'')+'</h4><div class="d7-list">'+(vis.length ? vis.slice(0,200).map(function(x){
+      var s = x.show, more = x.calls.length>1 ? ' <em>+'+(x.calls.length-1)+' more</em>' : '';
+      return '<div class="d7-row"><div class="d7-who"><b>'+esc(x.name)+'</b><small>'+esc(s.company||'—')+'</small></div><span class="d7-rd">'+esc(roundLabel(s.n))+'</span><span class="d7-when">'+esc(s.date.slice(5))+' '+esc(s.time||'time n/a')+more+'</span><span class="d7-as'+(s.assignee?'':' none')+'">'+(s.woi?'⏳ WOI':esc(s.assignee||'Unassigned'))+'</span><span class="d7-cn">'+esc(x.country)+'</span></div>';
+    }).join('')+(vis.length>200?'<div class="d2-quiet" style="padding:8px">Showing the first 200.</div>':'') : '<div class="d2-quiet" style="padding:10px 0">Nobody matches.</div>')+'</div>';
+    card.innerHTML = html;
+  }
+
+  function open(){
+    close();
+    el = document.createElement('div'); el.id='d7'; el.className='d3-overlay';
+    el.innerHTML = '<div class="d3-card d7-card"><div class="d2-tl-h"><b>2nd-round pipeline</b><span class="d2-quiet" id="d7sub"></span><button class="d2-x" data-d7="close" aria-label="Close">✕</button></div>'
+      +'<div class="d7-ctl"><div class="d7-seg" role="tablist">'+RANGES.map(function(r){ return '<button data-d7range="'+r[0]+'" class="'+(M.range===r[0]?'on':'')+'">'+r[1]+'</button>'; }).join('')+'</div>'
+      +'<label class="d7-chk"><input type="checkbox" data-d7="cx" '+(M.cancelled?'checked':'')+'> include cancelled / rescheduled</label>'
+      +'<span class="d7-sp"></span><button class="btn ghost" data-d7="copy">Copy summary</button><button class="btn ghost" data-d7="refresh" title="Re-read every date">↻</button></div>'
+      +'<div class="d7-body"></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d2-lock');
+    $('#d7sub', el).textContent = rangeText();
+    el.addEventListener('click', onClick);
+    if(M.data) paint(); load(false);
+  }
+  function close(){ if(el){ el.remove(); el=null; } if(!$('#d2Timeline,#d2Handover,#d3Suggest,#d3Keys')) document.body.classList.remove('d2-lock'); }
+  function onClick(e){
+    var t = e.target;
+    if(t===el || t.closest('[data-d7=close]')){ close(); return; }
+    var rg = t.closest('[data-d7range]'); if(rg){ M.range = rg.dataset.d7range; LS.set('d7.range', M.range); M.country=''; M.round=''; $$('[data-d7range]', el).forEach(function(b){ b.classList.toggle('on', b===rg); }); $('#d7sub', el).textContent = rangeText(); paint(); return; }
+    var c = t.closest('[data-d7c]'); if(c){ M.country = M.country===c.dataset.d7c ? '' : c.dataset.d7c; paint(); return; }
+    var r = t.closest('[data-d7r]'); if(r){ M.round = M.round===r.dataset.d7r ? '' : r.dataset.d7r; paint(); return; }
+    var a = t.closest('[data-d7]'); if(!a) return;
+    var k = a.dataset.d7;
+    if(k==='clear'){ M.country=''; M.round=''; paint(); }
+    else if(k==='cx'){ M.cancelled = a.checked; paint(); }
+    else if(k==='refresh'){ load(true); }
+    else if(k==='copy'){
+      var txt = summaryText(compute());
+      try{ navigator.clipboard.writeText(txt).then(function(){ if(window.d2Toast) window.d2Toast('Summary copied',{ms:2200}); }); }catch(x){ window.prompt('Copy this summary', txt); }
+    }
+  }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && el){ e.stopPropagation(); close(); } }, true);
+  window.d7Open = open;
+
+  // entry points: Reports menu + command bar
+  function injectMenu(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD7', dd)) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD7'; b.type='button';
+    b.title='How many candidates are in 2nd and later rounds — by country, round and day, including future dates';
+    b.innerHTML='🌍 2nd-round pipeline';
+    b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} open(); });
+    host.appendChild(b);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__m){ return setTimeout(install,60); }
+    var orig = window.render;
+    window.render = function(){ var r = orig.apply(this, arguments); try{ injectMenu(); }catch(e){} return r; };
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['pipeline second round country','2nd-round pipeline','By country, round and day',open,'🌍']]); };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
