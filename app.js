@@ -16984,7 +16984,8 @@ function computeSmartAlerts(allRows, today, opts){
       '<div class="lf-body">' + escapeHtml(item.body) + '</div>' +
       '<div class="lf-meta">' + escapeHtml(ago(item.ts)) + '</div>' +
       '<div class="lf-actions">' + actionsHtml(item) + '</div></div>' +
-      (inToast ? '<button class="lf-x" data-lf-dismiss="' + escapeHtml(item.id) + '" aria-label="Dismiss">✕</button>' : '') + '</div>';
+      (inToast ? '<button class="lf-x" data-lf-dismiss="' + escapeHtml(item.id) + '" aria-label="Dismiss">✕</button>'
+               : '<button class="lf-x lf-rm" data-lf-remove="' + escapeHtml(item.id) + '" aria-label="Remove this alert" title="Remove">✕</button>') + '</div>';
   }
   function paintPanel(){
     if(!lf.open){ panel.style.display = 'none'; return; }
@@ -17060,6 +17061,17 @@ function computeSmartAlerts(allRows, today, opts){
     return state.date + '#' + (state.rows||[]).map(r => (r.id||'') + '|' + (r.candidate||'') + '|' + (r.company||'') + '|' + (r.assignee||'')).join(';');
   }
   window.livefeedEvaluateNow = evaluate;
+  // Remove ONE alert from the feed (swipe it away on a phone, or tap its ✕).
+  // `seen` is untouched, so a removed alert never comes back.
+  function removeItem(id){
+    const before = lf.items.length;
+    lf.items = lf.items.filter(i => i.id !== id);
+    if(lf.items.length === before) return;
+    if(!lf.seen[id]) lf.seen[id] = Date.now();
+    save(); paintBell(); if(lf.open) paintPanel();
+    const t = toastBox.querySelector('[data-lf-toast-id="' + CSS.escape(id) + '"]'); removeToast(t);
+  }
+  window.livefeedRemoveItem = removeItem;
 
   // re-check only when today's rows actually changed (cheap signature compare)
   const prevRender = window.render;
@@ -17097,6 +17109,7 @@ function computeSmartAlerts(allRows, today, opts){
     const as = t.closest('[data-lf-assign]'); if(as){ doAssign(findItem(as.getAttribute('data-lf-assign'))); if(lf.open) paintPanel(); return; }
     const sh = t.closest('[data-lf-show]'); if(sh){ doShow(findItem(sh.getAttribute('data-lf-show'))); const tt = sh.closest('.lf-toast'); removeToast(tt); if(lf.open) setOpen(false); return; }
     const dm = t.closest('[data-lf-dismiss]'); if(dm){ removeToast(dm.closest('.lf-toast')); return; }
+    const rmv = t.closest('[data-lf-remove]'); if(rmv){ removeItem(rmv.getAttribute('data-lf-remove')); return; }
     if(t.closest('#lfClose')){ setOpen(false); return; }
     if(t.closest('#lfMute')){ lf.muted = !lf.muted; save(); paintBell(); paintPanel(); if(lf.muted) toastBox.innerHTML=''; return; }
     if(t.closest('#lfReadAll')){ lf.items.forEach(i => i.read = true); save(); paintBell(); paintPanel(); return; }
