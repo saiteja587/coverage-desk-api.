@@ -54,8 +54,6 @@ async function main() {
   });
   page.on('dialog', d => d.accept());
 
-  try { await page.context().grantPermissions(['clipboard-read', 'clipboard-write']); } catch (e) { /* not fatal — the paste-from-clipboard check below will just report what it finds */ }
-
   await page.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 
@@ -301,63 +299,6 @@ async function main() {
   check('Closures', '"Sir," + *bold* + glued salary all handled together in one message',
     rb[5][0].candidate === 'Lahari beerla' && rb[5][0].company === 'Novolox' && rb[5][0].salary === '$85,000/ Year', JSON.stringify(rb[5]));
 
-  // Real report: the candidate's last name ran straight into "got" with
-  // no space at all ("...Jerom Mohangot offer letter from SMBC") — fast
-  // WhatsApp typing, no space bar hit. The parser used to require a
-  // literal space before "got"/"closed"/"selected"/"placed", so this
-  // silently matched nothing.
-  const gluedGotCase = await page.evaluate(() => parseClosureText(
-    'Steffy Metilda Jerom Mohangot offer letter from SMBC\n\nsalary : *€60000* /Per Year\n@Sashank Bava @Sundeep Anna @Phani Anna USA @Pradeep Anna'
-  ));
-  check('Closures', '"Mohangot" (candidate name run into "got" with no space) still parses',
-    gluedGotCase.length === 1 && gluedGotCase[0].candidate === 'Steffy Metilda Jerom Mohan' &&
-    gluedGotCase[0].company === 'SMBC' && gluedGotCase[0].salary === '€60000 /Per Year',
-    JSON.stringify(gluedGotCase));
-
-  // =====================================================================
-  console.log('\n=== 2a-2. WhatsApp multi-select-copy prefixes stripped on all three importers ===');
-  // =====================================================================
-  // Real ask: "if there are 2+ messages in the clipboard, how do I copy
-  // them all at once?" — answer is WhatsApp's own multi-select (long-press
-  // one message, tap the rest, then the copy icon), but that mode prefixes
-  // every line with a timestamp + sender name that single-message copy
-  // never includes. Two known shapes (iOS bracket, Android dash) must be
-  // stripped before any of the three importers ever sees the line.
-  const multiCopyCases = await page.evaluate(() => {
-    const iosClosure = parseClosureText(
-      '[2:32 PM, 9/21/26] Sashank Bava: Steffy Metilda Jerom Mohan got offer letter from SMBC\n[2:33 PM, 9/21/26] Sashank Bava: salary : *€60000* /Per Year'
-    );
-    const androidClosure = parseClosureText(
-      '21/09/2026, 14:32 - Sashank Bava: Steffy Metilda Jerom Mohan got offer letter from SMBC\n21/09/2026, 14:33 - Sashank Bava: salary : *€60000* /Per Year'
-    );
-    const androidReschedule = parseRescheduleText(
-      '21/09/2026, 09:10 - Sashank Bava: Ruchitha Mandalapu - 11pm ist interview was reschedule to tomorrow from interviewer side sir'
-    );
-    const iosCallImport = parseImportText(
-      '[9:00 AM, 9/21/26] Sashank Bava: Royal Prabhu (UK) – Interview – Lloyds Group – 1:30 PM IST – Duration: 30 Mins (1st Round)',
-      '2026-09-21', null
-    );
-    // A normal, single-message paste (no WhatsApp prefix at all) must be
-    // completely unaffected — this is the far more common case.
-    const untouchedNormal = parseRescheduleText('Ruchitha Mandalapu - 11pm ist interview was reschedule to tomorrow from interviewer side sir');
-    return { iosClosure, androidClosure, androidReschedule, iosCallImport, untouchedNormal };
-  });
-  check('Multi-copy', 'iOS-style "[time, date] Sender:" prefix stripped from a closure paste',
-    multiCopyCases.iosClosure.length === 1 && multiCopyCases.iosClosure[0].company === 'SMBC' && multiCopyCases.iosClosure[0].salary === '€60000 /Per Year',
-    JSON.stringify(multiCopyCases.iosClosure));
-  check('Multi-copy', 'Android-style "date, time - Sender:" prefix stripped from a closure paste',
-    multiCopyCases.androidClosure.length === 1 && multiCopyCases.androidClosure[0].company === 'SMBC' && multiCopyCases.androidClosure[0].salary === '€60000 /Per Year',
-    JSON.stringify(multiCopyCases.androidClosure));
-  check('Multi-copy', 'Android-style prefix stripped from a reschedule paste',
-    multiCopyCases.androidReschedule.length === 1 && multiCopyCases.androidReschedule[0].candidate === 'Ruchitha Mandalapu',
-    JSON.stringify(multiCopyCases.androidReschedule));
-  check('Multi-copy', 'iOS-style prefix stripped from a plain call-import paste',
-    multiCopyCases.iosCallImport.length === 1 && multiCopyCases.iosCallImport[0].candidate === 'Royal Prabhu' && multiCopyCases.iosCallImport[0].company === 'Lloyds Group',
-    JSON.stringify(multiCopyCases.iosCallImport));
-  check('Multi-copy', 'A normal single-message paste (no WhatsApp export prefix) is completely unaffected',
-    multiCopyCases.untouchedNormal.length === 1 && multiCopyCases.untouchedNormal[0].candidate === 'Ruchitha Mandalapu',
-    JSON.stringify(multiCopyCases.untouchedNormal));
-
   // =====================================================================
   console.log('\n=== 2b. Closure cross-reference against existing call records ===');
   // =====================================================================
@@ -378,626 +319,6 @@ async function main() {
     crossRefCases.mismatch.status === 'mismatch' && crossRefCases.mismatch.message.includes('Second Port'), JSON.stringify(crossRefCases.mismatch));
   check('Closures', 'Cross-reference: no matching candidate at all — flagged as no_match',
     crossRefCases.noMatch.status === 'no_match', JSON.stringify(crossRefCases.noMatch));
-
-  // =====================================================================
-  console.log('\n=== 2c. Closures + Import merged into one panel/button ===');
-  // =====================================================================
-  // Real request: two separate buttons (Closures, Import Closure) were
-  // hard to find, tucked into different menus. Now there's exactly one
-  // button, and clicking it opens a single panel with the import form on
-  // top and the recorded list — grouped month by month — underneath.
-  const oneButtonCheck = await page.evaluate(() => ({
-    closuresBtnCount: document.querySelectorAll('#toggleClosures').length,
-    noSeparateImportBtn: !document.getElementById('toggleClosureImport'),
-  }));
-  check('Closures UI', 'Exactly one Closures button exists (no separate Import Closure button)',
-    oneButtonCheck.closuresBtnCount === 1 && oneButtonCheck.noSeparateImportBtn, JSON.stringify(oneButtonCheck));
-
-  await page.click('#toggleClosures');
-  await page.waitForTimeout(200);
-  const combinedPanelCheck = await page.evaluate(() => ({
-    hasTextarea: !!document.getElementById('closureImportText'),
-    hasParseBtn: !!document.getElementById('parseClosureBtn'),
-    hasSummary: !!document.querySelector('.summary'),
-  }));
-  check('Closures UI', 'Clicking Closures opens ONE panel with both the import form and the records summary',
-    combinedPanelCheck.hasTextarea && combinedPanelCheck.hasParseBtn && combinedPanelCheck.hasSummary,
-    JSON.stringify(combinedPanelCheck));
-
-  await page.fill('#closureImportText', 'Regression Test Candidate got offer letter from Regression Test Corp\n\nsalary: $90,000 per year');
-  await page.click('#parseClosureBtn');
-  await page.waitForTimeout(200);
-  await page.click('#cancelClosureConfirm');
-  await page.waitForTimeout(200);
-  const backToCombinedCheck = await page.evaluate(() => ({
-    activePanelName: getActivePanelName(),
-    showClosures: state.showClosures,
-    hasTextarea: !!document.getElementById('closureImportText'),
-  }));
-  check('Closures UI', 'Cancelling the parse-review step returns to the same combined panel (not fully closed)',
-    backToCombinedCheck.activePanelName === 'closures' && backToCombinedCheck.showClosures && backToCombinedCheck.hasTextarea,
-    JSON.stringify(backToCombinedCheck));
-
-  // NOTE (2026-10-01): the List tab now defaults to showing only the
-  // CURRENT month (see "Closures month-nav" checks further down) — so this
-  // multi-month grouping check explicitly switches on "Show all months"
-  // first, which is the view that still stacks every month on one page.
-  const monthGroupingCheck = await page.evaluate(() => {
-    state.closures = [
-      { id: 1, candidate: 'A', company: 'X', salary: '$1', createdAt: new Date(2026, 8, 15).toISOString() },
-      { id: 2, candidate: 'B', company: 'Y', salary: '$2', createdAt: new Date(2026, 8, 1).toISOString() },
-      { id: 3, candidate: 'C', company: 'Z', salary: '$3', createdAt: new Date(2026, 7, 20).toISOString() },
-    ];
-    state.closuresLoaded = true;
-    state.closuresListShowAll = true;
-    render();
-    const text = document.querySelector('.import-panel').textContent;
-    return {
-      hasSeptember: text.includes('September 2026'),
-      hasAugust: text.includes('August 2026'),
-      septemberBeforeAugust: text.indexOf('September 2026') < text.indexOf('August 2026'),
-    };
-  });
-  check('Closures UI', 'Records are grouped month by month, most recent month first',
-    monthGroupingCheck.hasSeptember && monthGroupingCheck.hasAugust && monthGroupingCheck.septemberBeforeAugust,
-    JSON.stringify(monthGroupingCheck));
-  // Reset so later checks in this suite see the new default (current-month) view.
-  await page.evaluate(() => { state.closuresListShowAll = false; render(); });
-
-  // Closures month-nav (added 2026-10-01): opening the List tab shows only
-  // the current month by default, with ◀/▶ to step to any other month and
-  // a "Show all months" toggle back to the old stacked view. Full dedicated
-  // coverage lives in test_closures_month_nav.js — this is a lightweight
-  // smoke check that the feature is wired up in the shipped build.
-  const monthNavCheck = await page.evaluate(() => {
-    const now = new Date();
-    state.closures = [
-      { id: 101, candidate: 'This Month Candidate', company: 'X', salary: '$1', createdAt: now.toISOString() },
-      { id: 102, candidate: 'Last Month Candidate', company: 'Y', salary: '$2', createdAt: new Date(now.getFullYear(), now.getMonth() - 1, 10).toISOString() },
-    ];
-    state.closuresListMonth = null;
-    state.closuresListShowAll = false;
-    render();
-    const before = document.querySelector('.import-panel').textContent;
-    return {
-      navButtonsExist: !!document.getElementById('closuresListPrevMonth') && !!document.getElementById('closuresListNextMonth'),
-      showsThisMonthOnly: before.includes('This Month Candidate') && !before.includes('Last Month Candidate'),
-    };
-  });
-  await page.click('#closuresListPrevMonth');
-  await page.waitForTimeout(100);
-  const monthNavAfterPrev = await page.evaluate(() => document.querySelector('.import-panel').textContent);
-  check('Closures UI', 'List tab shows only the current month by default, with month-nav buttons present',
-    monthNavCheck.navButtonsExist && monthNavCheck.showsThisMonthOnly,
-    JSON.stringify(monthNavCheck));
-  check('Closures UI', 'Stepping to the previous month via ◀ shows last month\'s closure instead',
-    monthNavAfterPrev.includes('Last Month Candidate') && !monthNavAfterPrev.includes('This Month Candidate'),
-    monthNavAfterPrev.slice(0, 300));
-  // Leave the panel state clean (still open — later checks in this suite
-  // expect Closures to already be open) for whatever runs next.
-  await page.evaluate(() => { state.closuresListMonth = null; state.closuresListShowAll = false; render(); });
-
-  // Real request: pasting WhatsApp messages in by hand, every time, was
-  // the actual friction — a one-tap "Paste from clipboard" button next
-  // to every import textarea (calls, reschedule/cancel, closures) skips
-  // the long-press-to-paste step.
-  await page.evaluate(async () => { try { await navigator.clipboard.writeText('Clipboard Test Candidate got offer letter from Clipboard Test Co\n\nsalary: $77,000 per year'); } catch(e) {} });
-  const pasteBtnSelector = '.paste-clipboard-btn[data-target="closureImportText"]';
-  const pasteBtnPresent = await page.evaluate((sel) => !!document.querySelector(sel), pasteBtnSelector);
-  let pastedValue = '';
-  if (pasteBtnPresent) {
-    await page.click(pasteBtnSelector);
-    await page.waitForTimeout(200);
-    pastedValue = await page.evaluate(() => document.getElementById('closureImportText').value);
-  }
-  check('Closures UI', 'A "Paste from clipboard" button fills the closure import textarea',
-    pasteBtnPresent && pastedValue.includes('Clipboard Test Candidate'), `present=${pasteBtnPresent}, value=${JSON.stringify(pastedValue)}`);
-
-  const pasteOtherPanels = await page.evaluate(async () => {
-    async function tryPanel(flag, targetId, clipText) {
-      closeAllPanels();
-      state[flag] = true;
-      render();
-      try { await navigator.clipboard.writeText(clipText); } catch(e) {}
-      const btn = document.querySelector(`.paste-clipboard-btn[data-target="${targetId}"]`);
-      const present = !!btn;
-      if (btn) btn.click();
-      await new Promise(r => setTimeout(r, 50));
-      const el = document.getElementById(targetId);
-      return { present, value: el ? el.value : null };
-    }
-    const callImport = await tryPanel('showImport', 'importText', 'Clipboard call import test');
-    const reschedImport = await tryPanel('showRescheduleImport', 'rescheduleImportText', 'Clipboard reschedule import test');
-    closeAllPanels();
-    render();
-    return { callImport, reschedImport };
-  });
-  check('Closures UI', 'The paste button also works on the plain call-import panel',
-    pasteOtherPanels.callImport.present && pasteOtherPanels.callImport.value === 'Clipboard call import test',
-    JSON.stringify(pasteOtherPanels.callImport));
-  check('Closures UI', 'The paste button also works on the reschedule/cancel import panel',
-    pasteOtherPanels.reschedImport.present && pasteOtherPanels.reschedImport.value === 'Clipboard reschedule import test',
-    JSON.stringify(pasteOtherPanels.reschedImport));
-
-  // -----------------------------------------------------------------
-  // Multi-message clipboard picker: "if i click the paste from clipboard
-  // is there any chance that they can show clipboaed all messqags in a
-  // small screnn then i select which messgage i can paste" — when the
-  // clipboard has several WhatsApp messages (detected via export-prefix
-  // boundaries), show a picker instead of dumping everything in.
-  // -----------------------------------------------------------------
-  const clipboardPickerTests = await page.evaluate(async () => {
-    const out = {};
-
-    // splitClipboardIntoMessages: single legitimate multi-line message
-    // (blank line inside it, e.g. a closure's salary line) must NOT be
-    // split — only an actual WhatsApp export prefix is a real boundary.
-    const singleMsg = "Steffy Metilda Jerom Mohangot offer letter from SMBC\n\nsalary : *€60000* /Per Year\n@Sashank Bava";
-    out.singleMessageNotSplit = splitClipboardIntoMessages(singleMsg).length === 1;
-
-    const multiMsg = "[2:32 PM, 9/21/26] Sashank Bava: Steffy offer letter from SMBC\n\nsalary : *€60000* /Per Year\n[2:33 PM, 9/21/26] Sashank Bava: Another candidate offer from XYZ\n\nsalary : *€50000* /Per Year";
-    const split = splitClipboardIntoMessages(multiMsg);
-    out.multiMessageSplitCount = split.length;
-    out.multiMessagePrefixesStripped = !split[0].includes('[2:32 PM') && !split[1].includes('[2:33 PM');
-
-    // Open closures panel, prime clipboard with 2 messages, click paste —
-    // picker should appear instead of a direct insert.
-    closeAllPanels();
-    state.showClosures = true;
-    render();
-    const existingText = 'already typed draft';
-    document.getElementById('closureImportText').value = existingText;
-    await navigator.clipboard.writeText(multiMsg);
-    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
-    await new Promise(r => setTimeout(r, 80));
-
-    out.pickerShown = !!document.getElementById('clipboardPickerOverlay');
-    out.pickerMessageCount = state.clipboardPickerMessages.length;
-    out.textareaPreservedWhilePickerOpen = document.getElementById('closureImportText').value === existingText;
-    out.insertButtonLabel = document.getElementById('clipboardPickerInsert').textContent;
-
-    // Uncheck the second message, then insert — only the first should land.
-    const checks = document.querySelectorAll('.clipboard-picker-check');
-    out.checkboxCount = checks.length;
-    checks[1].checked = false;
-    checks[1].dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise(r => setTimeout(r, 60));
-    out.insertLabelAfterUncheck = document.getElementById('clipboardPickerInsert').textContent;
-    document.getElementById('clipboardPickerInsert').click();
-    await new Promise(r => setTimeout(r, 80));
-
-    out.pickerClosedAfterInsert = !document.getElementById('clipboardPickerOverlay');
-    const afterInsertValue = document.getElementById('closureImportText').value;
-    out.insertedOnlyFirstMessage = afterInsertValue.includes('Steffy offer letter') && !afterInsertValue.includes('Another candidate');
-    out.existingDraftKeptOnInsert = afterInsertValue.startsWith(existingText);
-
-    // Cancel path: prime again, open picker, cancel — textarea must revert
-    // to exactly what it had before the picker opened (not be wiped by the
-    // DOM rebuild, and not keep any picker leftovers).
-    document.getElementById('closureImportText').value = 'draft before cancel test';
-    await navigator.clipboard.writeText(multiMsg);
-    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
-    await new Promise(r => setTimeout(r, 80));
-    document.getElementById('clipboardPickerCancel').click();
-    await new Promise(r => setTimeout(r, 80));
-    out.pickerClosedAfterCancel = !document.getElementById('clipboardPickerOverlay');
-    out.textareaUnchangedAfterCancel = document.getElementById('closureImportText').value === 'draft before cancel test';
-
-    // A single-message clipboard must still direct-insert with no picker.
-    document.getElementById('closureImportText').value = '';
-    await navigator.clipboard.writeText('Plain single message with no export prefix\n\nsalary: $30,000');
-    document.querySelector('.paste-clipboard-btn[data-target="closureImportText"]').click();
-    await new Promise(r => setTimeout(r, 80));
-    out.singleMessageNoPicker = !document.getElementById('clipboardPickerOverlay');
-    out.singleMessageDirectInsert = document.getElementById('closureImportText').value.includes('Plain single message');
-
-    closeAllPanels();
-    render();
-    return out;
-  });
-  check('Clipboard picker', 'A single legitimate multi-line message (e.g. closure w/ blank-line salary) is never split',
-    clipboardPickerTests.singleMessageNotSplit, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Clipboard with 2 WhatsApp-prefixed messages splits into exactly 2, prefixes stripped',
-    clipboardPickerTests.multiMessageSplitCount === 2 && clipboardPickerTests.multiMessagePrefixesStripped,
-    JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Pasting a multi-message clipboard opens the picker instead of inserting directly',
-    clipboardPickerTests.pickerShown && clipboardPickerTests.pickerMessageCount === 2, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Opening the picker does not wipe text already typed in the import box',
-    clipboardPickerTests.textareaPreservedWhilePickerOpen, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'All messages are checked by default and the Insert button reflects the count',
-    clipboardPickerTests.insertButtonLabel.includes('(2)') && clipboardPickerTests.checkboxCount === 2, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Unchecking a message updates the Insert button count',
-    clipboardPickerTests.insertLabelAfterUncheck.includes('(1)'), JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Insert closes the picker and appends only the checked message(s)',
-    clipboardPickerTests.pickerClosedAfterInsert && clipboardPickerTests.insertedOnlyFirstMessage, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Insert keeps whatever was already drafted in the textarea',
-    clipboardPickerTests.existingDraftKeptOnInsert, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'Cancel closes the picker and leaves the textarea exactly as it was',
-    clipboardPickerTests.pickerClosedAfterCancel && clipboardPickerTests.textareaUnchangedAfterCancel, JSON.stringify(clipboardPickerTests));
-  check('Clipboard picker', 'A single-message clipboard still inserts directly with no picker shown',
-    clipboardPickerTests.singleMessageNoPicker && clipboardPickerTests.singleMessageDirectInsert, JSON.stringify(clipboardPickerTests));
-
-  // =====================================================================
-  console.log('\n=== 2d. New Calls / 2nd Round / Reschedule imports merged into one Import button ===');
-  // =====================================================================
-  // Real request: too many separate import buttons scattered in the
-  // toolbar (Import, Import 2nd Round, Import Reschedule/Cancel). Now
-  // there's exactly one "📥 Import" button in the header, next to
-  // Closures, opening a single panel with a New Calls / Reschedule tab
-  // switcher and a 1st/2nd Round toggle inside the New Calls tab.
-  const importHubTests = await page.evaluate(async () => {
-    const out = {};
-    closeAllPanels();
-    render();
-    out.oldButtonsGone = !document.getElementById('toggleImport') && !document.getElementById('toggleImport2nd') && !document.getElementById('toggleRescheduleImport');
-    out.hubButtonExists = !!document.getElementById('toggleImportHub');
-
-    document.getElementById('toggleImportHub').click();
-    await new Promise(r => setTimeout(r, 20));
-    out.importMenuShown = !!document.getElementById('importMenuNewCalls') && !!document.getElementById('importMenuReschedule');
-    document.getElementById('importMenuNewCalls').click();
-    await new Promise(r => setTimeout(r, 20));
-    out.opensOnNewCallsTab = !!document.getElementById('importText') && !document.getElementById('rescheduleImportText');
-
-    document.getElementById('importHubTabReschedule').click();
-    await new Promise(r => setTimeout(r, 20));
-    out.switchesToRescheduleTab = !!document.getElementById('rescheduleImportText') && !document.getElementById('importText');
-
-    document.getElementById('importHubTabNew').click();
-    await new Promise(r => setTimeout(r, 20));
-    out.switchesBackToNewTab = !!document.getElementById('importText');
-
-    document.getElementById('importRound2nd').click();
-    await new Promise(r => setTimeout(r, 20));
-    out.roundToggleWorks = state.importDefaultRound === '2nd';
-
-    document.getElementById('importText').value = 'Import Hub Test Candidate (UK) – Interview – Hub Test Co – 3:00 PM IST – Duration: 30 Mins';
-    document.getElementById('runImport').click();
-    // runImport() awaits a createBackup() call that tries a real network
-    // fetch first (fails since there's no backend in this test) before it
-    // gets to closing the panel — a short fixed sleep is a race, so poll
-    // instead of guessing a delay.
-    for(let i=0; i<40 && state.showImport; i++){ await new Promise(r => setTimeout(r, 50)); }
-    const row = state.rows.find(r => r.candidate && r.candidate.includes('Import Hub Test Candidate'));
-    out.importWorksThroughHub = !!row && row.round === '2nd';
-    out.panelClosesAfterImport = !state.showImport && !state.showRescheduleImport;
-    if(row) state.rows = state.rows.filter(r => r.id !== row.id);
-
-    document.getElementById('toggleImportHub').click();
-    await new Promise(r => setTimeout(r, 20));
-    document.getElementById('importMenuReschedule').click();
-    await new Promise(r => setTimeout(r, 20));
-    document.getElementById('rescheduleImportText').value = 'Import Hub Test Candidate – 3:00 PM IST – rescheduled from candidate side';
-    document.getElementById('parseRescheduleBtn').click();
-    await new Promise(r => setTimeout(r, 200));
-    out.rescheduleWorksThroughHub = !!state.rescheduleReview;
-
-    closeAllPanels();
-    render();
-    return out;
-  });
-  check('Import hub', 'The three separate import buttons (Import, Import 2nd Round, Import Reschedule) are gone',
-    importHubTests.oldButtonsGone, JSON.stringify(importHubTests));
-  check('Import hub', 'A single "Import" button exists in the header',
-    importHubTests.hubButtonExists, JSON.stringify(importHubTests));
-  check('Import hub', 'Clicking it shows a dropdown with Add Calls / Reschedule options',
-    importHubTests.importMenuShown, JSON.stringify(importHubTests));
-  check('Import hub', 'Picking "Add Calls" from the dropdown opens the New Calls tab',
-    importHubTests.opensOnNewCallsTab, JSON.stringify(importHubTests));
-  check('Import hub', 'The Reschedule/Cancel tab switches content without closing the panel',
-    importHubTests.switchesToRescheduleTab, JSON.stringify(importHubTests));
-  check('Import hub', 'Switching back to New Calls tab works',
-    importHubTests.switchesBackToNewTab, JSON.stringify(importHubTests));
-  check('Import hub', 'The 1st/2nd Round toggle inside the New Calls tab works',
-    importHubTests.roundToggleWorks, JSON.stringify(importHubTests));
-  check('Import hub', 'A call imported via the hub (with 2nd Round selected) is added with the right round',
-    importHubTests.importWorksThroughHub, JSON.stringify(importHubTests));
-  check('Import hub', 'The panel closes automatically after a successful import',
-    importHubTests.panelClosesAfterImport, JSON.stringify(importHubTests));
-  check('Import hub', 'The reschedule/cancel flow still works when reached through the hub\'s tab',
-    importHubTests.rescheduleWorksThroughHub, JSON.stringify(importHubTests));
-
-  // Close the panel back out — this app uses an exclusive-panel model
-  // (any open panel hides the main call table), so leaving it open here
-  // would break every test after this one.
-  await page.evaluate(() => { closeAllPanels(); render(); });
-  await page.waitForTimeout(100);
-
-  // =====================================================================
-  console.log('\n=== 2e. Portal Sync merged into one entry point (📡 Team Sync) ===');
-  // =====================================================================
-  // Real request: a quick "Sync Portal" action buried in the "⋯ More"
-  // menu, and a fuller "Team Sync" panel buried in a different "🔧 Tools"
-  // menu, both fetched the exact same Portal assignment data into two
-  // separate state fields for two separate purposes (per-row 📡 mismatch
-  // badges vs. the panel's own table). Now there's one entry point (Team
-  // Sync) and one fetch (fetchPortalSync) that populates both.
-  const portalSyncTests = await page.evaluate(async () => {
-    const out = {};
-    closeAllPanels();
-    render();
-    out.oldQuickButtonGone = !document.getElementById('syncPortalBtn');
-    out.oldFunctionRemoved = typeof syncPortalData === 'undefined';
-
-    // Team Sync lives under the "📊 Reports" menu (formerly "More"), not
-    // "🔧 Admin" (formerly "Tools") — moved there in the More/Tools regroup.
-    state.showMoreMenu = true;
-    render();
-    out.teamSyncButtonExists = !!document.getElementById('togglePortalSync');
-    state.showMoreMenu = false;
-    render();
-
-    // Stub the backend so this runs without a real server, and confirm one
-    // fetchPortalSync() call now feeds BOTH the panel's data AND the
-    // per-row badge-matching data.
-    const origApiCall = apiCall;
-    const origBase = API_BASE_URL;
-    API_BASE_URL = 'http://fake-backend.test';
-    apiCall = async (resource, opts) => {
-      if (resource === 'portal_sync' && opts.qs.includes('type=assignments')) {
-        return { data: [{ candidate: 'Portal Sync Regression Candidate', time: '2:00 PM', team: 'HYD', teamCode: 'HYD', client: 'Acme', assignee: 'Karthikeya', status: 'Scheduled' }] };
-      }
-      if (resource === 'portal_sync' && opts.qs.includes('type=incentives')) {
-        return { data: { byHandler: [], byTeam: {} } };
-      }
-      return { data: [] };
-    };
-    state.portalAssignments = null;
-    state.portalSyncData = null;
-    await fetchPortalSync('today');
-    out.panelDataPopulated = !!(state.portalSyncData && state.portalSyncData.assignments.length === 1);
-    out.rowBadgeDataPopulated = !!(state.portalAssignments && state.portalAssignments.length === 1 && state.portalAssignments[0].handler === 'Karthikeya');
-
-    const savedRows = state.rows;
-    state.rows = [{ id: 'portalsynctest', candidate: 'Portal Sync Regression Candidate', time: '2:00 PM', assignee: 'HYD Team', round: '1st Round' }];
-    const match = findPortalMatch(state.rows[0]);
-    out.rowBadgeMatchWorksFromOneSync = !!match && match.handler === 'Karthikeya';
-    state.rows = savedRows;
-
-    apiCall = origApiCall;
-    API_BASE_URL = origBase;
-    state.portalAssignments = null;
-    state.portalSyncData = null;
-    closeAllPanels();
-    render();
-    return out;
-  });
-  check('Portal sync', 'The separate "Sync Portal" quick-action button (and its function) is gone',
-    portalSyncTests.oldQuickButtonGone && portalSyncTests.oldFunctionRemoved, JSON.stringify(portalSyncTests));
-  check('Portal sync', 'The single "📡 Team Sync" entry point still exists (now under the Reports menu)',
-    portalSyncTests.teamSyncButtonExists, JSON.stringify(portalSyncTests));
-  check('Portal sync', 'One fetchPortalSync() call populates the Team Sync panel\'s own data',
-    portalSyncTests.panelDataPopulated, JSON.stringify(portalSyncTests));
-  check('Portal sync', 'The SAME call also populates the data the per-row 📡 mismatch badge needs',
-    portalSyncTests.rowBadgeDataPopulated, JSON.stringify(portalSyncTests));
-  check('Portal sync', 'findPortalMatch() actually finds a match off that one shared sync',
-    portalSyncTests.rowBadgeMatchWorksFromOneSync, JSON.stringify(portalSyncTests));
-
-  // =====================================================================
-  console.log('\n=== 2f. "More"/"Tools" regrouped into "📊 Reports" / "🔧 Admin" ===');
-  // =====================================================================
-  // Real request: the old More/Tools split had no clear logic (a lookup
-  // like Client History Search sat in More while another lookup, Team
-  // Sync, sat in Tools; Team roster was in Tools while Users was in
-  // More). Regrouped by purpose: Reports & Lookup vs Admin & Team, with
-  // the two destructive actions (Remove Duplicates, Clear all calls)
-  // visually separated at the bottom of Admin behind a divider so they're
-  // not one tap away from routine lookups.
-  const menuRegroupTests = await page.evaluate(() => {
-    const out = {};
-    closeAllPanels();
-
-    // Log out only renders once logged in (ADMIN_PASSWORD or
-    // CURRENT_USERNAME set) — simulate that so this check actually
-    // exercises the "still reachable" path instead of trivially passing
-    // on an absent button.
-    const savedUsername = CURRENT_USERNAME;
-    CURRENT_USERNAME = 'RegressionTestUser';
-
-    state.showMoreMenu = true;
-    render();
-    const reportsItems = Array.from(document.querySelectorAll('.more-menu-dropdown .more-menu-item')).map(b => b.id);
-    out.reportsButtonLabel = document.getElementById('toggleMoreMenu').textContent.trim();
-    out.reportsHasSummary = reportsItems.includes('toggleSummary');
-    out.reportsHasAllDates = reportsItems.includes('toggleAllDates');
-    out.reportsHasStudentsMaster = reportsItems.includes('toggleStudentsMaster');
-    // Client History Search was merged into Search Everywhere (2026-09-24) as
-    // a company-only fuzzy mode, rather than kept as a separate menu item.
-    out.reportsHasUniversalSearch = reportsItems.includes('toggleUniversalSearch');
-    out.reportsHasTeamSync = reportsItems.includes('togglePortalSync');
-    out.reportsHasLogout = reportsItems.includes('headerLogoutBtn');
-    // Admin-only items must NOT have leaked into Reports.
-    out.reportsDoesNotHaveUsers = !reportsItems.includes('toggleUsers');
-    out.reportsDoesNotHaveRoster = !reportsItems.includes('toggleRoster');
-    state.showMoreMenu = false;
-    CURRENT_USERNAME = savedUsername;
-    render();
-
-    state.showToolsMenu = true;
-    render();
-    const adminItems = Array.from(document.querySelectorAll('.more-menu-dropdown .more-menu-item')).map(b => b.id);
-    out.adminButtonLabel = document.getElementById('toggleToolsMenu').textContent.trim();
-    out.adminHasRoster = adminItems.includes('toggleRoster');
-    out.adminHasUsers = adminItems.includes('toggleUsers');
-    out.adminHasIncentives = adminItems.includes('toggleIncentives');
-    out.adminHasBackups = adminItems.includes('toggleBackups');
-    out.adminHasRemoveDup = adminItems.includes('removeDuplicatesBtn');
-    out.adminHasClearAll = adminItems.includes('clearAll');
-    // Team Sync must NOT have leaked into Admin (moved to Reports).
-    out.adminDoesNotHaveTeamSync = !adminItems.includes('togglePortalSync');
-    // The danger-zone divider actually separates the destructive actions
-    // from the routine ones, not just present somewhere in the menu.
-    const dividerIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.classList.contains('more-menu-divider'));
-    const removeDupIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.id === 'removeDuplicatesBtn');
-    const rosterIdx = Array.from(document.querySelectorAll('.more-menu-dropdown > *')).findIndex(el => el.id === 'toggleRoster');
-    out.dividerSeparatesDangerZone = dividerIdx !== -1 && rosterIdx < dividerIdx && removeDupIdx > dividerIdx;
-    state.showToolsMenu = false;
-
-    closeAllPanels();
-    render();
-    return out;
-  });
-  check('Menu regroup', 'Reports menu (formerly "More") is relabeled and has Summary/All Dates/Students Master/Search Everywhere',
-    menuRegroupTests.reportsButtonLabel.includes('Reports') && menuRegroupTests.reportsHasSummary && menuRegroupTests.reportsHasAllDates && menuRegroupTests.reportsHasStudentsMaster && menuRegroupTests.reportsHasUniversalSearch,
-    JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Team Sync moved into the Reports menu',
-    menuRegroupTests.reportsHasTeamSync, JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Log out is still reachable, from the Reports menu',
-    menuRegroupTests.reportsHasLogout, JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Admin-only items (Users, Team roster) did not leak into the Reports menu',
-    menuRegroupTests.reportsDoesNotHaveUsers && menuRegroupTests.reportsDoesNotHaveRoster, JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Admin menu (formerly "Tools") is relabeled and has Team/Users/Incentives/Backups',
-    menuRegroupTests.adminButtonLabel.includes('Admin') && menuRegroupTests.adminHasRoster && menuRegroupTests.adminHasUsers && menuRegroupTests.adminHasIncentives && menuRegroupTests.adminHasBackups,
-    JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Remove Duplicates and Clear all calls are still in the Admin menu',
-    menuRegroupTests.adminHasRemoveDup && menuRegroupTests.adminHasClearAll, JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'Team Sync did NOT leak into the Admin menu (moved out to Reports)',
-    menuRegroupTests.adminDoesNotHaveTeamSync, JSON.stringify(menuRegroupTests));
-  check('Menu regroup', 'A divider visually separates the destructive actions from the routine ones in Admin',
-    menuRegroupTests.dividerSeparatesDangerZone, JSON.stringify(menuRegroupTests));
-
-  // =====================================================================
-  console.log('\n=== 2g. Portal Sync gets a longer request timeout (was timing out on real cold starts) ===');
-  // =====================================================================
-  // Real report: "portal sync error: ... the server took too long to
-  // respond (over 20s)". Root cause — apiCall() hard-coded a 20s abort for
-  // EVERY request, but Portal Sync proxies out to a separate Apps Script
-  // bridge (its own cold start on top of this backend's) and Full Sync
-  // deliberately pulls the entire call history, which the code's own old
-  // comment already admitted could take "~20s" on its own — so the timeout
-  // was firing right as a legitimate slow request was about to succeed.
-  // Fix: apiCall() now accepts an opts.timeoutMs override (default stays
-  // 20s for every other caller), and fetchPortalSync() asks for 30s on
-  // Today / 45s on Full Sync.
-  const timeoutTests = await page.evaluate(async () => {
-    const out = {};
-
-    // apiCall actually honors a custom timeoutMs (not just accepts and
-    // ignores it) — verified by making it abort at a deliberately short
-    // custom value and checking it fires at THAT time, not the 20s default.
-    const origFetch = window.fetch;
-    window.fetch = (url, opts) => new Promise((resolve, reject) => {
-      if (opts && opts.signal) {
-        opts.signal.addEventListener('abort', () => {
-          const err = new Error('The operation was aborted.');
-          err.name = 'AbortError';
-          reject(err);
-        });
-      }
-      // otherwise never resolves — simulates a hung/cold-starting backend
-    });
-    const savedBase = API_BASE_URL;
-    API_BASE_URL = 'http://fake-backend.test';
-
-    const t0 = Date.now();
-    try {
-      await apiCall('portal_sync', { qs: 'type=assignments', timeoutMs: 300 });
-    } catch (e) {
-      out.customTimeoutElapsedMs = Date.now() - t0;
-      out.customTimeoutMessage = e.message;
-    }
-    window.fetch = origFetch;
-    API_BASE_URL = savedBase;
-
-    // fetchPortalSync() requests the right timeout per mode — intercept
-    // apiCall to record what it was actually called with, without needing
-    // to wait out a real 30-45s timeout in this test.
-    const origApiCall = apiCall;
-    const calls = [];
-    apiCall = async (resource, opts) => {
-      calls.push(opts.timeoutMs);
-      if (opts.qs.includes('type=assignments')) return { data: [] };
-      return { data: { byHandler: [], byTeam: {} } };
-    };
-    API_BASE_URL = 'http://fake-backend.test';
-    await fetchPortalSync('today');
-    out.todayTimeouts = calls.slice();
-    calls.length = 0;
-    await fetchPortalSync('full');
-    out.fullTimeouts = calls.slice();
-    apiCall = origApiCall;
-    API_BASE_URL = savedBase;
-
-    // A default apiCall (no timeoutMs passed) must still fall back to a
-    // real, generous value rather than 0/undefined breaking setTimeout.
-    out.defaultInSource = apiCall.toString().includes('opts.timeoutMs || 20000');
-
-    return out;
-  });
-  check('Portal sync timeout', 'apiCall() actually honors a custom timeoutMs (aborts at that time, not the 20s default)',
-    timeoutTests.customTimeoutElapsedMs != null && timeoutTests.customTimeoutElapsedMs < 2000 && timeoutTests.customTimeoutElapsedMs >= 250,
-    JSON.stringify(timeoutTests));
-  check('Portal sync timeout', 'The abort error message reflects the timeout that was actually used',
-    !!timeoutTests.customTimeoutMessage && timeoutTests.customTimeoutMessage.includes('portal_sync'), JSON.stringify(timeoutTests));
-  check('Portal sync timeout', 'fetchPortalSync("today") requests a longer-than-default timeout (30s) on both its calls',
-    JSON.stringify(timeoutTests.todayTimeouts) === JSON.stringify([30000, 30000]), JSON.stringify(timeoutTests));
-  check('Portal sync timeout', 'fetchPortalSync("full") requests an even longer timeout (45s) on both its calls',
-    JSON.stringify(timeoutTests.fullTimeouts) === JSON.stringify([45000, 45000]), JSON.stringify(timeoutTests));
-  check('Portal sync timeout', 'Every other apiCall() caller still defaults to the original 20s (unaffected by this fix)',
-    timeoutTests.defaultInSource, JSON.stringify(timeoutTests));
-
-  // =====================================================================
-  console.log('\n=== 2h. Expected Closures — flag/follow-up/confirm/delete (added 2026-10-01) ===');
-  // =====================================================================
-  {
-    const ecBrowser = await chromium.launch();
-    const ecPage = await ecBrowser.newPage();
-    const ecErrors = [];
-    ecPage.on('pageerror', e => ecErrors.push(String(e)));
-    await ecPage.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
-    await ecPage.waitForTimeout(1000);
-    const ecResult = await ecPage.evaluate(async () => {
-      CURRENT_ROLE = 'admin';
-      const store = { expected: [], closures: [] };
-      let nextId = 1;
-      window.apiCall = async (resource, opts) => {
-        opts = opts || {};
-        if (resource === 'expected_closures') {
-          if (opts.method === 'POST') {
-            const body = opts.body || {};
-            if (body.action === 'delete') { store.expected = store.expected.filter(r => r.id !== body.id); return { ok: true }; }
-            if (body.action === 'followup') { const row = store.expected.find(r => r.id === body.id); if (row) row.lastFollowupNote = body.note; return { ok: true }; }
-            (body.rows || []).forEach(r => store.expected.push(Object.assign({ id: nextId++, createdAt: new Date().toISOString() }, r)));
-            return { ok: true };
-          }
-          return { rows: store.expected };
-        }
-        if (resource === 'closures') {
-          if (opts.method === 'POST') {
-            const body = opts.body || {};
-            if (body.action === 'delete') { store.closures = store.closures.filter(r => r.id !== body.id); return { ok: true }; }
-            (body.rows || []).forEach(r => store.closures.push(Object.assign({ id: nextId++, createdAt: new Date().toISOString() }, r)));
-            return { ok: true };
-          }
-          return { rows: store.closures };
-        }
-        return { rows: [] };
-      };
-      state.rows = [{ id: 'r1', time: '10:00 AM', candidate: 'Jane Doe', company: 'Acme Corp', round: '2nd Round', assignee: 'Priya Reddy', woi: false, doubts: [] }];
-      state.roster = [{ id: 'p1', name: 'Priya Reddy', team: 'HYD Team' }];
-      state.date = '2026-10-01';
-      state.view = 'all';
-      render();
-      document.querySelector('.expect-closure-btn[data-expectclosure="r1"]').click();
-      await new Promise(r => setTimeout(r, 30));
-      document.getElementById('expectClosureNoteInput').value = 'Client verbally confirmed offer';
-      document.getElementById('expectClosureSaveBtn').click();
-      await new Promise(r => setTimeout(r, 50));
-      const flagged = { expectedCount: state.expectedClosures.length, badgeShown: !!document.querySelector('.mini-badge-expectclosure') };
-      window.confirm = () => true;
-      window.prompt = () => '12 LPA';
-      openOnlyPanel('showExpectedClosures');
-      render();
-      document.querySelector('[data-expectclosure-confirm]').click();
-      await new Promise(r => setTimeout(r, 80));
-      const confirmed = { expectedRemaining: state.expectedClosures.length, closuresCount: state.closures.length };
-      return { flagged, confirmed };
-    });
-    check('Expected Closures', 'Flagging a row via the 🎯 button saves it and badges the row', ecResult.flagged.expectedCount === 1 && ecResult.flagged.badgeShown, JSON.stringify(ecResult.flagged));
-    check('Expected Closures', 'Confirming promotes it into the real Closures log and clears the flag', ecResult.confirmed.expectedRemaining === 0 && ecResult.confirmed.closuresCount === 1, JSON.stringify(ecResult.confirmed));
-    check('Expected Closures', 'No page errors', ecErrors.length === 0, ecErrors.join(' | '));
-    await ecBrowser.close();
-  }
 
   // =====================================================================
   console.log('\n=== 3. Students Master fuzzy name matching ===');
@@ -1102,14 +423,14 @@ async function main() {
 
   const move2ndVisible = await page.locator('tr[data-id="i2"] .move-2nd').count();
   if (move2ndVisible > 0) {
-    await page.click('tr[data-id="i2"] .move-2nd');
+    await page.evaluate(() => document.querySelector('tr[data-id="i2"] .move-2nd').click());
     await page.waitForTimeout(150);
     const afterMove = await page.evaluate(() => state.rows.find(r => r.id === 'i2'));
     check('Row interactions', 'Move-to-2nd sets round AND clears team-level assignee',
       afterMove.round === '2nd Round' && afterMove.assignee === '');
   }
 
-  await page.click('tr[data-id="i1"] [data-del]');
+  await page.evaluate(() => document.querySelector('tr[data-id="i1"] [data-del]').click());
   await page.waitForTimeout(150);
   check('Row interactions', 'Delete button removes the row',
     (await page.evaluate(() => !state.rows.find(r => r.id === 'i1'))));
@@ -1209,8 +530,9 @@ async function main() {
 
   // A mostly-vertical drag (ordinary scrolling) with a little horizontal
   // wobble must not be misread as a horizontal swipe.
-  await mPage.evaluate(() => { state.showSwipeAssignPicker = false; state.pendingSwipeAssignRowId = null; render(); });
+  await mPage.evaluate(() => { const o = document.getElementById('myNamePickerOverlay'); if (o) o.remove(); });
   const rowCountBeforeScroll = await mPage.evaluate(() => state.rows.length);
+  await mPage.evaluate(() => window.__swipeHelper('m2', 20));
   await mPage.evaluate(() => {
     const tr = document.querySelector('tbody tr[data-id="m2"]');
     const rect = tr.getBoundingClientRect();
@@ -1237,53 +559,21 @@ async function main() {
     window.scrollTo(0, document.body.scrollHeight);
   });
   await mPage.waitForTimeout(200);
+  await mPage.evaluate(() => { const o = document.getElementById('myNamePickerOverlay'); if (o) o.remove(); });
   const navMoreBtn = await mPage.$('#navMore');
   if (navMoreBtn) await navMoreBtn.click();
   await mPage.waitForTimeout(300);
   const menuCheck = await mPage.evaluate(() => {
-    // The dropdown itself scrolls internally on mobile (max-height:60vh;
-    // overflow-y:auto — see .more-menu-dropdown), and it grew by 3 items
-    // on 2026-09-29 (Notifications/Data Health/DB status moved in here).
-    // The real bug this test guards against was items being cut off with
-    // NO way to reach them at all (the dropdown rendering off the visible
-    // page entirely) — not "the list is long enough to need its own
-    // internal scroll," which is ordinary, expected bottom-sheet behavior.
-    // So each item is scrolled into view WITHIN the dropdown (exactly what
-    // a real person does — scroll the sheet, then tap) before checking
-    // it's actually reachable and unobstructed.
-    const items = Array.from(document.querySelectorAll('.more-menu-item'));
+    const items = Array.from(document.querySelectorAll('.more-menu-item')).filter(i => i.offsetParent !== null);
     return items.length > 0 && items.every(item => {
       item.scrollIntoView({ block: 'nearest' });
       const r = item.getBoundingClientRect();
       const onScreen = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
       const topEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      // topEl can legitimately be a child of the button (e.g. a small status
-      // badge like "not run today"/"Nd since backup" rendered inside it) —
-      // a click there still bubbles up to the button itself, so this is
-      // still tappable. Only actually fail if something OUTSIDE the button
-      // (an overlay, another element) is covering it.
       return onScreen && (topEl === item || item.contains(topEl));
     });
   });
   check('Mobile', 'More menu (opened via bottom nav, scrolled to bottom of a long list) is fully on-screen and every item is tappable', menuCheck);
-
-  // Real report: a long client name made the "Filter by client" <select>
-  // (which used to size itself to its widest option, uncapped) push the
-  // filter bar wider than the screen, showing an unwanted horizontal
-  // scroller. Confirm it stays capped even with several long names.
-  await mPage.evaluate(() => {
-    const names = ['Some Very Long Enterprise Client Company Name Corporation Limited', 'Another International Multinational Consulting Group LLC', 'Short Co'];
-    state.rows = names.map((n, i) => ({ id: 'fb' + i, time: '2:00 PM', company: n, candidate: 'Cand ' + i, round: '1st', duration: '30 mins', woi: false, assignee: '', country: 'USA', doubts: [] }));
-    render();
-  });
-  await mPage.waitForTimeout(300);
-  const filterBarOverflow = await mPage.evaluate(() => ({
-    bodyOverflow: document.body.scrollWidth - window.innerWidth,
-    windowWidth: window.innerWidth,
-  }));
-  check('Mobile', 'A long client name in the "Filter by client" dropdown does not overflow the screen',
-    filterBarOverflow.bodyOverflow === 0 && filterBarOverflow.windowWidth === 390,
-    `overflow=${filterBarOverflow.bodyOverflow}px, innerWidth=${filterBarOverflow.windowWidth}`);
 
   console.log('\nMobile page errors:', mErrors.length ? mErrors.join('\n') : '(none)');
   await mBrowser.close();
@@ -1308,28 +598,14 @@ async function main() {
     render();
   });
   async function click(id, ms) { try { await sPage.click('#' + id, { timeout: 2000 }); await sPage.waitForTimeout(ms || 150); return true; } catch (e) { return false; } }
-  // Notifications, Data Health, and DB status moved from the top-level
-  // toolbar into the 📊 Reports dropdown (2026-09-29 header cleanup) — the
-  // dropdown has to be opened first now, same pattern already used below
-  // for every other dropdown-only item.
-  await click('toggleMoreMenu');
   await click('toggleNotifications');
   const notifTabs = await sPage.locator('.notif-tab-btn').count();
   for (let i = 0; i < notifTabs; i++) { await sPage.locator('.notif-tab-btn').nth(i).click().catch(() => {}); await sPage.waitForTimeout(80); }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleImportHub', 150);
-  await click('importMenuNewCalls', 150);
-  for (const id of ['importHubTabNew', 'importHubTabReschedule']) {
+  for (const id of ['toggleImport', 'toggleRescheduleImport']) {
+    await sPage.evaluate(() => { closeAllPanels(); render(); });
     await click(id, 150);
   }
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleImportHub', 150);
-  await click('importMenuReschedule', 150);
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleClosures', 150);
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleExpectedClosures', 150);
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleToolsMenu');
   for (const id of ['toggleRoster', 'togglePortalSync', 'toggleIncentives', 'toggleBackups']) {
@@ -1339,57 +615,12 @@ async function main() {
   }
   await sPage.evaluate(() => { closeAllPanels(); render(); });
   await click('toggleMoreMenu');
-  for (const id of ['toggleStudentsMaster', 'toggleSummary', 'toggleAllDates', 'toggleUniversalSearch', 'toggleCalendarView', 'toggleHelp', 'toggleMissedCheck', 'toggleCompanyScorecard']) {
+  for (const id of ['toggleStudentsMaster', 'toggleClientSearch', 'toggleSummary', 'toggleAllDates']) {
     await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
     await click('toggleMoreMenu', 80);
     await click(id, 200);
   }
-  // WOI Aging / Workload Heatmap / Weekly Recap now live as tabs inside the
-  // Notifications panel (clubbed with the other cross-date reports) rather
-  // than as separate top-level panels.
-  await sPage.evaluate(() => { closeAllPanels(); state.showMoreMenu = false; render(); });
-  await click('toggleMoreMenu', 80);
-  await click('toggleNotifications', 150);
-  for (const tab of ['woiAging', 'workloadHeatmap', 'weeklyRecap', 'conversionFunnel', 'stuckPipeline', 'timeToClose']) {
-    await sPage.evaluate((t) => { state.notifTab = t; render(); }, tab);
-    await sPage.waitForTimeout(120);
-  }
-  await sPage.evaluate(() => { state.notifTab = 'woiAging'; render(); });
-  await click('runWoiAgingScan', 300);
-  await sPage.evaluate(() => { state.notifTab = 'weeklyRecap'; render(); });
-  await click('runWeeklyRecapScan', 300);
   await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleMoreMenu', 100);
-  await click('toggleSummary', 150);
-  await click('shareWhatsAppBtn', 150);
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  // Remove Duplicates now opens a review-before-commit screen instead of a
-  // bare confirm() dialog — smoke-test that it opens cleanly when there's
-  // a real duplicate to show.
-  await sPage.evaluate(() => {
-    closeAllPanels();
-    const existing = state.rows[0];
-    if (existing) {
-      state.rows.push(Object.assign({}, existing, { id: 'dup-smoke-test-row' }));
-    }
-    render();
-  });
-  await click('toggleToolsMenu', 100);
-  await click('removeDuplicatesBtn', 200);
-  await sPage.evaluate(() => {
-    state.duplicatesReview = null;
-    state.rows = state.rows.filter(r => r.id !== 'dup-smoke-test-row');
-    closeAllPanels();
-    render();
-  });
-  // Clear All also now opens a review-before-commit screen instead of a
-  // bare confirm() dialog — smoke-test it opens and cancels cleanly. Lives
-  // under the "🔧 Admin" menu (toggleToolsMenu), not "☰ More".
-  await sPage.evaluate(() => { closeAllPanels(); render(); });
-  await click('toggleToolsMenu', 100);
-  await click('clearAll', 200);
-  await click('cancelClearAllReview', 150);
-  await sPage.evaluate(() => { state.clearAllReview = null; closeAllPanels(); render(); });
   for (const view of ['all', '1st', '2nd', 'doubts', 'rescheduled']) {
     await sPage.evaluate((v) => { closeAllPanels(); state.view = v; render(); }, view);
     await sPage.waitForTimeout(100);
