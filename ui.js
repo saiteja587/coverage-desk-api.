@@ -2029,3 +2029,54 @@
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== keep the scroll position when the list re-renders ===== */
+/* Selecting a call, assigning it, a background refresh… all call render(), which rebuilds the table and used to
+   throw the list back to the top. Before each render the first visible call (and its offset) is remembered; after
+   it, that call is put back exactly where it was. Changing the date / tab / search / filter still starts at the top. */
+(function(){
+  'use strict';
+  if(window.__keepScroll) return; window.__keepScroll = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  function sig(){ try{ return [state.date,state.view,state.filter,state.search,state.clientFilter,state.assigneeFilter,state.roleFilter,state.sortBy].join('|'); }catch(e){ return ''; } }
+  function rowsIn(s){ return Array.prototype.slice.call(s.querySelectorAll('tbody tr[data-id]')); }
+  function capture(){
+    var s = $('#tableScrollMain'); if(!s) return null;
+    var cs = getComputedStyle(s), inner = (cs.overflowY==='auto'||cs.overflowY==='scroll') && s.scrollHeight > s.clientHeight + 2;
+    var out = { sig: sig(), inner: inner, st: s.scrollTop, sl: s.scrollLeft, wy: window.scrollY };
+    var sTop = s.getBoundingClientRect().top;
+    var list = rowsIn(s);
+    if(inner){
+      for(var i=0;i<list.length;i++){ var r = list[i].getBoundingClientRect(); if(r.bottom > sTop + 48){ out.a = { id:list[i].dataset.id, off:r.top - sTop }; break; } }
+    }
+    if(!inner) for(var j=0;j<list.length;j++){ var q = list[j].getBoundingClientRect(); if(q.bottom > 70){ out.w = { id:list[j].dataset.id, off:q.top }; break; } }
+    return out;
+  }
+  function restore(c){
+    if(!c || c.sig !== sig()) return;
+    var s = $('#tableScrollMain'); if(!s) return;
+    try{
+      if(c.inner){
+        s.scrollLeft = c.sl;
+        var a = c.a && s.querySelector('tbody tr[data-id="'+c.a.id+'"]');
+        if(a){ var d = (a.getBoundingClientRect().top - s.getBoundingClientRect().top) - c.a.off; if(Math.abs(d) > 1) s.scrollTop += d; else if(s.scrollTop===0 && c.st>0) s.scrollTop = c.st; }
+        else s.scrollTop = c.st;
+      } else { s.scrollLeft = c.sl; }
+      var w = c.w && s.querySelector('tbody tr[data-id="'+c.w.id+'"]');
+      if(w){ var dw = w.getBoundingClientRect().top - c.w.off; if(Math.abs(dw) > 1) window.scrollBy(0, dw); }
+      else if(Math.abs(window.scrollY - c.wy) > 1) window.scrollTo(0, c.wy);
+    }catch(e){}
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d7){ return setTimeout(install,60); }
+    var orig = window.render;
+    window.render = function(){
+      var c = null; try{ c = capture(); }catch(e){}
+      var r = orig.apply(this, arguments);
+      try{ restore(c); }catch(e){}
+      requestAnimationFrame(function(){ try{ restore(c); }catch(e){} });
+      return r;
+    };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
