@@ -1806,3 +1806,48 @@
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== swipe-to-dismiss for notifications (phones/tablets) ===== */
+(function(){
+  'use strict';
+  if(window.__sw) return; window.__sw = true;
+  // pop-up toasts (Live Feed, undo/assign, desk tools) and the alerts inside the Live Feed panel
+  var SEL = '.lf-toast, .d2-toast, .undo-toast, #liveFeedPanel .lf-item';
+  var st = null;
+  function targetOf(e){ var t = e.target.closest && e.target.closest(SEL); if(!t) return null;
+    // a toast that wraps an .lf-item swipes as the toast
+    var outer = t.closest('.lf-toast'); return outer || t; }
+  document.addEventListener('touchstart', function(e){
+    if(e.touches.length!==1) return;
+    var el = targetOf(e); if(!el) return;
+    if(e.target.closest('input,textarea,select')) return;
+    st = { el: el, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, lock: null, t: Date.now() };
+  }, {passive:true});
+  document.addEventListener('touchmove', function(e){
+    if(!st) return;
+    var dx = e.touches[0].clientX - st.x, dy = e.touches[0].clientY - st.y;
+    if(st.lock==null && (Math.abs(dx)>8 || Math.abs(dy)>8)) st.lock = Math.abs(dx) > Math.abs(dy)*1.2 ? 'x' : 'y';
+    if(st.lock!=='x'){ if(st.lock==='y'){ reset(false); st=null; } return; }
+    st.dx = dx;
+    var el = st.el; el.style.transition='none'; el.style.transform='translateX('+dx+'px)'; el.style.opacity = String(Math.max(.25, 1-Math.abs(dx)/(el.offsetWidth*1.1)));
+  }, {passive:true});
+  function reset(animate){ if(!st) return; var el=st.el; el.style.transition = animate?'transform .2s ease, opacity .2s ease':''; el.style.transform=''; el.style.opacity=''; }
+  function finish(){
+    if(!st) return; var s=st; st=null;
+    if(s.lock!=='x') return;
+    var el=s.el, w=el.offsetWidth||300, fast = Math.abs(s.dx)/Math.max(1,Date.now()-s.t) > .55;
+    if(Math.abs(s.dx) > w*.33 || (fast && Math.abs(s.dx)>40)){
+      el.style.transition='transform .18s ease, opacity .18s ease'; el.style.transform='translateX('+(s.dx>0?'110%':'-110%')+')'; el.style.opacity='0';
+      setTimeout(function(){ dismiss(el); }, 180);
+    } else { st = s; reset(true); st=null; }
+  }
+  function dismiss(el){
+    var item = el.matches('.lf-item') ? el : el.querySelector('.lf-item');
+    var id = item && item.getAttribute('data-lf-id');
+    if(el.closest('#liveFeedPanel') && id && window.livefeedRemoveItem){ window.livefeedRemoveItem(id); return; }   // panel: delete the alert
+    var x = el.querySelector('[data-lf-dismiss],[data-sa-close],[data-dt-close]');
+    if(el.parentNode) el.parentNode.removeChild(el);                                                            // toast: just hide the pop-up
+  }
+  document.addEventListener('touchend', finish, {passive:true});
+  document.addEventListener('touchcancel', function(){ if(st){ reset(true); st=null; } }, {passive:true});
+})();
