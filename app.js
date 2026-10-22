@@ -2781,6 +2781,46 @@ function businessDayMinutes(t){
 // server-side scheduler hitting real subscribers, none of which this
 // session can deploy or test against a live backend. Worth building as a
 // real follow-on once the basics here prove useful day to day.
+// ---- System notifications (2026-10-21) ----
+// `new Notification(...)` is NOT allowed on Android Chrome (it throws "Illegal
+// constructor") — only ServiceWorkerRegistration.showNotification() works
+// there — and the old code swallowed that error, so phones silently got no
+// alert at all. Everything now goes through this helper: service-worker
+// notification first (works on Android/iOS-PWA/desktop, shows in the tray like
+// any other app), plain Notification only as a desktop fallback.
+async function cdShowNotification(title, opts){
+  opts = Object.assign({ icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [120, 60, 120] }, opts || {});
+  try{
+    if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  }catch(e){ return false; }
+  try{
+    const reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null;
+    if(reg && reg.showNotification){ await reg.showNotification(title, opts); return true; }
+  }catch(e){ /* fall through to the page-level constructor */ }
+  try{
+    const n = new Notification(title, opts);
+    n.onclick = ()=>{ try{ window.focus(); }catch(e){} try{ cdOpenFromNotification(opts.data); }catch(e){} };
+    return true;
+  }catch(e){ return false; }
+}
+window.cdShowNotification = cdShowNotification;
+// Tapping a notification lands on the right day with that candidate filtered.
+async function cdOpenFromNotification(data){
+  if(!data || (!data.date && !data.candidate)) return;
+  try{
+    if(data.date && data.date !== state.date){ await jumpToDateFromQuickSearch(data.date); if(state.date !== data.date) return; }
+    closeAllPanels();
+    state.filter = 'all'; state.view = 'all'; state.clientFilter = '';
+    state.search = data.candidate || '';
+    render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  }catch(e){ console.warn('[notification open]', e); }
+}
+window.cdOpenFromNotification = cdOpenFromNotification;
+try{
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.addEventListener('message', (e)=>{ if(e.data && e.data.type === 'cd-open') cdOpenFromNotification(e.data); });
+  }
+}catch(e){}
 const ALERT_WINDOW_BEFORE_MIN = 15; // fire once a call is this close to its start time
 const ALERT_WINDOW_AFTER_MIN = 10;  // still fire up to this many minutes AFTER start if still unassigned
 function checkTimeSensitiveAlerts(){
@@ -2797,13 +2837,11 @@ function checkTimeSensitiveAlerts(){
     const diff = callMin - nowMin;
     if(diff <= ALERT_WINDOW_BEFORE_MIN && diff >= -ALERT_WINDOW_AFTER_MIN){
       state.alertedRowIds.add(r.id);
-      try{
-        const n = new Notification('Unassigned call coming up', {
-          body: `${r.candidate||'(no name)'}${r.company?' — '+r.company:''} at ${r.time||'?'} still has no one assigned.`,
-          tag: 'cd-alert-'+r.id,
-        });
-        n.onclick = ()=>{ try{ window.focus(); }catch(e){} };
-      }catch(e){ /* Notification constructor can throw in some embedded/insecure contexts — fail quietly, nothing else depends on it */ }
+      cdShowNotification('Unassigned call coming up', {
+        body: `${r.candidate||'(no name)'}${r.company?' — '+r.company:''} at ${r.time||'?'} still has no one assigned.`,
+        tag: 'cd-alert-'+r.id,
+        data: { kind: 'unassigned', date: state.date, id: r.id, candidate: r.candidate || '' },
+      });
     }
   });
 }
@@ -2815,7 +2853,7 @@ function checkEarlyWarnings(){
   const now = new Date(), nowMin = now.getHours()*60 + now.getMinutes();
   const fire = (key, title, body) => {
     if(state.alertedRowIds.has(key)) return; state.alertedRowIds.add(key);
-    try{ const n = new Notification(title, { body, tag: 'cd-early-' + key }); n.onclick = ()=>{ try{ window.focus(); }catch(e){} }; }catch(e){}
+    cdShowNotification(title, { body, tag: 'cd-early-' + key, data: { kind: 'early', date: state.date } });
   };
   (state.rows||[]).forEach(r=>{
     if(r.woi || (r.assignee && r.assignee.trim()) || r.status) return;
@@ -15323,8 +15361,17 @@ function findPriorSameClientOccurrence(row){
 function clientHistoryBadge(r){
   const h = findSameClientHistory(r);
   if(!h.length) return '';
-  const lines = h.slice(0, 8).map(o => (o.round || 'round n/a') + ' \u2014 ' + (o.date || '') + (o.time ? ' ' + o.time : '') + (o.assignee ? ' \u2014 ' + o.assignee : '')).join('\n');
-  return `<span class="mini-badge mini-badge-clienthist" data-cp-name="${escapeHtml(r.candidate)}" data-cp-company="${escapeHtml(stripCompanyNoise(r.company))}" title="${escapeHtml((r.candidate||'This candidate') + ' has had ' + h.length + ' earlier call' + (h.length===1?'':'s') + ' with ' + stripCompanyNoise(r.company) + ':\n' + lines + (h.length>8?'\n\u2026':'') + '\n\nClick for the full timeline')}" style="cursor:pointer">\ud83c\udfe2 ${h.length} earlier</span>`;
+  // 2026-10-22: an earlier call that did NOT go ahead (rescheduled / cancelled /
+  // not responded / invite not received) is called out in the hover text and as
+  // a ⚠ on the badge when it was the most recent one — otherwise "4 earlier"
+  // reads as if every one of them happened.
+  const stLabel = o => (o.status ? statusBadgeInfo(o.status).label : '');
+  const lines = h.slice(0, 8).map(o => (o.round || 'round n/a') + ' \u2014 ' + (o.date || '') + (o.time ? ' ' + o.time : '') + (o.assignee ? ' \u2014 ' + o.assignee : '') + (o.status ? '  \u26a0 ' + stLabel(o) + ' (didn\u2019t go ahead)' : '')).join('\n');
+  const last = h[0];
+  const lastBad = !!(last && last.status);
+  const anyBad = h.some(o => o.status);
+  const head = lastBad ? '\u26a0 The most recent call (' + (last.round || 'round n/a') + ', ' + (last.date || '') + ') was ' + stLabel(last).toLowerCase() + ' \u2014 it did not go ahead as planned.\n\n' : '';
+  return `<span class="mini-badge mini-badge-clienthist${lastBad ? ' mini-badge-clienthist-warn' : ''}" data-cp-name="${escapeHtml(r.candidate)}" data-cp-company="${escapeHtml(stripCompanyNoise(r.company))}" title="${escapeHtml(head + (r.candidate||'This candidate') + ' has had ' + h.length + ' earlier call' + (h.length===1?'':'s') + ' with ' + stripCompanyNoise(r.company) + ':\n' + lines + (h.length>8?'\n\u2026':'') + '\n\nClick for the full timeline')}" style="cursor:pointer">\ud83c\udfe2 ${h.length} earlier${lastBad ? ' \u26a0 last ' + escapeHtml(stLabel(last).toLowerCase()) : (anyBad ? ' \u26a0' : '')}</span>`;
 }
 document.addEventListener('click', (e)=>{
   const b = e.target.closest && e.target.closest('.mini-badge-clienthist');
@@ -16956,6 +17003,7 @@ function computeSmartAlerts(allRows, today, opts){
     const n = unread();
     bell.innerHTML = (lf.muted ? '🔕' : '🛎️') + (n ? '<span class="lf-badge">' + (n > 9 ? '9+' : n) + '</span>' : '');
     bell.classList.toggle('has-unread', n > 0);
+    try{ window.dispatchEvent(new CustomEvent('livefeed-change')); }catch(e){}
   }
 
   function ago(ts){
@@ -17010,8 +17058,18 @@ function computeSmartAlerts(allRows, today, opts){
 
   // ----- toasts -----
   function removeToast(el){ if(el && el.parentNode) el.parentNode.removeChild(el); }
+  // Same alert as a real system notification when the app is in the background
+  // (another tab / app switched away / screen locked-but-running).
+  function osNotify(item){
+    try{
+      if(lf.muted || item.type === 'more') return;
+      if(!(document.hidden || !document.hasFocus())) return;
+      cdShowNotification(item.title, { body: item.body, tag: 'cd-lf-' + item.id, data: { kind: 'livefeed', id: item.id, date: item.date || '', candidate: item.candidate || '' } });
+    }catch(e){}
+  }
   function showToast(item){
     if(lf.muted) return;
+    osNotify(item);
     while(toastBox.children.length >= LIVEFEED_MAX_TOASTS) removeToast(toastBox.firstChild);
     const el = document.createElement('div');
     el.className = 'lf-toast'; el.setAttribute('role','status'); el.dataset.lfToastId = item.id;
@@ -17072,6 +17130,15 @@ function computeSmartAlerts(allRows, today, opts){
     const t = toastBox.querySelector('[data-lf-toast-id="' + CSS.escape(id) + '"]'); removeToast(t);
   }
   window.livefeedRemoveItem = removeItem;
+  window.livefeedApi = {
+    items: () => lf.items.slice(),
+    unread: () => unread(),
+    muted: () => !!lf.muted,
+    markRead(id){ const i = findItem(id); if(i && !i.read){ i.read = true; save(); paintBell(); } },
+    markAllRead(){ lf.items.forEach(i => { i.read = true; }); save(); paintBell(); if(lf.open) paintPanel(); },
+    clear(){ lf.items = []; save(); paintBell(); if(lf.open) paintPanel(); },
+    toggleMute(){ lf.muted = !lf.muted; save(); paintBell(); if(lf.muted) toastBox.innerHTML = ''; if(lf.open) paintPanel(); return lf.muted; },
+  };
 
   // re-check only when today's rows actually changed (cheap signature compare)
   const prevRender = window.render;
