@@ -1775,7 +1775,7 @@
     if((r.doubts||[]).length) flags += '<em class="m-b warn">doubt</em>';
     var pb = $('.portal-check-btn', tr); if(pb && /amber/.test(pb.getAttribute('style')||'')) flags += '<em class="m-b warn">📡</em>';
     if($('.pin-toggle-filled', tr)) flags += '<em class="m-b t">★</em>';
-    try{ var chn = findSameClientHistory(r).length; if(chn) flags += '<em class="m-b t" title="Earlier calls with this client">🏢 '+chn+' earlier</em>'; }catch(x){}
+    try{ var chh = findSameClientHistory(r), chn = chh.length; if(chn){ var cb = chh[0] && chh[0].status; flags += '<em class="m-b '+(cb?'warn':'t')+'" title="Earlier calls with this client">🏢 '+chn+' earlier'+(cb?' · ⚠ last '+esc(statusBadgeInfo(cb).label.toLowerCase()):'')+'</em>'; } }catch(x){}
     var meta = [shortDur(r.duration), r.country].filter(Boolean).join(' · ');
     return '<div class="m-l1"><span class="m-time">'+esc(r.time||'—')+'</span><b class="m-name">'+esc(r.candidate||'(no name)')+'</b>'+roundTag(r)+'</div>'
       +'<div class="m-l2">'+esc([r.company,r.role].filter(Boolean).join(' · '))+'</div>'
