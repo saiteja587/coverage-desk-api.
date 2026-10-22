@@ -1857,6 +1857,10 @@
     var item = el.matches('.lf-item,.d8-item') ? el : el.querySelector('.lf-item');
     var id = item && item.getAttribute('data-lf-id');
     if(el.closest('#liveFeedPanel,#d8') && id && window.livefeedRemoveItem){ window.livefeedRemoveItem(id); return; }   // panel / inbox: delete the alert
+    if(el.classList.contains('undo-toast')){                                                                     // undo pop-up: swipe = keep the removal, drop the Undo
+      try{ if(typeof undoToastTimer!=='undefined') clearTimeout(undoToastTimer); state.lastDeleted = null; render(); }catch(e){ if(el.parentNode) el.parentNode.removeChild(el); }
+      return;
+    }
     var x = el.querySelector('[data-lf-dismiss],[data-sa-close],[data-dt-close]');
     if(el.parentNode) el.parentNode.removeChild(el);                                                            // toast: just hide the pop-up
   }
