@@ -973,3 +973,8 @@ body.m9-open{overflow:hidden}
 @keyframes d9down{from{opacity:0;transform:translate(-50%,-14px)}to{opacity:1;transform:translate(-50%,0)}}
 
 .mini-badge-clienthist-warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 60%,var(--border));background:color-mix(in srgb,var(--amber) 12%,transparent)}
+
+/* undo pop-up: top-RIGHT corner (next to the header buttons / Log out), not centred */
+.undo-toast{left:auto;right:20px;top:16px;transform:none;animation:d9right .25s ease both}
+@keyframes d9right{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
+@media (max-width:899px){.undo-toast{right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);max-width:calc(100vw - 24px)}}
