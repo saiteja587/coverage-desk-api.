@@ -17137,6 +17137,8 @@ function computeSmartAlerts(allRows, today, opts){
     muted: () => !!lf.muted,
     markRead(id){ const i = findItem(id); if(i && !i.read){ i.read = true; save(); paintBell(); } },
     markAllRead(){ lf.items.forEach(i => { i.read = true; }); save(); paintBell(); if(lf.open) paintPanel(); },
+    snooze(id, ms){ const i = findItem(id); if(i){ i.snoozeUntil = Date.now() + (ms||900000); i.read = true; save(); paintBell(); if(lf.open) paintPanel(); } },
+    wake(id){ const i = findItem(id); if(i){ delete i.snoozeUntil; i.read = false; i.ts = Date.now(); save(); paintBell(); if(lf.open) paintPanel(); } },
     clear(){ lf.items = []; save(); paintBell(); if(lf.open) paintPanel(); },
     toggleMute(){ lf.muted = !lf.muted; save(); paintBell(); if(lf.muted) toastBox.innerHTML = ''; if(lf.open) paintPanel(); return lf.muted; },
   };
