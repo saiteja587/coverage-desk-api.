@@ -11162,10 +11162,13 @@ function findClosureMatch(candidate, company, allRows){
   const sameNameRows = allRows.filter(r => (r.candidate||'').trim().toLowerCase() === candKey);
   if(sameNameRows.length){
     const sorted = sameNameRows.slice().sort((a,b)=> (b._date||'').localeCompare(a._date||''));
-    let row = sorted.find(r => normalizeCompanyKey(r.company) === compKey);
-    if(row) return { row, matchType: 'exact' };
-    row = sorted.find(r => fuzzyCompanyKeyMatch(r.company, company));
-    if(row) return { row, matchType: 'fuzzyCompany' };
+    // FIX (2026-10-23): take the LATEST call (exact OR near-matching company),
+    // not "any exact match first" — a closure belongs to the final round, and
+    // an earlier round typed with the exact spelling used to win over later
+    // rounds typed slightly differently ("Los Angeles Times" vs "Los angeles
+    // time"), crediting the wrong handler.
+    const row = sorted.find(r => normalizeCompanyKey(r.company) === compKey || fuzzyCompanyKeyMatch(r.company, company));
+    if(row) return { row, matchType: normalizeCompanyKey(row.company) === compKey ? 'exact' : 'fuzzyCompany' };
     return null; // this candidate is on file, just never at this company (even fuzzily) — a real mismatch, not a matching gap
   }
   // No exact candidate-name match anywhere. Fall back to the same
