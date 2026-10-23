@@ -2108,7 +2108,7 @@
   var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
   var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
   var el = null, pushState = 'unknown', testMsg = '';
-  var ICON = { 'long-gap':'⏳', 'company-handler':'🏢', 'round-continuity':'↻', 'repeat-noshow':'⚠️', 'unassigned':'📞' };
+  var ICON = { 'long-gap':'⏳', 'company-handler':'🏢', 'round-continuity':'↻', 'repeat-noshow':'⚠️', 'unassigned':'📞', 'soon':'⏰', 'nonext':'🧭', 'asm-after':'🧪', 'next-after-asm':'➡️', 'moved-up':'📈', 'asm-due':'🧪', 'asm-overdue':'⏰', 'asm-nointerview':'📭', 'onsite':'🏢', 'status':'🔁', 'repeat':'⚠️', 'woi':'⏳', 'closure':'🎯', 'brief':'☀️', 'wrap':'🌙' };
   function api(){ return window.livefeedApi || null; }
   function perm(){ try{ return typeof Notification==='undefined' ? 'unsupported' : Notification.permission; }catch(e){ return 'unsupported'; } }
   function isIOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }
@@ -2159,11 +2159,11 @@
       return '<div class="d8-day">'+esc(g.l)+'</div>'+g.items.map(function(it){
         var icon = ICON[it.type] || '🔔';
         return '<div class="d8-item'+(it.read?'':' unread')+'" data-lf-id="'+esc(it.id)+'" data-d8-open="'+esc(it.id)+'"><span class="d8-av">'+icon+'</span><div class="d8-main"><div class="d8-top"><b>'+esc(it.title)+'</b><time>'+esc(ago(it.ts))+'</time></div><div class="d8-body">'+esc(it.body)+'</div>'
-          +'<div class="d8-acts">'+(canAssign(it)?'<button class="d8-act" data-lf-assign="'+esc(it.id)+'">Assign to '+esc(it.handler)+'</button>':'')+'<button class="d8-act soft" data-d8-snooze="'+esc(it.id)+'">⏰ Snooze 15 min</button></div>'+'</div>'+(it.read?'':'<i class="d8-un"></i>')+'</div>';
+          +'<div class="d8-acts">'+(canAssign(it)?'<button class="d8-act" data-lf-assign="'+esc(it.id)+'">Assign to '+esc(it.handler)+'</button>':'')+'<button class="d8-act soft" data-d8-snooze="'+esc(it.id)+'" data-ms="900000">⏰ 15 min</button><button class="d8-act soft" data-d8-snooze="'+esc(it.id)+'" data-ms="tomorrow">Tomorrow</button>'+(it.key?'<button class="d8-act soft" data-d8-done="'+esc(it.id)+'">✓ Done</button>':'')+'</div>'+'</div>'+(it.read?'':'<i class="d8-un"></i>')+'</div>';
       }).join('');
     }).join('') : '<div class="d8-empty"><div>🔔</div><b>No alerts yet</b><p>You’ll see them here when a candidate comes back after a long gap, a client’s calls all went to one person, or a call reaches a later round.</p></div>';
     el.innerHTML = '<div class="d8-sheet"><div class="d8-h"><b>Alerts</b>'+(un?'<span class="d8-pill">'+un+' new</span>':'')+'<span class="d8-sp"></span>'
-      +(items.length?'<button class="d8-link" data-d8="readall">Mark read</button><button class="d8-link" data-d8="clear">Clear</button>':'')
+      +'<button class="d8-link" data-d8="settings" aria-label="Alert settings">⚙</button>'+(items.length?'<button class="d8-link" data-d8="readall">Mark read</button><button class="d8-link" data-d8="clear">Clear</button>':'')
       +'<button class="d8-x" data-d8="close" aria-label="Close">✕</button></div>'
       +'<div class="d8-list">'+setupCard()+list+(items.length?'<p class="d8-hint">Swipe an alert sideways to remove it.</p>':'')+'</div></div>';
     var nl = $('.d8-list', el); if(nl) nl.scrollTop = keep;
@@ -2187,6 +2187,7 @@
     if(d){
       var k = d.dataset.d8;
       if(k==='close') close();
+      else if(k==='settings'){ if(window.d11Settings) window.d11Settings(); }
       else if(k==='readall'){ api() && api().markAllRead(); }
       else if(k==='clear'){ if(confirm('Remove all alerts?')) api() && api().clear(); }
       else if(k==='enable'){ Promise.resolve(typeof toggleTimeSensitiveAlerts==='function' ? toggleTimeSensitiveAlerts() : null).then(function(){ refreshPush(); paint(); }); }
@@ -2198,7 +2199,8 @@
       }
       return;
     }
-    var sn = t.closest('[data-d8-snooze]'); if(sn){ e.stopPropagation(); if(api() && api().snooze) api().snooze(sn.dataset.d8Snooze, 15*60000); if(window.d2Toast) window.d2Toast('Snoozed — I\u2019ll remind you in 15 minutes',{ms:3000}); paint(); return; }
+    var dn = t.closest('[data-d8-done]'); if(dn){ e.stopPropagation(); if(window.livefeedRemoveItem) window.livefeedRemoveItem(dn.dataset.d8Done); if(window.d2Toast) window.d2Toast('Marked done — won\u2019t remind again',{ms:2500}); paint(); return; }
+    var sn = t.closest('[data-d8-snooze]'); if(sn){ e.stopPropagation(); var ms = sn.dataset.ms==='tomorrow' ? (function(){ var d=new Date(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); return d-Date.now(); })() : (+sn.dataset.ms||900000); if(api() && api().snooze) api().snooze(sn.dataset.d8Snooze, ms); if(window.d2Toast) window.d2Toast(sn.dataset.ms==='tomorrow'?'Snoozed until tomorrow 9 AM':'Snoozed for 15 minutes',{ms:3000}); paint(); return; }
     if(t.closest('[data-lf-assign]')){ setTimeout(paint, 250); return; }   // app handles the assignment itself
     var row = t.closest('[data-d8-open]'); if(!row) return;
     var id = row.dataset.d8Open, it = api() && api().items().filter(function(x){ return x.id===id; })[0];
@@ -2691,6 +2693,256 @@ document.addEventListener('click', function(e){
     window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat(TABS.map(function(t){ return ['workspace '+t[1].toLowerCase()+' '+t[0], 'Workspace: '+t[1], 'Board, kanban, lists, directory…', function(){ openW(t[0]); }, '🧭']; })); };
     setInterval(escCheck, 30000); escCheck();
     installOffline();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+/* ===== Smart reminders: the alert engine (follow-ups, assessments, onsites, outcomes, daily brief) ===== */
+(function(){
+  'use strict';
+  if(window.__d11) return; window.__d11 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var LS = { get:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var isAdmin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var api = function(){ return window.livefeedApi && window.livefeedApi.add ? window.livefeedApi : null; };
+
+  var TYPES = [
+    ['soon','Calls starting soon','Heads-up ~15 minutes before each start time, with who is on it','Right now'],
+    ['unassigned','Unassigned call at 30 and 15 minutes','Reminder that nobody has taken it yet','Right now'],
+    ['nonext','Round done, no next step logged','A call happened but nothing was scheduled after it','Follow-ups'],
+    ['asm-after','Assessment came up after an interview','','Follow-ups'],
+    ['next-after-asm','Next round scheduled after an assessment','','Follow-ups'],
+    ['moved-up','Candidate moved up a round','','Follow-ups'],
+    ['asm-due','Assessment due today / tomorrow','','Assessments & onsites'],
+    ['asm-overdue','Assessment overdue','Date passed and not marked done','Assessments & onsites'],
+    ['asm-nointerview','Assessment done, no interview scheduled','','Assessments & onsites'],
+    ['onsite','Onsite coming up','Tomorrow and the morning of','Assessments & onsites'],
+    ['status','Reschedule / cancel recorded','With the candidate’s track record','Outcomes'],
+    ['repeat','Repeat no-show candidate on today’s list','','Outcomes'],
+    ['woi','Waiting for invite over 24 hours','','Outcomes'],
+    ['closure','Expected-closure candidate has a call today','','Outcomes'],
+    ['brief','Morning brief','','Daily'],
+    ['wrap','End-of-day wrap-up','','Daily']
+  ];
+  var BASELINE = {nonext:1,'asm-after':1,'next-after-asm':1,'moved-up':1,status:1,'asm-overdue':1,woi:1};
+
+  function cfg(){ var c; try{ c = JSON.parse(LS.get('cd.d11.cfg','{}'))||{}; }catch(e){ c = {}; } c.on = c.on||{}; if(!c.d1) c.d1=2; if(!c.d2) c.d2=3; if(!c.brief) c.brief='09:30'; if(!c.wrap) c.wrap='21:00'; return c; }
+  function saveCfg(c){ LS.set('cd.d11.cfg', JSON.stringify(c)); }
+
+  var tmin = function(t){ try{ return timeToMinutes(t); }catch(e){ return 9999; } };
+  var addD = function(d,n){ try{ return addDaysToDateStr(d,n); }catch(e){ return d; } };
+  var dayDiff = function(a,b){ return Math.round((Date.parse(b+'T00:00:00Z')-Date.parse(a+'T00:00:00Z'))/86400000); };
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var fmtD = function(d){ var m = /(\d{4})-(\d\d)-(\d\d)/.exec(d||''); return m ? (+m[3])+' '+MON[+m[2]-1] : (d||''); };
+  var ordn = function(n){ return n>=98?'Final':(n===1?'1st':n===2?'2nd':n===3?'3rd':n+'th'); };
+  var roundNum = function(r){ var s = String(r.round||''); if(/final/i.test(s)) return 98; var m = /(\d+)/.exec(s); return m ? +m[1] : (/first/i.test(s)?1:1); };
+  var happened = function(r){ return !r.status && !r.woi; };
+  var nkey = function(n){ try{ return normalizeNameKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } };
+  var cmatch = function(a,b){ try{ return fuzzyCompanyKeyMatch(a,b); }catch(e){ return String(a||'').toLowerCase()===String(b||'').toLowerCase(); } };
+  var coName = function(c){ try{ return stripCompanyNoise(c)||c; }catch(e){ return c||''; } };
+  var key = function(){ return Array.prototype.join.call(arguments,'|'); };
+
+  function ensureLoaded(){
+    var ps = [];
+    try{ if(!state.assessmentsLoaded && typeof loadAssessments==='function') ps.push(loadAssessments().catch(function(){})); }catch(e){}
+    try{ if(!state.onsitesLoaded && typeof loadOnsites==='function') ps.push(loadOnsites().catch(function(){})); }catch(e){}
+    try{ if(!state.expectedClosuresLoaded && typeof loadExpectedClosures==='function') ps.push(loadExpectedClosures().catch(function(){})); }catch(e){}
+    return Promise.all(ps);
+  }
+
+  function compute(all, c){
+    var out = [], today = todayDateString(), tomorrow = addD(today,1), d = new Date(), nowM = d.getHours()*60+d.getMinutes();
+    var push = function(type, k, title, body, extra){ out.push(Object.assign({id:k, key:k, type:type, title:title, body:body, date:today, rowId:'', candidate:'', read:false}, extra||{})); };
+    var rowsAll = (all||[]).filter(function(r){ return r && r._date && r.candidate; });
+    var by = {}; rowsAll.forEach(function(r){ (by[nkey(r.candidate)] = by[nkey(r.candidate)] || []).push(r); });
+    Object.keys(by).forEach(function(k){ by[k].sort(function(a,b){ return String(a._date).localeCompare(String(b._date)) || tmin(a.time)-tmin(b.time); }); });
+    var asms = state.assessments||[], onss = state.onsites||[];
+    var asmFor = function(cand){ var k = nkey(cand); return asms.filter(function(a){ return nkey(a.candidate)===k; }); };
+    var onsFor = function(cand){ var k = nkey(cand); return onss.filter(function(a){ return nkey(a.candidate)===k; }); };
+    var todays = rowsAll.filter(function(r){ return r._date===today; });
+
+    /* --- right now --- */
+    if(c.on.soon!==false){
+      var slots = {};
+      todays.forEach(function(r){ if(!happened(r)) return; var m = tmin(r.time); if(m===9999) return; var diff = m-nowM; if(diff>=0 && diff<=15){ (slots[r.time] = slots[r.time]||[]).push(r); } });
+      Object.keys(slots).forEach(function(t){
+        var L = slots[t], un = L.filter(function(r){ return !r.assignee; }).length, names = L.slice(0,4).map(function(r){ return (r.candidate||'?')+(r.assignee?' → '+r.assignee:' → UNASSIGNED'); });
+        push('soon', key('soon',today,t), L.length+' call'+(L.length>1?'s':'')+' at '+t+(un?' — '+un+' unassigned':''), names.join('; ')+(L.length>4?' … +'+(L.length-4)+' more':''), {priority:un?'high':'', candidate:L[0].candidate});
+      });
+    }
+    if(c.on.unassigned!==false){
+      todays.forEach(function(r){ if(r.woi||r.assignee||r.status) return; var m = tmin(r.time); if(m===9999) return; var diff = m-nowM;
+        if(diff<=30 && diff>15) push('unassigned', key('un30',r.id), 'Nobody assigned — '+diff+' min to go', (r.candidate||'(no name)')+(r.company?' — '+r.company:'')+' at '+r.time+'.', {rowId:r.id, candidate:r.candidate, priority:'high'});
+        else if(diff<=15 && diff>=-5) push('unassigned', key('un15',r.id), 'Still nobody assigned — '+Math.max(diff,0)+' min', (r.candidate||'(no name)')+(r.company?' — '+r.company:'')+' at '+r.time+'.', {rowId:r.id, candidate:r.candidate, priority:'high'});
+      });
+    }
+
+    /* --- follow-ups --- */
+    var nonext = [];
+    Object.keys(by).forEach(function(k){
+      var L = by[k], hp = L.filter(happened); if(!hp.length) return;
+      var last = hp[hp.length-1];
+      if(last._date>=today) return;
+      var rn = roundNum(last); if(rn>=98) return;
+      var age = dayDiff(last._date, today), need = rn===1 ? c.d1 : c.d2;
+      if(age<need || age>14) return;
+      if(L.some(function(r){ return r!==last && (r._date>last._date || (r._date===last._date && tmin(r.time)>tmin(last.time))) && cmatch(r.company, last.company); })) return;
+      if(L.some(function(r){ return r._date>last._date && !r.woi; }) ) return; // any later call for this person (any client) counts as a next step
+      if(asmFor(last.candidate).some(function(a){ return a.date>=last._date; })) return;
+      if(onsFor(last.candidate).some(function(a){ return a.date>=last._date; })) return;
+      nonext.push({last:last, age:age});
+    });
+    if(c.on.nonext!==false){
+      nonext.sort(function(a,b){ return a.age-b.age; }).forEach(function(x){ var l = x.last;
+        push('nonext', key('nonext',nkey(l.candidate),nkey(coName(l.company)),l._date), 'No next step — '+l.candidate, ordn(roundNum(l))+' round'+(l.company?' at '+coName(l.company):'')+' was '+fmtD(l._date)+' ('+x.age+' day'+(x.age===1?'':'s')+' ago). Nothing scheduled since.', {date:l._date, candidate:l.candidate}); });
+    }
+    var followCount = nonext.length;
+
+    asms.forEach(function(a){
+      var cand = a.candidate; if(!cand) return; var L = by[nkey(cand)]||[];
+      var before = L.filter(function(r){ return happened(r) && r._date<=a.date; }), prev = before[before.length-1];
+      if(c.on['asm-after']!==false && prev && a.date>=addD(today,-1) && dayDiff(prev._date, a.date)<=14)
+        push('asm-after', key('asm',a.id), 'Assessment for '+cand, (a.assessment||'Assessment')+' on '+fmtD(a.date)+(a.time?' at '+a.time:'')+' — after '+ordn(roundNum(prev))+' round'+(prev.company?' at '+coName(prev.company):'')+' on '+fmtD(prev._date)+'.', {date:a.date, candidate:cand});
+      var after = L.filter(function(r){ return !r.woi && r._date>a.date; })[0];
+      if(c.on['next-after-asm']!==false && after && a.date>=addD(today,-14)){
+        push('next-after-asm', key('nxa',a.id,after.id), 'Next round after assessment — '+cand, ordn(roundNum(after))+' round'+(after.company?' at '+coName(after.company):'')+' on '+fmtD(after._date)+(after.time?' at '+after.time:'')+' (assessment was '+fmtD(a.date)+').', {date:after._date, rowId:after.id, candidate:cand});
+      }
+      if(a.done){
+        if(c.on['asm-nointerview']!==false && !after && !onsFor(cand).some(function(o){ return o.date>=a.date; }) && dayDiff(a.date,today)>=3 && dayDiff(a.date,today)<=14)
+          push('asm-nointerview', key('adn',a.id), 'Assessment done, nothing next — '+cand, (a.assessment||'Assessment')+' was '+fmtD(a.date)+' ('+dayDiff(a.date,today)+' days ago). No interview or onsite scheduled since.', {date:a.date, candidate:cand});
+      } else {
+        if(c.on['asm-due']!==false){
+          if(a.date===today) push('asm-due', key('due',a.id,'today'), 'Assessment today — '+cand, (a.assessment||'Assessment')+(a.time?' at '+a.time:'')+(a.company?' · '+coName(a.company):'')+((a.handlers||[]).length?' · '+a.handlers.join(', '):' · NO HANDLER'), {date:a.date, candidate:cand, priority:(a.handlers||[]).length?'':'high'});
+          else if(a.date===tomorrow && nowM>=15*60) push('asm-due', key('due',a.id,'tomorrow'), 'Assessment tomorrow — '+cand, (a.assessment||'Assessment')+(a.time?' at '+a.time:'')+(a.company?' · '+coName(a.company):'')+((a.handlers||[]).length?' · '+a.handlers.join(', '):' · no handler yet'), {date:a.date, candidate:cand});
+        }
+        if(c.on['asm-overdue']!==false && a.date<today && dayDiff(a.date,today)<=14)
+          push('asm-overdue', key('od',a.id), 'Assessment overdue — '+cand, (a.assessment||'Assessment')+' was '+fmtD(a.date)+' and isn’t marked done.', {date:a.date, candidate:cand});
+      }
+    });
+
+    if(c.on['moved-up']!==false){
+      rowsAll.forEach(function(r){
+        if(r._date<addD(today,-1) || r.woi || r.status) return; var rn = roundNum(r); if(rn<2) return;
+        var L = by[nkey(r.candidate)]||[];
+        var prior = L.filter(function(x){ return x!==r && x._date<r._date && cmatch(x.company, r.company) && happened(x); });
+        if(!prior.length) return; var maxPrior = Math.max.apply(null, prior.map(roundNum));
+        if(rn>maxPrior) push('moved-up', key('up',nkey(r.candidate),nkey(coName(r.company)),rn), r.candidate+' reached '+ordn(rn)+' round', coName(r.company)+' — '+ordn(rn)+' round on '+fmtD(r._date)+(r.time?' at '+r.time:'')+' (was '+ordn(maxPrior)+').', {date:r._date, rowId:r.id, candidate:r.candidate});
+      });
+    }
+
+    if(c.on.onsite!==false){
+      onss.forEach(function(o){ if(o.status && o.status!=='Scheduled') return;
+        var who = (o.handlers||[]).length ? o.handlers.join(', ') : 'NO HANDLER yet', extra = (o.location?' @ '+o.location:'');
+        if(o.date===tomorrow && nowM>=15*60) push('onsite', key('os',o.id,'tomorrow'), 'Onsite tomorrow — '+o.candidate, (o.company?coName(o.company)+' · ':'')+(o.time||'')+extra+' · '+who, {date:o.date, candidate:o.candidate});
+        else if(o.date===today && nowM>=7*60) push('onsite', key('os',o.id,'today'), 'Onsite today — '+o.candidate, (o.company?coName(o.company)+' · ':'')+(o.time||'')+extra+' · '+who, {date:o.date, candidate:o.candidate, priority:(o.handlers||[]).length?'':'high'});
+      });
+    }
+
+    /* --- outcomes --- */
+    if(c.on.status!==false){
+      rowsAll.forEach(function(r){ if(!r.status || r._date<addD(today,-1) || r._date>addD(today,2)) return;
+        var bad = 0; try{ bad = (by[nkey(r.candidate)]||[]).filter(function(x){ return x!==r && x.status && (x.status==='rescheduled'||x.status==='cancelled'||x.status==='not_responded'); }).length; }catch(e){}
+        var lbl = (window.statusBadgeInfo ? statusBadgeInfo(r.status).label : r.status);
+        push('status', key('st',r.id,r.status), lbl+' — '+r.candidate, (r.company?coName(r.company)+' · ':'')+ordn(roundNum(r))+' round on '+fmtD(r._date)+(r.time?' at '+r.time:'')+(bad?' · '+bad+' earlier reschedule/cancel'+(bad>1?'s':'')+' on record':''), {date:r._date, rowId:r.id, candidate:r.candidate, priority:'high'});
+      });
+    }
+    if(c.on.repeat!==false){
+      todays.forEach(function(r){ if(!happened(r)) return; var bad = (by[nkey(r.candidate)]||[]).filter(function(x){ return x._date<today && x.status && (x.status==='rescheduled'||x.status==='cancelled'||x.status==='not_responded'); }).length;
+        if(bad>=2) push('repeat', key('rns',r.id), 'Repeat no-show on today’s list — '+r.candidate, bad+' earlier reschedule/cancel/no-response outcomes. Call at '+(r.time||'?')+(r.company?' · '+coName(r.company):'')+'.', {rowId:r.id, candidate:r.candidate});
+      });
+    }
+    if(c.on.woi!==false){
+      rowsAll.forEach(function(r){ if(!r.woi || r._date>=today || dayDiff(r._date,today)>10) return;
+        push('woi', key('woi',r.id), 'Still waiting for invite — '+r.candidate, (r.company?coName(r.company)+' · ':'')+'logged '+fmtD(r._date)+'. Over a day without an invite.', {date:r._date, rowId:r.id, candidate:r.candidate});
+      });
+    }
+    if(c.on.closure!==false){
+      var ecs = (state.expectedClosures||[]).map(function(e){ return nkey(e.candidate); });
+      todays.forEach(function(r){ if(ecs.indexOf(nkey(r.candidate))>=0 && happened(r)) push('closure', key('clo',r.id), '🎯 Expected closure on the board — '+r.candidate, (r.company?coName(r.company)+' · ':'')+ordn(roundNum(r))+' round at '+(r.time||'?')+'. Follow up after the call.', {rowId:r.id, candidate:r.candidate}); });
+    }
+
+    /* --- daily --- */
+    var hhmm = function(s){ var m = /(\d{1,2}):(\d\d)/.exec(s||''); return m ? (+m[1])*60+(+m[2]) : 0; };
+    if(c.on.brief!==false && nowM>=hhmm(c.brief) && nowM<hhmm(c.brief)+360){
+      var live = todays.filter(happened).sort(function(a,b){ return tmin(a.time)-tmin(b.time); });
+      var unA = live.filter(function(r){ return !r.assignee; }).length, lt = live.filter(function(r){ var m=tmin(r.time); return m!==9999&&(m>=1320||m<360); }).length;
+      var ta = asms.filter(function(a){ return a.date===today && !a.done; }).length, to = onss.filter(function(o){ return o.date===today && (!o.status||o.status==='Scheduled'); }).length;
+      push('brief', key('brief',today), '☀️ Today: '+live.length+' call'+(live.length===1?'':'s')+(unA?' · '+unA+' unassigned':' · all assigned'), (live.length?'First at '+live[0].time+'. ':'')+(lt?lt+' late-night. ':'')+(ta?ta+' assessment'+(ta>1?'s':'')+'. ':'')+(to?to+' onsite'+(to>1?'s':'')+'. ':'')+(followCount?followCount+' follow-up'+(followCount>1?'s':'')+' owed (no next step).':'No follow-ups owed.'), {priority:'high'});
+    }
+    if(c.on.wrap!==false && nowM>=hhmm(c.wrap) && nowM<hhmm(c.wrap)+240){
+      var tm = rowsAll.filter(function(r){ return r._date===tomorrow && happened(r); }), tmUn = tm.filter(function(r){ return !r.assignee; }).length;
+      var dn = todays.filter(function(r){ return happened(r) && tmin(r.time)<=nowM; }).length, rs = todays.filter(function(r){ return r.status; }).length, unT = todays.filter(function(r){ return happened(r) && !r.assignee; }).length;
+      push('wrap', key('wrap',today), '🌙 Wrap-up: '+dn+' call'+(dn===1?'':'s')+' done today', (rs?rs+' rescheduled/cancelled. ':'')+(unT?unT+' today still unassigned. ':'')+'Tomorrow: '+tm.length+' call'+(tm.length===1?'':'s')+(tmUn?' ('+tmUn+' unassigned)':'')+'. '+(followCount?followCount+' follow-up'+(followCount>1?'s':'')+' owed.':'No follow-ups owed.'), {priority:'high'});
+    }
+    return out;
+  }
+
+  var running = false, lastRun = 0;
+  function run(force){
+    var A = api();
+    if(!A || running || !isAdmin() || state.needsLogin || typeof fetchAllRowsAcrossDates!=='function') return;
+    if(!force && Date.now()-lastRun < 90000) return;
+    running = true; lastRun = Date.now();
+    ensureLoaded().then(function(){ return fetchAllRowsAcrossDates(false); }).then(function(all){
+      var c = cfg(), alerts = compute(all, c), first = LS.get('cd.d11.init','')!=='1', added = 0;
+      alerts.forEach(function(a){
+        if(A.hasSeen(a.id)) return;
+        if(first && BASELINE[a.type]){ A.markSeen(a.id); return; }
+        if(added>=12 && a.type!=='brief' && a.type!=='wrap') return;
+        if(A.add(a)) added++;
+      });
+      if(first) LS.set('cd.d11.init','1');
+    }).catch(function(e){ console.warn('d11',e); }).then(function(){ running = false; });
+  }
+  window.d11Run = function(){ run(true); };
+
+  /* ---------- settings sheet ---------- */
+  var el = null;
+  function sheet(){
+    var c = cfg(), groups = {}, order = [];
+    TYPES.forEach(function(t){ if(!groups[t[3]]){ groups[t[3]] = []; order.push(t[3]); } groups[t[3]].push(t); });
+    el.innerHTML = '<div class="d11-sheet"><div class="d11-h"><b>Alert settings</b><button type="button" class="d11-x" data-d11="close" aria-label="Close">✕</button></div><div class="d11-body">'
+      + order.map(function(g){ return '<div class="d11-g">'+esc(g)+'</div>'+groups[g].map(function(t){ var on = c.on[t[0]]!==false; return '<label class="d11-r"><span><b>'+esc(t[1])+'</b>'+(t[2]?'<small>'+esc(t[2])+'</small>':'')+'</span><input type="checkbox" data-d11t="'+t[0]+'" '+(on?'checked':'')+'><i></i></label>'; }).join(''); }).join('')
+      + '<div class="d11-g">Timing</div><div class="d11-t"><label>No-next-step after<input type="number" min="1" max="10" data-d11n="d1" value="'+c.d1+'"> days (1st round)</label><label>and after<input type="number" min="1" max="14" data-d11n="d2" value="'+c.d2+'"> days (later rounds)</label><label>Morning brief at<input type="time" data-d11n="brief" value="'+esc(c.brief)+'"></label><label>Wrap-up at<input type="time" data-d11n="wrap" value="'+esc(c.wrap)+'"></label></div>'
+      + '<div class="d11-row"><button type="button" class="d11-b primary" data-d11="check">Check now</button><button type="button" class="d11-b" data-d11="test">Send a sample alert</button></div><p class="d11-note">Alerts are checked every couple of minutes while the app is open. New ones appear in 🔔 Alerts and as phone notifications when the app is in the background. The first time this runs, existing history is skipped so you only hear about new things.</p></div></div>';
+  }
+  function openS(){ if(!el){ el = document.createElement('div'); el.id='d11'; document.body.appendChild(el); } sheet(); }
+  function closeS(){ if(el){ el.remove(); el = null; } }
+  window.d11Settings = openS;
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return;
+    if(el && t===el){ closeS(); return; }
+    var b = t.closest('[data-d11]'); if(!b) return; var k = b.dataset.d11;
+    if(k==='close') closeS();
+    else if(k==='check'){ run(true); if(window.d2Toast) window.d2Toast('Checking now…',{ms:2000}); }
+    else if(k==='test'){ var A = api(); if(A){ A.add({id:'d11-test-'+Date.now(), type:'nonext', title:'Sample alert — No next step: Test Candidate', body:'1st round at Sample Co was 2 days ago. Nothing scheduled since.', date:state.date, rowId:'', candidate:'', read:false, priority:'high', key:'sample'}); } }
+  });
+  document.addEventListener('change', function(e){
+    var t = e.target; if(!el || !t.dataset) return;
+    var c = cfg();
+    if(t.dataset.d11t){ c.on[t.dataset.d11t] = t.checked; saveCfg(c); }
+    else if(t.dataset.d11n){ var k = t.dataset.d11n; c[k] = (k==='d1'||k==='d2') ? Math.max(1, Math.min(14, parseInt(t.value,10)||2)) : (t.value||c[k]); saveCfg(c); }
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && el) closeS(); });
+
+  /* ---------- wiring ---------- */
+  function injectMenu(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD11', dd)) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD11'; b.type='button'; b.title='Choose which smart reminders you get, and when'; b.innerHTML='🔔 Alert settings';
+    b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} openS(); });
+    host.appendChild(b);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d10 || !window.livefeedApi){ return setTimeout(install,150); }
+    var orig = window.render;
+    window.render = function(){ var r = orig.apply(this, arguments); try{ injectMenu(); }catch(e){} return r; };
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['alert settings reminders notifications','Alert settings','Choose smart reminders',openS,'🔔']]); };
+    setInterval(function(){ run(false); }, 120000);
+    document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') run(false); });
+    setTimeout(function(){ run(true); }, 4000);
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
