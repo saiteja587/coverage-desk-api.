@@ -978,3 +978,20 @@ body.m9-open{overflow:hidden}
 .undo-toast{left:auto;right:20px;top:16px;transform:none;animation:d9right .25s ease both}
 @keyframes d9right{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
 @media (max-width:899px){.undo-toast{right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);max-width:calc(100vw - 24px)}}
+
+/* ===== toasts (incl. the one with Undo): top-right corner, always dismissable ===== */
+#d2Toasts{left:auto;right:20px;bottom:auto;top:16px;transform:none;align-items:flex-end;width:auto;max-width:calc(100vw - 24px);z-index:9600}
+body:has(.undo-toast) #d2Toasts{top:84px}
+.d2-toast{animation:d9right .25s ease both}
+.d2-toast.out{animation:d9out .2s ease forwards}
+@keyframes d9out{to{opacity:0;transform:translateY(-8px)}}
+.d2-toast-x{border:0;background:transparent;color:inherit;opacity:.55;font-size:14px;line-height:1;width:26px;height:26px;border-radius:50%;cursor:pointer;flex:none;margin-right:-6px}
+.d2-toast-x:hover{opacity:1;background:rgba(127,127,127,.2)}
+.undo-toast{padding-right:10px}
+@media (max-width:899px){
+  #d2Toasts{right:12px;top:calc(env(safe-area-inset-top,0px) + 10px)}
+  body:has(.undo-toast) #d2Toasts{top:calc(env(safe-area-inset-top,0px) + 84px)}
+  .d2-toast-x{width:32px;height:32px}
+}
+.undo-toast .d2-toast-x{background:transparent;color:var(--text);padding:0;border-radius:50%;width:28px;height:28px;font-weight:400;font-size:14px;opacity:.6;margin-right:0}
+.undo-toast .d2-toast-x:hover{opacity:1;background:var(--border)}
