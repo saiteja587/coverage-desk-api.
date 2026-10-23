@@ -1112,3 +1112,13 @@ body.d12-open{overflow:hidden}
 /* bottom bar with six slots */
 @media (max-width:899px){.bottom-nav-item{min-width:0}.bottom-nav-label{white-space:nowrap}}
 .d12-sb .d12-q,.d12-sb .d12-q:focus,.d12-sb .d12-q:focus-visible{outline:0!important;box-shadow:none!important;border:0!important;background:transparent!important}
+
+/* phone bottom bar: Calls · Search · ＋ · Alerts · Reports (Admin tools now lives at the top of Reports) */
+@media (max-width:899px){
+  #navTools{display:none!important}
+  .bottom-nav{padding-left:6px;padding-right:6px}
+  .bottom-nav-item{flex:1 1 0}
+  .bottom-nav-fab{flex:0 0 64px}
+  .bottom-nav-fab-icon{width:44px!important;height:44px!important;margin-top:-18px!important;border-width:4px!important;font-size:22px}
+}
+@media (max-width:899px){#navHome{order:1}#navSearch{order:2}#navAdd{order:3}#navAlerts{order:4}#navMore{order:5}}
