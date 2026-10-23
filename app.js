@@ -5439,6 +5439,90 @@ function buildClosureRoundTimeline(candidate, company){
   entries.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
   return entries;
 }
+// Manual handler override (admin) — {closureId: [names]} stored as JSON in
+// app_settings under 'closure_handlers'. When present it decides who gets
+// credit for a closure, regardless of call matching.
+function getClosureHandlerOverrides(){
+  try{
+    const raw = state.appSettings && state.appSettings.closure_handlers;
+    const o = raw ? JSON.parse(raw) : {};
+    return (o && typeof o === 'object') ? o : {};
+  }catch(e){ return {}; }
+}
+function getClosureHandlers(id){
+  const v = getClosureHandlerOverrides()[String(id)];
+  return Array.isArray(v) ? v.filter(Boolean) : [];
+}
+async function saveClosureHandlers(id, names){
+  const o = getClosureHandlerOverrides();
+  const clean = Array.from(new Set((names||[]).map(n=>String(n).trim()).filter(Boolean)));
+  if(clean.length) o[String(id)] = clean; else delete o[String(id)];
+  await saveAppSetting('closure_handlers', JSON.stringify(o));
+  _closuresPerfCacheSig = null;
+}
+function closureHandlerChipsHtml(id){
+  const hs = getClosureHandlers(id);
+  return hs.length ? hs.map(h=>`<span class="mini-badge" style="background:rgba(80,200,160,.18)" title="Handler set manually">👤 ${escapeHtml(h)}</span>`).join(' ') : '';
+}
+function closureHandlerBtnHtml(id){
+  if(CURRENT_ROLE !== 'admin') return '';
+  const has = getClosureHandlers(id).length;
+  return `<button type="button" class="btn ghost" data-closure-handler="${id}" style="font-size:12px" title="Choose who gets credit for this closure">👤 ${has?'Edit handler':'Handler'}</button>`;
+}
+function openClosureHandlerDialog(id){
+  if(CURRENT_ROLE !== 'admin') return;
+  const c = (state.closures||[]).find(x=>x.id===id);
+  if(!c) return;
+  const cur = getClosureHandlers(id);
+  const names = Array.from(new Set((state.roster||[]).map(p=>p.name).filter(Boolean).concat(cur))).sort((a,b)=>a.localeCompare(b));
+  const old = document.getElementById('chDlg'); if(old) old.remove();
+  const d = document.createElement('div');
+  d.id = 'chDlg';
+  d.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = `<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:420px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:16px;gap:10px">
+    <div style="font-weight:700;font-size:15px">👤 Handler for ${escapeHtml(c.candidate)} <span class="notif-chip">${escapeHtml(c.company)}</span></div>
+    <div class="hint">Tick who gets credit. This overrides the call match in By Handler.</div>
+    <input type="text" id="chSearch" placeholder="Search people…" autocomplete="off" style="padding:8px;border-radius:8px">
+    <div id="chList" style="overflow:auto;flex:1;min-height:80px;display:flex;flex-direction:column;gap:4px">
+      ${names.map(n=>`<label data-n="${escapeHtml(n.toLowerCase())}" style="display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:14px"><input type="checkbox" value="${escapeHtml(n)}" ${cur.includes(n)?'checked':''}> ${escapeHtml(n)}</label>`).join('')}
+    </div>
+    <div style="display:flex;gap:6px"><input type="text" id="chCustom" placeholder="Other name…" style="flex:1;padding:8px;border-radius:8px"><button type="button" class="btn ghost" id="chAddCustom">Add</button></div>
+    <div id="chErr" class="hint" style="color:var(--coral)"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn primary" id="chSave">Save</button>
+      <button type="button" class="btn ghost" id="chCancel">Cancel</button>
+      ${cur.length?'<button type="button" class="btn ghost" id="chClear" style="margin-left:auto;color:var(--coral)">Clear manual</button>':''}
+    </div></div>`;
+  document.body.appendChild(d);
+  const list = d.querySelector('#chList');
+  const close = ()=> d.remove();
+  d.addEventListener('click', e=>{ if(e.target === d) close(); });
+  d.querySelector('#chCancel').onclick = close;
+  d.querySelector('#chSearch').oninput = e=>{
+    const q = e.target.value.trim().toLowerCase();
+    list.querySelectorAll('label').forEach(l=>{ l.style.display = (!q || l.dataset.n.includes(q)) ? 'flex' : 'none'; });
+  };
+  d.querySelector('#chAddCustom').onclick = ()=>{
+    const inp = d.querySelector('#chCustom'); const v = inp.value.trim(); if(!v) return;
+    const ex = Array.from(list.querySelectorAll('input')).find(i=>i.value.toLowerCase()===v.toLowerCase());
+    if(ex) ex.checked = true;
+    else list.insertAdjacentHTML('afterbegin', `<label data-n="${escapeHtml(v.toLowerCase())}" style="display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:14px"><input type="checkbox" value="${escapeHtml(v)}" checked> ${escapeHtml(v)}</label>`);
+    inp.value = '';
+  };
+  const commit = async (arr, btn)=>{
+    btn.disabled = true;
+    try{
+      await saveClosureHandlers(id, arr);
+      state.closuresPerformance = await computeClosuresPerformance(false);
+      close(); render();
+    }catch(e){
+      btn.disabled = false;
+      d.querySelector('#chErr').textContent = (e && e.message) || 'Could not save — try again.';
+    }
+  };
+  d.querySelector('#chSave').onclick = e=> commit(Array.from(list.querySelectorAll('input:checked')).map(i=>i.value), e.target);
+  const cl = d.querySelector('#chClear'); if(cl) cl.onclick = e=> commit([], e.target);
+}
 async function computeClosuresPerformance(forceRefresh){
   if(!state.closuresLoaded) await loadClosures();
   const allRows = await fetchAllRowsAcrossDates(forceRefresh);
@@ -5451,7 +5535,7 @@ async function computeClosuresPerformance(forceRefresh){
   // refresh). If nothing meaningful changed since the last computation,
   // skip the O(closures × allRows) work entirely and return that result.
   const lastClosure = (state.closures && state.closures[state.closures.length-1]) || null;
-  const sig = (state.closures||[]).length + ':' + (lastClosure ? lastClosure.id + '|' + (lastClosure.createdAt||'') : '') + '::' + allRows.length + ':' + _allRowsAcrossDatesCacheAt + ':' + _closureManualMatchesVersion + ':' + _companyAliasesVersion + ':' + (state.roster||[]).length;
+  const sig = (state.closures||[]).length + ':' + (lastClosure ? lastClosure.id + '|' + (lastClosure.createdAt||'') : '') + '::' + allRows.length + ':' + _allRowsAcrossDatesCacheAt + ':' + _closureManualMatchesVersion + ':' + _companyAliasesVersion + ':' + (state.roster||[]).length + ':' + ((state.appSettings&&state.appSettings.closure_handlers)||'');
   if(_closuresPerfCache && _closuresPerfCacheSig === sig){
     return _closuresPerfCache;
   }
@@ -5470,6 +5554,15 @@ async function computeClosuresPerformance(forceRefresh){
   const noAssigneeDetails = [];
   const teamOnlyDetails = [];
   (state.closures || []).forEach(c=>{
+    const manualHs = getClosureHandlers(c.id);
+    if(manualHs.length){
+      manualHs.forEach(h=>{
+        if(!byHandler[h]) byHandler[h] = { handler: h, team: teamOf(h) || '', closures: 0, records: [] };
+        byHandler[h].closures++;
+        byHandler[h].records.push({ candidate: c.candidate, company: c.company, salary: c.salary || '', createdAt: c.createdAt || null, manual: true });
+      });
+      return;
+    }
     if(!c.candidate || !c.company){ unmatchedCount++; return; }
     const found = findClosureMatchWithOverride(c, allRows);
     const match = found ? found.row : null;
@@ -9564,7 +9657,7 @@ function renderUnmatchedClosuresHtml(unmatchedDetails){
     return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <div class="notif-name">${escapeHtml(closure.candidate)} <span class="notif-chip">${escapeHtml(closure.company)}</span></div>
-        ${!isOpen ? `<button class="btn ghost" data-open-closure-match="${closure.id}" style="font-size:12px">🔗 Match manually</button>` : ''}
+        <span style="display:flex;gap:6px;flex-wrap:wrap">${!isOpen ? `<button class="btn ghost" data-open-closure-match="${closure.id}" style="font-size:12px">🔗 Match manually</button>` : ''}${closureHandlerBtnHtml(closure.id)}</span>
       </div>
       <div class="hint" style="margin-top:2px">${escapeHtml(reason)}</div>
       ${quickAliasHtml}
@@ -9613,7 +9706,7 @@ function renderCreditGapClosuresHtml(title, details, noteFn){
     return `<div class="notif-row" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <div class="notif-name">${escapeHtml(closure.candidate)} <span class="notif-chip">${escapeHtml(closure.company)}</span></div>
-        ${actionHtml}
+        <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${actionHtml}${closureHandlerBtnHtml(closure.id)}</span>
       </div>
       <div class="hint" style="margin-top:2px">${noteFn(match)}</div>
     </div>`;
@@ -9762,11 +9855,12 @@ function renderClosuresPanel(){
       // destructive actions) rather than a second custom "are you sure"
       // panel — this is a rare, deliberate action, not a frequent one.
       const deleting = state.closureDeletingId === c.id;
-      const deleteCell = CURRENT_ROLE === 'admin' ? `<td>
+      const deleteCell = CURRENT_ROLE === 'admin' ? `<td style="white-space:nowrap">
+        ${closureHandlerBtnHtml(c.id)}
         <button class="btn ghost" data-delete-closure="${c.id}" data-delete-closure-candidate="${escapeHtml(c.candidate)}" ${deleting?'disabled':''} title="Delete this closure — for a mistaken entry, not a real outcome you want to undo" style="font-size:11px;padding:3px 8px;color:var(--coral)">${deleting?'<span class="spinner"></span>':'🗑'}</button>
       </td>` : '';
       return `<tr>
-        <td>${escapeHtml(c.candidate)}</td>
+        <td>${escapeHtml(c.candidate)} ${closureHandlerChipsHtml(c.id)}</td>
         <td>${escapeHtml(c.company)}</td>
         <td>${escapeHtml(c.salary||'—')}</td>
         <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
@@ -11807,6 +11901,9 @@ function attachHandlers(conflictIds){
   // and force-refreshes closuresPerformance if the By Handler view has
   // already computed it, so a deleted closure's credit disappears from
   // that view immediately instead of lingering until the next scan.
+  document.querySelectorAll('[data-closure-handler]').forEach(btn=>{
+    btn.onclick = ()=> openClosureHandlerDialog(Number(btn.dataset.closureHandler));
+  });
   document.querySelectorAll('[data-delete-closure]').forEach(btn=>{
     btn.onclick = async ()=>{
       const id = Number(btn.dataset.deleteClosure);
