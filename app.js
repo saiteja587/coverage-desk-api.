@@ -5462,6 +5462,10 @@ async function saveClosureHandlers(id, names){
 }
 function closureHandlerChipsHtml(id){
   const hs = getClosureHandlers(id);
+  if(!hs.length){
+    const a = state.closuresPerformance && state.closuresPerformance.autoHandlers && state.closuresPerformance.autoHandlers[id];
+    return a ? `<span class="mini-badge" style="opacity:.75" title="From the matched call">${escapeHtml(a)}</span>` : '';
+  }
   return hs.length ? hs.map(h=>`<span class="mini-badge" style="background:rgba(80,200,160,.18)" title="Handler set manually">👤 ${escapeHtml(h)}</span>`).join(' ') : '';
 }
 function closureHandlerBtnHtml(id){
@@ -5473,7 +5477,9 @@ function openClosureHandlerDialog(id){
   if(CURRENT_ROLE !== 'admin') return;
   const c = (state.closures||[]).find(x=>x.id===id);
   if(!c) return;
-  const cur = getClosureHandlers(id);
+  const manualCur = getClosureHandlers(id);
+  const auto = (state.closuresPerformance && state.closuresPerformance.autoHandlers && state.closuresPerformance.autoHandlers[id]) || '';
+  const cur = manualCur.length ? manualCur : (auto ? [auto] : []);
   const names = Array.from(new Set((state.roster||[]).map(p=>p.name).filter(Boolean).concat(cur))).sort((a,b)=>a.localeCompare(b));
   const old = document.getElementById('chDlg'); if(old) old.remove();
   const d = document.createElement('div');
@@ -5481,7 +5487,7 @@ function openClosureHandlerDialog(id){
   d.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
   d.innerHTML = `<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:420px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:16px;gap:10px">
     <div style="font-weight:700;font-size:15px">👤 Handler for ${escapeHtml(c.candidate)} <span class="notif-chip">${escapeHtml(c.company)}</span></div>
-    <div class="hint">Tick who gets credit. This overrides the call match in By Handler.</div>
+    <div class="hint">${manualCur.length ? 'Set manually.' : auto ? 'Currently credited from the call match: <b>'+escapeHtml(auto)+'</b>.' : 'No handler credited yet.'} Tick who should get credit — saving overrides the call match.</div>
     <input type="text" id="chSearch" placeholder="Search people…" autocomplete="off" style="padding:8px;border-radius:8px">
     <div id="chList" style="overflow:auto;flex:1;min-height:80px;display:flex;flex-direction:column;gap:4px">
       ${names.map(n=>`<label data-n="${escapeHtml(n.toLowerCase())}" style="display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:14px"><input type="checkbox" value="${escapeHtml(n)}" ${cur.includes(n)?'checked':''}> ${escapeHtml(n)}</label>`).join('')}
@@ -5491,7 +5497,7 @@ function openClosureHandlerDialog(id){
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn primary" id="chSave">Save</button>
       <button type="button" class="btn ghost" id="chCancel">Cancel</button>
-      ${cur.length?'<button type="button" class="btn ghost" id="chClear" style="margin-left:auto;color:var(--coral)">Clear manual</button>':''}
+      ${manualCur.length?'<button type="button" class="btn ghost" id="chClear" style="margin-left:auto;color:var(--coral)">Clear manual</button>':''}
     </div></div>`;
   document.body.appendChild(d);
   const list = d.querySelector('#chList');
@@ -5553,6 +5559,7 @@ async function computeClosuresPerformance(forceRefresh){
   const unmatchedDetails = [];
   const noAssigneeDetails = [];
   const teamOnlyDetails = [];
+  const autoHandlers = {};
   (state.closures || []).forEach(c=>{
     const manualHs = getClosureHandlers(c.id);
     if(manualHs.length){
@@ -5625,6 +5632,7 @@ async function computeClosuresPerformance(forceRefresh){
       teamOnlyDetails.push({ closure: c, match, team: handler });
       return;
     }
+    autoHandlers[c.id] = handler;
     if(!byHandler[handler]) byHandler[handler] = { handler, team: teamOf(handler) || '', closures: 0, records: [] };
     byHandler[handler].closures++;
     // Kept alongside the count so the "By Handler" list can show exactly
@@ -5638,7 +5646,7 @@ async function computeClosuresPerformance(forceRefresh){
   // filter across every call record on file, not just the up-to-8
   // pre-computed suggestions — a real record that didn't make the
   // suggestion shortlist is still just a search away instead of unreachable.
-  const result = { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, teamOnlyDetails, allRowsSnapshot: allRows };
+  const result = { rows, unmatchedCount, teamOnlyCount, noAssigneeCount, totalClosures: (state.closures||[]).length, unmatchedDetails, noAssigneeDetails, teamOnlyDetails, autoHandlers, allRowsSnapshot: allRows };
   _closuresPerfCache = result;
   _closuresPerfCacheSig = sig;
   return result;
