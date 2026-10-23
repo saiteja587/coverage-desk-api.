@@ -214,10 +214,11 @@
   function toast(msg, opt){
     opt = opt||{};
     var el = document.createElement('div'); el.className='d2-toast';
-    el.innerHTML = '<span class="d2-toast-msg">'+esc(msg)+'</span>'+(opt.label?'<button class="d2-toast-btn">'+esc(opt.label)+'</button>':'')+'<i class="d2-toast-bar"></i>';
-    var ms = opt.ms||10000; el.style.setProperty('--ms', ms+'ms');
+    el.innerHTML = '<span class="d2-toast-msg">'+esc(msg)+'</span>'+(opt.label?'<button class="d2-toast-btn">'+esc(opt.label)+'</button>':'')+'<button type="button" class="d2-toast-x" aria-label="Dismiss">✕</button><i class="d2-toast-bar"></i>';
+    var ms = opt.ms||(opt.label?8000:5000); el.style.setProperty('--ms', ms+'ms');
     var kill = function(){ el.classList.add('out'); setTimeout(function(){ el.remove(); },260); };
     var b = $('.d2-toast-btn',el); if(b) b.onclick=function(){ try{ opt.action&&opt.action(); }finally{ kill(); } };
+    var x = $('.d2-toast-x',el); if(x) x.onclick=function(ev){ ev.stopPropagation(); kill(); };
     toastHost().appendChild(el);
     var all = $$('.d2-toast', toastHost()); while(all.length>3){ all.shift().remove(); }
     setTimeout(kill, ms);
@@ -2379,3 +2380,10 @@
   window.syncNow = function(){ lastRun = 0; poll(true); };
   install();
 })();
+
+/* undo pop-up (deleted call): ✕ dismisses it — the removal stays, the Undo goes away */
+document.addEventListener('click', function(e){
+  var b = e.target.closest && e.target.closest('#undoDismissBtn'); if(!b) return;
+  e.stopPropagation();
+  try{ if(typeof undoToastTimer!=='undefined') clearTimeout(undoToastTimer); state.lastDeleted = null; render(); }catch(x){ var t=b.closest('.undo-toast'); if(t) t.remove(); }
+}, true);
