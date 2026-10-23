@@ -1574,11 +1574,12 @@
     var as=[], os=[]; try{ as = assessmentsForCandidate(r.candidate, r.company)||[]; }catch(e){} try{ os = onsitesForCandidate(r.candidate, r.company)||[]; }catch(e){}
     var linked = (as.length||os.length) ? '<section><h4>Linked</h4>'+as.map(function(a){ return '<div class="d5-li">🧪 Assessment · '+esc(a.date||'')+(a.assessment?' · '+esc(a.assessment):'')+'</div>'; }).join('')+os.map(function(o){ return '<div class="d5-li">🏢 Onsite · '+esc(o.date||'')+(o.location?' @ '+esc(o.location):'')+'</div>'; }).join('')+'</section>' : '';
     var dbt = (r.doubts||[]).length ? '<section class="d5-dbt"><h4>Doubts</h4>'+r.doubts.map(function(d){ return '<p>❔ '+esc(d)+'</p>'; }).join('')+(ad?'<div class="d5-row-btns"><button class="btn ghost" data-d5="edit">✎ Fix it</button><button class="btn" data-d5="resolve">✓ Mark resolved</button></div>':'')+'</section>' : '';
+    var cm = window.d10CommentsHtml ? window.d10CommentsHtml(activeId) : '';
     var hist = '<section><h4>History</h4><div class="d5-hist" id="d5Hist">'+(histCache[activeId]||'<span class="d5-muted">Loading earlier calls…</span>')+'</div></section>';
     var foot = '<div class="d5-foot">'+(r.status?'':'')+'<button class="btn ghost m-only" data-d5="edit">✎ Edit all fields</button><button class="btn ghost m-only" data-d5="menu-move">⇄ Move round</button><button class="btn ghost m-only" data-d5="menu-portal">📡 Portal</button><button class="btn ghost" data-d5="menu-pin">Interviewer / POC</button><button class="btn ghost" data-d5="menu-closure">🎯 Expected closure</button>'+(ad?'<button class="btn ghost danger" data-d5="menu-del">Delete</button>':'')+'</div>';
     side.innerHTML = '<div class="d5-grab"><i></i></div><header class="d5-h"><span class="d5-av big">'+esc((r.candidate||'?').charAt(0).toUpperCase())+'</span><div class="d5-ht"><b>'+esc(r.candidate||'(no name)')+'</b><small>'+esc(r.company||'')+(r.role?' · '+esc(r.role):'')+'</small></div>'
       +'<div class="d5-nav"><button data-d5="prev" title="Previous call (↑)" '+(ix<=0?'disabled':'')+'>↑</button><button data-d5="next" title="Next call (↓)" '+(ix<0||ix>=ids.length-1?'disabled':'')+'>↓</button><button data-d5="close" title="Close (Esc)">✕</button></div></header>'
-      +'<div class="d5-tags">'+tags+'</div><div class="d5-body">'+dbt+assign+fx+notes+portal+linked+hist+'</div>'+foot;
+      +'<div class="d5-tags">'+tags+'</div><div class="d5-body">'+dbt+assign+fx+notes+portal+linked+cm+hist+'</div>'+foot;
     var sc = side.querySelector('.d5-body'); if(sc) sc.scrollTop = scroll;
     loadHistory(r);
   }
@@ -1777,6 +1778,7 @@
     var pb = $('.portal-check-btn', tr); if(pb && /amber/.test(pb.getAttribute('style')||'')) flags += '<em class="m-b warn">📡</em>';
     if($('.pin-toggle-filled', tr)) flags += '<em class="m-b t">★</em>';
     try{ var chh = findSameClientHistory(r), chn = chh.length; if(chn){ var cb = chh[0] && chh[0].status; flags += '<em class="m-b '+(cb?'warn':'t')+'" title="Earlier calls with this client">🏢 '+chn+' earlier'+(cb?' · ⚠ last '+esc(statusBadgeInfo(cb).label.toLowerCase()):'')+'</em>'; } }catch(x){}
+    try{ var ccn = window.d10Comments ? window.d10Comments(r.id).length : 0; if(ccn) flags += '<em class="m-b t">💬 '+ccn+'</em>'; }catch(x){}
     var meta = [shortDur(r.duration), r.country].filter(Boolean).join(' · ');
     return '<div class="m-l1"><span class="m-time">'+esc(r.time||'—')+'</span><b class="m-name">'+esc(r.candidate||'(no name)')+'</b>'+roundTag(r)+'</div>'
       +'<div class="m-l2">'+esc([r.company,r.role].filter(Boolean).join(' · '))+'</div>'
@@ -2146,7 +2148,10 @@
 
   function paint(){
     if(!el) return;
-    var A = api(), items = A ? A.items() : [], un = items.filter(function(i){ return !i.read; }).length;
+    var A = api(), items = A ? A.items() : [];
+    items.forEach(function(i){ if(i.snoozeUntil && i.snoozeUntil<=Date.now()){ try{ A.wake(i.id); if(window.cdShowNotification) window.cdShowNotification('Reminder: '+i.title, {body:i.body, tag:'cd-snz-'+i.id, data:{kind:'early', date:i.date}}); }catch(e){} } });
+    items = A ? A.items().filter(function(i){ return !(i.snoozeUntil && i.snoozeUntil>Date.now()); }) : [];
+    var un = items.filter(function(i){ return !i.read; }).length;
     var sc = $('.d8-list', el); var keep = sc ? sc.scrollTop : 0;
     var groups = [], last = '';
     items.sort(function(a,b){ return b.ts-a.ts; }).forEach(function(it){ var l = dayLabel(it.ts); if(l!==last){ groups.push({l:l,items:[]}); last=l; } groups[groups.length-1].items.push(it); });
@@ -2154,7 +2159,7 @@
       return '<div class="d8-day">'+esc(g.l)+'</div>'+g.items.map(function(it){
         var icon = ICON[it.type] || '🔔';
         return '<div class="d8-item'+(it.read?'':' unread')+'" data-lf-id="'+esc(it.id)+'" data-d8-open="'+esc(it.id)+'"><span class="d8-av">'+icon+'</span><div class="d8-main"><div class="d8-top"><b>'+esc(it.title)+'</b><time>'+esc(ago(it.ts))+'</time></div><div class="d8-body">'+esc(it.body)+'</div>'
-          +(canAssign(it)?'<button class="d8-act" data-lf-assign="'+esc(it.id)+'">Assign to '+esc(it.handler)+'</button>':'')+'</div>'+(it.read?'':'<i class="d8-un"></i>')+'</div>';
+          +'<div class="d8-acts">'+(canAssign(it)?'<button class="d8-act" data-lf-assign="'+esc(it.id)+'">Assign to '+esc(it.handler)+'</button>':'')+'<button class="d8-act soft" data-d8-snooze="'+esc(it.id)+'">⏰ Snooze 15 min</button></div>'+'</div>'+(it.read?'':'<i class="d8-un"></i>')+'</div>';
       }).join('');
     }).join('') : '<div class="d8-empty"><div>🔔</div><b>No alerts yet</b><p>You’ll see them here when a candidate comes back after a long gap, a client’s calls all went to one person, or a call reaches a later round.</p></div>';
     el.innerHTML = '<div class="d8-sheet"><div class="d8-h"><b>Alerts</b>'+(un?'<span class="d8-pill">'+un+' new</span>':'')+'<span class="d8-sp"></span>'
@@ -2193,6 +2198,7 @@
       }
       return;
     }
+    var sn = t.closest('[data-d8-snooze]'); if(sn){ e.stopPropagation(); if(api() && api().snooze) api().snooze(sn.dataset.d8Snooze, 15*60000); if(window.d2Toast) window.d2Toast('Snoozed — I\u2019ll remind you in 15 minutes',{ms:3000}); paint(); return; }
     if(t.closest('[data-lf-assign]')){ setTimeout(paint, 250); return; }   // app handles the assignment itself
     var row = t.closest('[data-d8-open]'); if(!row) return;
     var id = row.dataset.d8Open, it = api() && api().items().filter(function(x){ return x.id===id; })[0];
@@ -2210,6 +2216,7 @@
     e.stopPropagation(); e.preventDefault(); if(el) close(); else open();
   }, true);
   window.d8Open = open;
+  setInterval(function(){ try{ var A=api(); if(A){ A.items().forEach(function(i){ if(i.snoozeUntil && i.snoozeUntil<=Date.now()){ A.wake(i.id); if(window.cdShowNotification) window.cdShowNotification('Reminder: '+i.title,{body:i.body,tag:'cd-snz-'+i.id,data:{kind:'early',date:i.date}}); if(el) paint(); } }); } }catch(e){} }, 20000);
 
   // unread count on the bottom-bar tab (like a chat-app badge)
   function badge(){
@@ -2387,3 +2394,303 @@ document.addEventListener('click', function(e){
   e.stopPropagation();
   try{ if(typeof undoToastTimer!=='undefined') clearTimeout(undoToastTimer); state.lastDeleted = null; render(); }catch(x){ var t=b.closest('.undo-toast'); if(t) t.remove(); }
 }, true);
+
+/* ===== Workspace: day board, kanban, smart lists, directory, workload, digest, history + comments, escalation, offline copy ===== */
+(function(){
+  'use strict';
+  if(window.__d10) return; window.__d10 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var LS = { get:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var isAdmin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var rows = function(){ try{ return state.rows||[]; }catch(e){ return []; } };
+  var toast = function(m,o){ if(window.d2Toast) window.d2Toast(m,o); };
+  var tmin = function(t){ try{ return timeToMinutes(t); }catch(e){ return 9999; } };
+  var bdm = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var dur = function(r){ try{ return parseDurationMinutes(r.duration)||30; }catch(e){ return 30; } };
+  var late = function(r){ var m = tmin(r.time); return m!==9999 && (m>=1320 || m<360); };
+  var teams = function(){ try{ return getTeamNames(); }catch(e){ return new Set(); } };
+  var coarse = function(){ try{ return window.matchMedia('(pointer:coarse)').matches || innerWidth<900; }catch(e){ return innerWidth<900; } };
+  var asg = function(r){ var a = String(r.assignee||'').trim(); return /^unassigned$/i.test(a) ? '' : a; };
+  var nowMin = function(){ var d = new Date(); return d.getHours()*60+d.getMinutes(); };
+  var isToday = function(){ try{ return state.date===todayDateString(); }catch(e){ return false; } };
+  var el = null, tab = 'board', open = false, dragId = null;
+  var TABS = [['board','Day board'],['kanban','Kanban'],['lists','Smart lists'],['directory','Directory'],['workload','Workload'],['digest','Digest'],['history','History']];
+
+  /* ---------- cards ---------- */
+  function card(r, clash){
+    var tag = r.woi ? '<em class="d10-t amber">WOI</em>' : r.status ? '<em class="d10-t coral">'+esc((window.statusBadgeInfo?statusBadgeInfo(r.status).shortLabel:r.status))+'</em>' : '';
+    var rd = String(r.round||''); var rt = (/1/.test(rd)||!rd) ? '' : '<em class="d10-t violet">'+esc(rd.replace(/\s*round/i,''))+'</em>';
+    return '<div class="d10-c'+(clash?' clash':'')+(late(r)?' late':'')+'" draggable="'+(isAdmin()&&!coarse()?'true':'false')+'" data-d10c="'+esc(r.id)+'"><div class="d10-c1"><b>'+esc(r.time||'—')+'</b>'+rt+tag+(clash?'<em class="d10-t coral">⚠ clash</em>':'')+'</div><div class="d10-c2">'+esc(r.candidate||'(no name)')+'</div><div class="d10-c3">'+esc([r.company, r.duration].filter(Boolean).join(' · '))+'</div></div>';
+  }
+  function clashSet(list){
+    var s = {}; list.forEach(function(a){ list.forEach(function(b){ if(a.id===b.id||a.woi||b.woi) return; var as=bdm(a.time), bs=bdm(b.time); if(as===9999||bs===9999) return; if(as<bs+dur(b) && bs<as+dur(a)){ s[a.id]=1; s[b.id]=1; } }); });
+    return s;
+  }
+  function sortT(a,b){ return bdm(a.time)-bdm(b.time); }
+  function col(title, list, key, opts){
+    opts = opts||{};
+    var cs = opts.person ? clashSet(list) : {};
+    var mins = list.reduce(function(n,r){ return n+dur(r); },0);
+    return '<div class="d10-col'+(opts.cls?' '+opts.cls:'')+'" data-d10col="'+esc(key)+'"><div class="d10-ch"><b>'+esc(title)+'</b><span>'+list.length+(opts.person&&list.length?' · '+Math.round(mins/6)/10+'h':'')+'</span></div><div class="d10-cb">'+(list.sort(sortT).map(function(r){ return card(r, !!cs[r.id]); }).join('')||'<p class="d10-empty">Drop a call here</p>')+'</div></div>';
+  }
+
+  /* ---------- tabs ---------- */
+  function vBoard(){
+    var rs = rows(), t = teams(), by = {}, un = [], woi = [];
+    rs.forEach(function(r){ if(r.woi) woi.push(r); else if(!asg(r)) un.push(r); else (by[asg(r)]=by[asg(r)]||[]).push(r); });
+    var names = Object.keys(by).sort(function(a,b){ return (t.has(a)-t.has(b)) || by[b].length-by[a].length || a.localeCompare(b); });
+    return '<p class="d10-hint">'+(coarse()?'Tap a call to assign it.':'Drag a call onto another person to reassign it.')+' Each column is one handler’s day in time order; ⚠ marks overlapping calls.</p><div class="d10-board">'
+      + col('Unassigned', un, '', {cls:'un'}) + (woi.length?col('Waiting for invite', woi, '__woi', {cls:'woi'}):'')
+      + names.map(function(n){ return col(n, by[n], n, {person:!t.has(n), cls:t.has(n)?'team':''}); }).join('') + '</div>';
+  }
+  function vKanban(){
+    var rs = rows(), c = {un:[], as:[], woi:[], st:[]};
+    rs.forEach(function(r){ if(r.status) c.st.push(r); else if(r.woi) c.woi.push(r); else if(asg(r)) c.as.push(r); else c.un.push(r); });
+    return '<p class="d10-hint">'+(coarse()?'Tap a call to assign it.':'Drag between columns: Unassigned ⇄ Assigned ⇄ Waiting for invite.')+' Rescheduled / cancelled / no-response calls are set from the call’s ⋯ menu.</p><div class="d10-board k">'
+      + col('Unassigned', c.un, '__k_un', {cls:'un'}) + col('Assigned', c.as, '__k_as') + col('Waiting for invite', c.woi, '__k_woi', {cls:'woi'}) + col('Rescheduled · cancelled · no response', c.st, '__k_st', {cls:'ro'}) + '</div>';
+  }
+  var listDefs = function(){
+    var rs = rows(), my = ''; try{ my = localStorage.getItem('coverage-desk-my-name')||''; }catch(e){}
+    var n = nowMin(), today = isToday();
+    var cf = {}; (function(){ var by={}; rs.forEach(function(r){ if(r.woi||!asg(r)||teams().has(asg(r))) return; (by[asg(r)]=by[asg(r)]||[]).push(r); }); Object.keys(by).forEach(function(k){ var s=clashSet(by[k]); Object.keys(s).forEach(function(id){ cf[id]=1; }); }); })();
+    return [
+      ['Unassigned', '🟥', rs.filter(function(r){ return !asg(r) && !r.woi && !r.status; })],
+      ['Starting in the next 2 hours', '⏰', today ? rs.filter(function(r){ var m=tmin(r.time); return !r.status && m!==9999 && m-n>=-10 && m-n<=120; }) : []],
+      ['My calls'+(my?' ('+my+')':''), '🙋', my ? rs.filter(function(r){ return asg(r)===my; }) : []],
+      ['2nd round+ with no interviewer noted', '🎙', rs.filter(function(r){ var rd=String(r.round||''); return rd && !/^1/.test(rd) && !String(r.interviewer||'').trim() && !r.status; })],
+      ['Late night (10 PM – 6 AM)', '🌙', rs.filter(function(r){ return late(r) && !r.status; })],
+      ['Double-booked handlers', '⚠', rs.filter(function(r){ return cf[r.id]; })],
+      ['Waiting for invite', '⏳', rs.filter(function(r){ return r.woi; })],
+      ['Has an open doubt', '❔', rs.filter(function(r){ return (r.doubts||[]).length; })]
+    ];
+  };
+  var openList = -1;
+  function vLists(){
+    var defs = listDefs(), my = ''; try{ my = localStorage.getItem('coverage-desk-my-name')||''; }catch(e){}
+    return '<p class="d10-hint">Tap a tile to see the calls. Counts are for '+esc(state.date)+'.</p><div class="d10-tiles">'+defs.map(function(d,i){
+      return '<button type="button" class="d10-tile'+(i===openList?' on':'')+(d[2].length?'':' zero')+'" data-d10tile="'+i+'"><span>'+d[1]+'</span><b>'+d[2].length+'</b><small>'+esc(d[0])+'</small></button>';
+    }).join('')+'</div>'+(openList>=0&&defs[openList]?'<div class="d10-list"><h4>'+esc(defs[openList][0])+'</h4>'+(defs[openList][2].sort(sortT).map(function(r){ return '<button type="button" class="d10-li" data-d10open="'+esc(r.id)+'"><b>'+esc(r.time||'—')+'</b><span>'+esc(r.candidate||'(no name)')+'<small>'+esc([r.company,asg(r)||'unassigned'].filter(Boolean).join(' · '))+'</small></span></button>'; }).join('')||'<p class="d10-empty">'+(openList===2&&!my?'Set your name first (tap your name chip on the main screen).':'Nothing here — all clear.')+'</p>')+'</div>':'');
+  }
+  var dirQ = '', dirData = null, dirBusy = false;
+  function allRows(){ return (typeof fetchAllRowsAcrossDates==='function') ? fetchAllRowsAcrossDates(false) : Promise.resolve([]); }
+  function buildDir(all){
+    var m = {};
+    (all||[]).forEach(function(r){
+      ['interviewer','technicalPOC'].forEach(function(k){
+        String(r[k]||'').split(/[,;\/&]|\band\b/i).map(function(x){ return x.trim(); }).filter(function(x){ return x.length>1; }).forEach(function(nm){
+          var key = nm.toLowerCase(), o = m[key] = m[key] || {name:nm, n:0, co:{}, hr:{}, hand:{}, last:'', kind:{}};
+          o.n++; o.kind[k]=1; if(r.company) o.co[r.company]=(o.co[r.company]||0)+1;
+          var mm = tmin(r.time); if(mm!==9999){ var h=Math.floor(mm/60); o.hr[h]=(o.hr[h]||0)+1; }
+          if(asg(r)) o.hand[asg(r)]=(o.hand[asg(r)]||0)+1; if(String(r._date||'')>o.last) o.last=r._date;
+        });
+      });
+    });
+    return Object.keys(m).map(function(k){ return m[k]; }).sort(function(a,b){ return b.n-a.n; });
+  }
+  var top = function(o,n){ return Object.keys(o).sort(function(a,b){ return o[b]-o[a]; }).slice(0,n); };
+  var hl = function(h){ h=+h; return ((h%12)||12)+(h<12?' AM':' PM'); };
+  function vDirectory(){
+    if(!dirData){ if(!dirBusy){ dirBusy = true; allRows().then(function(a){ dirData = buildDir(a); dirBusy = false; if(open && tab==='directory') paint(); }).catch(function(){ dirData = []; dirBusy=false; if(open) paint(); }); } return '<p class="d10-hint">Loading interviewers from every date…</p>'; }
+    var q = dirQ.trim().toLowerCase(), list = dirData.filter(function(o){ return !q || o.name.toLowerCase().indexOf(q)>=0 || Object.keys(o.co).join(' ').toLowerCase().indexOf(q)>=0; });
+    return '<p class="d10-hint">Built from the Interviewer and Technical POC notes on your calls (all dates).</p><input class="d10-q" data-d10q="dir" type="search" placeholder="Search interviewer, POC or client…" value="'+esc(dirQ)+'">'
+      + (list.length ? '<div class="d10-dir">'+list.slice(0,80).map(function(o){ var hs=top(o.hr,2).map(function(h){ return hl(h); }).join(', '); return '<div class="d10-p"><div class="d10-pn"><b>'+esc(o.name)+'</b><span>'+o.n+' call'+(o.n===1?'':'s')+'</span></div><div class="d10-pm">'+esc(top(o.co,3).join(' · '))+'</div><div class="d10-pm">'+(hs?'Usually around '+esc(hs)+' · ':'')+(top(o.hand,3).length?'Handled by '+esc(top(o.hand,3).join(', ')):'')+(o.last?' · last '+esc(o.last):'')+'</div></div>'; }).join('')+'</div>' : '<p class="d10-empty">'+(dirData.length?'No match.':'No interviewer or POC names have been noted yet — add them from a call’s 📌 / Interviewer & POC field.')+'</p>');
+  }
+  var wlDays = 7, wlData = null, wlBusy = false;
+  function cutoff(n){ var d = new Date(); d.setDate(d.getDate()-n); var p=function(x){ return (x<10?'0':'')+x; }; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  function buildWl(all, days){
+    var c = cutoff(days), t = teams(), m = {}, teamCalls = 0;
+    (all||[]).forEach(function(r){ if(!r._date || r._date<c || r.woi || r.status) return; if(!asg(r)) return; if(t.has(asg(r))){ teamCalls++; return; } var o = m[asg(r)] = m[asg(r)] || {name:asg(r), n:0, l:0}; o.n++; if(late(r)) o.l++; });
+    var list = Object.keys(m).map(function(k){ return m[k]; }).sort(function(a,b){ return b.n-a.n; });
+    return {list:list, teamCalls:teamCalls};
+  }
+  function vWorkload(){
+    var ctl = '<div class="d10-seg">'+[7,14,30].map(function(n){ return '<button type="button" data-d10wl="'+n+'" class="'+(wlDays===n?'on':'')+'">'+n+' days</button>'; }).join('')+'</div>';
+    if(!wlData || wlData.days!==wlDays){ if(!wlBusy){ wlBusy=true; var dd = wlDays; allRows().then(function(a){ wlData = Object.assign(buildWl(a, dd), {days:dd}); wlBusy=false; if(open && tab==='workload') paint(); }).catch(function(){ wlData={list:[],teamCalls:0,days:dd}; wlBusy=false; if(open) paint(); }); } return ctl+'<p class="d10-hint">Counting calls…</p>'; }
+    var L = wlData.list; if(!L.length) return ctl+'<p class="d10-empty">No assigned calls in this period.</p>';
+    var max = Math.max.apply(null, L.map(function(o){ return o.n; })), avg = L.reduce(function(s,o){ return s+o.n; },0)/L.length;
+    return ctl+'<p class="d10-hint">Calls per person over the last '+wlDays+' days (people only; reschedules/cancels excluded). Purple part = late-night calls. Average: <b>'+avg.toFixed(1)+'</b>.</p><div class="d10-bars">'+L.map(function(o){ var f = o.n>avg*1.4 ? '<em class="bad">heavy</em>' : o.n<avg*0.6 ? '<em class="ok">light</em>' : '';
+      return '<div class="d10-bar"><span class="d10-bn">'+esc(o.name)+'</span><span class="d10-bt"><i style="width:'+(o.n/max*100)+'%"><u style="width:'+(o.n?o.l/o.n*100:0)+'%"></u></i></span><span class="d10-bv">'+o.n+(o.l?' <small>('+o.l+' late)</small>':'')+'</span>'+f+'</div>'; }).join('')+'</div>'+(wlData.teamCalls?'<p class="d10-hint">Plus '+wlData.teamCalls+' call(s) assigned to a team rather than a person.</p>':'');
+  }
+  function digestText(){
+    var rs = rows(), t = teams(), n = rs.length, un = rs.filter(function(r){ return !asg(r) && !r.woi && !r.status; }).length, woi = rs.filter(function(r){ return r.woi; }).length;
+    var by = {}; rs.forEach(function(r){ if(asg(r) && !r.status && !r.woi) by[asg(r)]=(by[asg(r)]||0)+1; });
+    var st = {}; rs.forEach(function(r){ if(r.status) st[r.status]=(st[r.status]||0)+1; });
+    var co = {}; rs.forEach(function(r){ if(r.company) co[r.company]=(co[r.company]||0)+1; });
+    var cf = Object.keys(clashSet(rs.filter(function(r){ return asg(r) && !t.has(asg(r)); }))).length;
+    var lines = ['Coverage Desk — '+state.date, '', 'Total calls: '+n, 'Unassigned: '+un+' · Waiting for invite: '+woi+' · Late night: '+rs.filter(late).length+' · Double-booked: '+cf];
+    var sl = Object.keys(st).map(function(k){ return (window.statusBadgeInfo?statusBadgeInfo(k).label:k)+': '+st[k]; }); if(sl.length) lines.push('Outcomes — '+sl.join(' · '));
+    lines.push('', 'Workload by handler:'); Object.keys(by).sort(function(a,b){ return by[b]-by[a]; }).forEach(function(k){ lines.push('• '+k+' — '+by[k]); });
+    lines.push('', 'Busiest clients: '+top(co,5).map(function(k){ return k+' ('+co[k]+')'; }).join(', '));
+    var open = rs.filter(function(r){ return (!asg(r) && !r.woi && !r.status); }).sort(sortT).slice(0,8); if(open.length){ lines.push('', 'Still to assign:'); open.forEach(function(r){ lines.push('• '+(r.time||'?')+' '+(r.candidate||'')+' — '+(r.company||'')); }); }
+    return lines.join('\n');
+  }
+  function vDigest(){ return '<p class="d10-hint">A ready-to-send end-of-shift summary for '+esc(state.date)+'.</p><pre class="d10-pre" id="d10Pre">'+esc(digestText())+'</pre><div class="d10-row"><button type="button" class="d10-b primary" data-d10a="copy">Copy</button>'+(navigator.share?'<button type="button" class="d10-b" data-d10a="share">Share…</button>':'')+'</div>'; }
+  function getLog(){ try{ return JSON.parse(LS.get('cd.d10.log','[]'))||[]; }catch(e){ return []; } }
+  function vHistory(){
+    var L = getLog().slice().reverse();
+    return '<p class="d10-hint">Changes made on <b>this device</b> (last 100). Use Undo for the latest one, or restore a full day from a backup.</p><div class="d10-row"><button type="button" class="d10-b primary" data-d10a="undo">↶ Undo last change</button><button type="button" class="d10-b" data-d10a="backups">Open backups</button><button type="button" class="d10-b ghost" data-d10a="clearlog">Clear log</button></div>'
+      + (L.length ? '<div class="d10-log">'+L.map(function(e){ var d=new Date(e.at); return '<div><time>'+esc(d.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}))+'</time><span>'+esc(e.msg)+'<small>'+esc((e.by?e.by+' · ':'')+'call day '+e.date)+'</small></span></div>'; }).join('')+'</div>' : '<p class="d10-empty">No changes recorded yet.</p>');
+  }
+  function body(){
+    if(tab==='board') return vBoard(); if(tab==='kanban') return vKanban(); if(tab==='lists') return vLists();
+    if(tab==='directory') return vDirectory(); if(tab==='workload') return vWorkload(); if(tab==='digest') return vDigest(); return vHistory();
+  }
+  function paint(){
+    if(!el) return;
+    var sc = $('.d10-body', el), keep = sc ? sc.scrollTop : 0, board = $('.d10-board', el), bl = board ? board.scrollLeft : 0;
+    el.innerHTML = '<div class="d10-sheet"><div class="d10-h"><b>Workspace</b><span class="d10-date">'+esc(state.date)+'</span><span class="d10-sp"></span><button type="button" class="d10-x" data-d10a="close" aria-label="Close">✕</button></div><div class="d10-tabs">'+TABS.map(function(t){ return '<button type="button" data-d10t="'+t[0]+'" class="'+(t[0]===tab?'on':'')+'">'+t[1]+'</button>'; }).join('')+'</div><div class="d10-body">'+body()+'</div></div>';
+    var s2 = $('.d10-body', el); if(s2) s2.scrollTop = keep; var b2 = $('.d10-board', el); if(b2) b2.scrollLeft = bl;
+  }
+  function openW(t){
+    if(t) tab = t; open = true;
+    if(!el){ el = document.createElement('div'); el.id='d10'; document.body.appendChild(el); document.body.classList.add('d10-open'); }
+    paint();
+  }
+  function closeW(){ open = false; if(el){ el.remove(); el = null; } document.body.classList.remove('d10-open'); }
+  window.d10Open = openW;
+
+  /* ---------- assign helpers ---------- */
+  function chooseAssignee(id, anchor){ if(coarse() && window.m9Open) window.m9Open(id); else if(window.d2OpenAssign) window.d2OpenAssign(id, anchor||document.body); }
+  function dropTo(id, key, anchor){
+    var r = rows().filter(function(x){ return x.id===id; })[0]; if(!r || !isAdmin()) return;
+    var set = function(a, w){ r.assignee = a; r.woi = !!w; try{ markDirty(); }catch(e){} render(); };
+    if(key==='' || key==='__k_un'){ if(!asg(r) && !r.woi) return; set('', false); toast('Unassigned '+(r.candidate||'call'),{ms:3000}); }
+    else if(key==='__woi' || key==='__k_woi'){ if(r.woi) return; set('', true); toast((r.candidate||'Call')+' → waiting for invite',{ms:3000}); }
+    else if(key==='__k_as'){ if(asg(r) && !r.woi) return; chooseAssignee(id, anchor); }
+    else if(key==='__k_st'){ toast('Set rescheduled / cancelled from the call’s ⋯ menu.',{ms:3500}); }
+    else if(asg(r)!==key){ if(window.d2AssignTo) window.d2AssignTo(id, key); else set(key,false); }
+  }
+
+  /* ---------- events ---------- */
+  document.addEventListener('click', function(e){
+    if(!el) return; var t = e.target; if(!t.closest) return;
+    if(t===el){ closeW(); return; }
+    var a = t.closest('[data-d10a]');
+    if(a){
+      var k = a.dataset.d10a;
+      if(k==='close') closeW();
+      else if(k==='copy'){ var tx = digestText(); (navigator.clipboard?navigator.clipboard.writeText(tx):Promise.reject()).then(function(){ toast('Digest copied'); }).catch(function(){ var p=$('#d10Pre'); if(p){ var r=document.createRange(); r.selectNodeContents(p); var s=getSelection(); s.removeAllRanges(); s.addRange(r); toast('Selected — press copy'); } }); }
+      else if(k==='share'){ try{ navigator.share({title:'Coverage Desk digest', text:digestText()}); }catch(x){} }
+      else if(k==='undo'){ if(window.d2Undo){ window.d2Undo(); paint(); } }
+      else if(k==='backups'){ closeW(); var b = document.getElementById('toggleBackups'); if(b) b.click(); else toast('Open Reports → Backups'); }
+      else if(k==='clearlog'){ LS.set('cd.d10.log','[]'); paint(); }
+      return;
+    }
+    var tb = t.closest('[data-d10t]'); if(tb){ tab = tb.dataset.d10t; paint(); return; }
+    var wl = t.closest('[data-d10wl]'); if(wl){ wlDays = +wl.dataset.d10wl; wlData = null; paint(); return; }
+    var tile = t.closest('[data-d10tile]'); if(tile){ var i = +tile.dataset.d10tile; openList = (openList===i?-1:i); paint(); return; }
+    var op = t.closest('[data-d10open]'); if(op){ var id = op.dataset.d10open; closeW(); setTimeout(function(){ if(window.d5OpenSide) window.d5OpenSide(id); var tr = $('#tableScrollMain tr[data-id="'+id+'"]'); if(tr) tr.scrollIntoView({block:'center',behavior:'smooth'}); },60); return; }
+    var c = t.closest('[data-d10c]'); if(c && !dragId){ if(isAdmin()) chooseAssignee(c.dataset.d10c, c); else if(window.d5OpenSide){ var cid=c.dataset.d10c; closeW(); window.d5OpenSide(cid); } }
+  }, true);
+  document.addEventListener('input', function(e){ if(el && e.target.dataset && e.target.dataset.d10q==='dir'){ dirQ = e.target.value; var pos=e.target.selectionStart; paint(); var q=$('.d10-q',el); if(q){ q.focus(); try{ q.setSelectionRange(pos,pos); }catch(x){} } } });
+  document.addEventListener('dragstart', function(e){ var c = e.target.closest && e.target.closest('[data-d10c]'); if(!c) return; dragId = c.dataset.d10c; try{ e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed='move'; }catch(x){} c.classList.add('drag'); });
+  document.addEventListener('dragend', function(){ dragId = null; $$('.d10-c.drag,.d10-col.over').forEach(function(n){ n.classList.remove('drag','over'); }); });
+  document.addEventListener('dragover', function(e){ var c = e.target.closest && e.target.closest('[data-d10col]'); if(!c || !dragId) return; e.preventDefault(); $$('.d10-col.over').forEach(function(n){ if(n!==c) n.classList.remove('over'); }); c.classList.add('over'); });
+  document.addEventListener('drop', function(e){ var c = e.target.closest && e.target.closest('[data-d10col]'); if(!c || !dragId) return; e.preventDefault(); var id = dragId; dragId = null; c.classList.remove('over'); dropTo(id, c.dataset.d10col, c); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && el && !$('.d2-pop,#m9')) closeW(); });
+
+  /* ---------- history log (hooks the Undo toast) ---------- */
+  function hookToast(){
+    if(!window.d2Toast || window.d2Toast.__d10) return setTimeout(hookToast,200);
+    var o = window.d2Toast;
+    window.d2Toast = function(msg, opt){
+      try{ if(opt && opt.label==='Undo'){ var L = getLog(); L.push({at:Date.now(), msg:String(msg), by:(typeof CURRENT_USERNAME!=='undefined'&&CURRENT_USERNAME)||'', date:state.date}); if(L.length>100) L = L.slice(-100); LS.set('cd.d10.log', JSON.stringify(L)); } }catch(e){}
+      return o.apply(this, arguments);
+    };
+    window.d2Toast.__d10 = true;
+  }
+  hookToast();
+
+  /* ---------- call comments (stored with the day's notes, saved with the normal Save) ---------- */
+  var cid = function(id){ return 'callcmt:'+id; };
+  window.d10Comments = function(id){ try{ var n = (state.notes||[]).filter(function(x){ return x && x.id===cid(id); })[0]; return n ? (JSON.parse(n.text)||[]) : []; }catch(e){ return []; } };
+  window.d10AddComment = function(id, text){
+    text = String(text||'').trim(); if(!text) return false;
+    var L = window.d10Comments(id); L.push({t:text.slice(0,400), by:(typeof CURRENT_USERNAME!=='undefined'&&CURRENT_USERNAME)||'', at:Date.now()});
+    state.notes = state.notes||[]; var n = state.notes.filter(function(x){ return x && x.id===cid(id); })[0];
+    if(n) n.text = JSON.stringify(L); else state.notes.push({id:cid(id), text:JSON.stringify(L)});
+    try{ markDirty(); }catch(e){} return true;
+  };
+  window.d10CommentsHtml = function(id){
+    var L = window.d10Comments(id);
+    return '<section class="d10-cm"><h4>Comments</h4>'+(L.length?L.map(function(c){ var d=new Date(c.at); return '<div class="d10-cmi"><b>'+esc(c.by||'someone')+'</b> <time>'+esc(d.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}))+'</time><p>'+esc(c.t)+'</p></div>'; }).join(''):'<div class="d5-muted">No comments yet.</div>')
+      +'<div class="d10-cmf"><input data-d10cm="'+esc(id)+'" placeholder="e.g. link sent ✓, candidate 10 min late" maxlength="400"><button type="button" class="btn" data-d10cmadd="'+esc(id)+'">Add</button></div></section>';
+  };
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d10cmadd]'); if(!b) return;
+    var id = b.dataset.d10cmadd, inp = b.parentNode.querySelector('input'); if(inp && window.d10AddComment(id, inp.value)){ render(); toast('Comment added — tap Save to keep it',{ms:3000}); }
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Enter' && e.target.dataset && e.target.dataset.d10cm){ e.preventDefault(); var b = e.target.parentNode.querySelector('[data-d10cmadd]'); if(b) b.click(); } });
+
+  /* ---------- escalation banner: unassigned calls about to start ---------- */
+  var escDismissed = '', escFired = {};
+  function escCheck(){
+    var b = $('#d9Esc');
+    try{
+      if(!isToday() || document.visibilityState==='hidden'){ if(b) b.remove(); return; }
+      var n = nowMin(), L = rows().filter(function(r){ if(r.woi||asg(r)||r.status) return false; var m=tmin(r.time); return m!==9999 && m-n<=60 && m-n>=-5; }).sort(function(a,b2){ return tmin(a.time)-tmin(b2.time); });
+      var key = L.map(function(r){ return r.id; }).join(',');
+      if(!L.length || key===escDismissed){ if(b) b.remove(); return; }
+      var first = L[0], mins = tmin(first.time)-n, hot = mins<=30;
+      if(!b){ b = document.createElement('div'); b.id='d9Esc'; document.body.insertBefore(b, document.body.firstChild); }
+      b.className = hot ? 'hot' : '';
+      b.innerHTML = '<span class="d9e-i">'+(hot?'🚨':'⚠')+'</span><span class="d9e-t"><b>'+L.length+' call'+(L.length>1?'s':'')+' start'+(L.length>1?'':'s')+' within the hour with nobody assigned</b><small>Next: '+esc(first.candidate||'(no name)')+' at '+esc(first.time||'?')+(mins>0?' — in '+mins+' min':' — starting now')+'</small></span>'+(isAdmin()?'<button type="button" data-d9e="assign">Assign</button>':'')+'<button type="button" data-d9e="x" aria-label="Dismiss">✕</button>';
+      b.dataset.id = first.id; b.dataset.key = key;
+      if(hot && !escFired[first.id]){ escFired[first.id]=1; try{ if(window.cdShowNotification && state.alertsEnabled) window.cdShowNotification('ESCALATION — '+mins+' min to go, nobody assigned', {body:(first.candidate||'(no name)')+(first.company?' — '+first.company:'')+' at '+(first.time||'?'), tag:'cd-esc-'+first.id, data:{kind:'early', date:state.date}}); }catch(e){} try{ if(navigator.vibrate) navigator.vibrate([200,100,200]); }catch(e){} }
+    }catch(e){ if(b) b.remove(); }
+  }
+  document.addEventListener('click', function(e){
+    var x = e.target.closest && e.target.closest('[data-d9e]'); if(!x) return; var b = $('#d9Esc'); if(!b) return;
+    if(x.dataset.d9e==='x'){ escDismissed = b.dataset.key; b.remove(); }
+    else { chooseAssignee(b.dataset.id, x); }
+  });
+
+  /* ---------- offline copy of the day ---------- */
+  var okAt = {};
+  function installOffline(){
+    if(typeof window.apiCall!=='function' || typeof window.loadDay!=='function' || window.loadDay.__d10){ return setTimeout(installOffline,150); }
+    var oc = window.apiCall;
+    window.apiCall = function(resource, opts){ var p = oc.apply(this, arguments); try{ if(resource==='calls' && opts && opts.qs && (!opts.method||opts.method==='GET')){ var m = /date=([^&]+)/.exec(opts.qs); if(m){ var d = decodeURIComponent(m[1]); p.then(function(){ okAt[d] = Date.now(); }, function(){}); } } }catch(e){} return p; };
+    var ol = window.loadDay;
+    window.loadDay = function(d){
+      var started = Date.now();
+      return ol.apply(this, arguments).then(function(r){
+        try{
+          if(okAt[d] && okAt[d]>=started-50){
+            if(rows().length){ LS.set('cd.day.'+d, JSON.stringify({rows:state.rows, notes:state.notes, at:Date.now()})); trim(); }
+            state.offlineCopyAt = 0;
+          } else if(d===state.date && !state.needsLogin && !rows().length){
+            var c = JSON.parse(LS.get('cd.day.'+d,'null'));
+            if(c && c.rows && c.rows.length){ state.rows = c.rows; state.notes = c.notes||[]; state.offlineCopyAt = c.at; toast('Offline — showing your saved copy from '+new Date(c.at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'. It refreshes when you’re back online.',{ms:7000}); }
+          }
+        }catch(e){}
+        return r;
+      });
+    };
+    window.loadDay.__d10 = true;
+  }
+  function trim(){ try{ var ks = []; for(var i=0;i<localStorage.length;i++){ var k = localStorage.key(i); if(k && k.indexOf('cd.day.')===0) ks.push(k); } ks.sort(); while(ks.length>4) localStorage.removeItem(ks.shift()); }catch(e){} }
+  window.addEventListener('online', function(){ try{ if(state.offlineCopyAt && window.syncNow){ state.offlineCopyAt = 0; window.loadDay(state.date).then(function(){ render(); toast('Back online — refreshed'); }); } }catch(e){} });
+
+  /* ---------- entry points + repaint on render ---------- */
+  function injectMenu(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD10', dd)) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD10'; b.type='button';
+    b.title='Day board, kanban, smart lists, interviewer directory, workload, digest and history'; b.innerHTML='🧭 Workspace';
+    b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} openW(); });
+    host.insertBefore(b, host.firstChild);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d8){ return setTimeout(install,80); }
+    var orig = window.render;
+    window.render = function(){ var r = orig.apply(this, arguments); try{ injectMenu(); escCheck(); if(open && !dragId) paint(); }catch(e){ console.warn('d10',e); } return r; };
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat(TABS.map(function(t){ return ['workspace '+t[1].toLowerCase()+' '+t[0], 'Workspace: '+t[1], 'Board, kanban, lists, directory…', function(){ openW(t[0]); }, '🧭']; })); };
+    setInterval(escCheck, 30000); escCheck();
+    installOffline();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
