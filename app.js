@@ -5461,12 +5461,18 @@ async function saveClosureHandlers(id, names){
   _closuresPerfCacheSig = null;
 }
 function closureHandlerChipsHtml(id){
+  // Plain inline-styled spans (not .mini-badge, whose global styles squeezed
+  // and overlapped these), placed on their own line under the candidate name.
+  const base = 'display:inline-block;position:static;width:auto;max-width:none;white-space:nowrap;line-height:1.3;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin:3px 4px 0 0;';
   const hs = getClosureHandlers(id);
-  if(!hs.length){
+  let inner = '';
+  if(hs.length){
+    inner = hs.map(h=>`<span style="${base}background:rgba(80,200,160,.18);color:var(--teal,#4fd1b0)" title="Handler set manually">👤 ${escapeHtml(h)}</span>`).join('');
+  } else {
     const a = state.closuresPerformance && state.closuresPerformance.autoHandlers && state.closuresPerformance.autoHandlers[id];
-    return a ? `<span class="mini-badge" style="opacity:.75" title="From the matched call">${escapeHtml(a)}</span>` : '';
+    if(a) inner = `<span style="${base}background:rgba(255,255,255,.07);color:var(--text-muted,#9aa4b2)" title="From the matched call">${escapeHtml(a)}</span>`;
   }
-  return hs.length ? hs.map(h=>`<span class="mini-badge" style="background:rgba(80,200,160,.18)" title="Handler set manually">👤 ${escapeHtml(h)}</span>`).join(' ') : '';
+  return inner ? `<div style="display:block;margin-top:2px">${inner}</div>` : '';
 }
 function closureHandlerBtnHtml(id){
   if(CURRENT_ROLE !== 'admin') return '';
@@ -9868,7 +9874,7 @@ function renderClosuresPanel(){
         <button class="btn ghost" data-delete-closure="${c.id}" data-delete-closure-candidate="${escapeHtml(c.candidate)}" ${deleting?'disabled':''} title="Delete this closure — for a mistaken entry, not a real outcome you want to undo" style="font-size:11px;padding:3px 8px;color:var(--coral)">${deleting?'<span class="spinner"></span>':'🗑'}</button>
       </td>` : '';
       return `<tr>
-        <td>${escapeHtml(c.candidate)} ${closureHandlerChipsHtml(c.id)}</td>
+        <td>${escapeHtml(c.candidate)}${closureHandlerChipsHtml(c.id)}</td>
         <td>${escapeHtml(c.company)}</td>
         <td>${escapeHtml(c.salary||'—')}</td>
         <td>${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</td>
