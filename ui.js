@@ -3112,12 +3112,19 @@ document.addEventListener('click', function(e){
     b.innerHTML = '<span class="bottom-nav-icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span><span class="bottom-nav-label">Search</span>';
     var home = document.getElementById('navHome'); nav.insertBefore(b, home ? home.nextSibling : nav.firstChild);
   }
+  function injectAdmin(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openAdminFromNav', dd)) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openAdminFromNav'; b.type='button'; b.innerHTML='🔧 Admin tools';
+    b.addEventListener('click', function(){ var t = document.getElementById('navTools'); if(t) t.click(); });
+    host.insertBefore(b, host.firstChild);
+  }
   function install(){
     if(typeof window.render!=='function' || !window.__d11){ return setTimeout(install,150); }
     injectNav();
     var prev = window.d2ExtraCmds;
     window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['search everything find candidate company handler','Search everything','Candidates, calls, clients, people…',function(){ openS(); },'🔍']]); };
-    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectNav(); }catch(e){} return r; };
+    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectNav(); injectAdmin(); }catch(e){} return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
