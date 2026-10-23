@@ -17138,6 +17138,21 @@ function computeSmartAlerts(allRows, today, opts){
     markRead(id){ const i = findItem(id); if(i && !i.read){ i.read = true; save(); paintBell(); } },
     markAllRead(){ lf.items.forEach(i => { i.read = true; }); save(); paintBell(); if(lf.open) paintPanel(); },
     snooze(id, ms){ const i = findItem(id); if(i){ i.snoozeUntil = Date.now() + (ms||900000); i.read = true; save(); paintBell(); if(lf.open) paintPanel(); } },
+    // Adds an alert raised by the smart-reminder engine (ui.js). Same rules as the built-in ones:
+    // an id is only ever raised once (seen), then it lives in the feed/inbox and may pop up + notify.
+    add(item){
+      if(!item || !item.id || lf.seen[item.id]) return false;
+      lf.seen[item.id] = Date.now();
+      const it = Object.assign({ ts: Date.now(), read: false }, item);
+      lf.items.unshift(it);
+      lf.items = lf.items.slice(0, Math.max(LIVEFEED_MAX_ITEMS, 80));
+      save(); paintBell(); if(lf.open) paintPanel();
+      showToast(it);
+      try{ if(!lf.muted && it.priority === 'high' && !(document.hidden || !document.hasFocus())) cdShowNotification(it.title, { body: it.body, tag: 'cd-lf-' + it.id, data: { kind: 'livefeed', id: it.id, date: it.date || '', candidate: it.candidate || '' } }); }catch(e){}
+      return true;
+    },
+    hasSeen(id){ return !!lf.seen[id]; },
+    markSeen(id){ if(!lf.seen[id]){ lf.seen[id] = Date.now(); save(); } },
     wake(id){ const i = findItem(id); if(i){ delete i.snoozeUntil; i.read = false; i.ts = Date.now(); save(); paintBell(); if(lf.open) paintPanel(); } },
     clear(){ lf.items = []; save(); paintBell(); if(lf.open) paintPanel(); },
     toggleMute(){ lf.muted = !lf.muted; save(); paintBell(); if(lf.muted) toastBox.innerHTML = ''; if(lf.open) paintPanel(); return lf.muted; },
