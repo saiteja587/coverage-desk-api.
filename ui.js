@@ -2946,3 +2946,178 @@ document.addEventListener('click', function(e){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== Search everything (bottom-menu Search on phones; also Ctrl/Cmd-K → "Search everything") ===== */
+(function(){
+  'use strict';
+  if(window.__d12) return; window.__d12 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var LS = { get:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var fmtD = function(d){ var m = /(\d{4})-(\d\d)-(\d\d)/.exec(d||''); return m ? (+m[3])+' '+MON[+m[2]-1] : (d||''); };
+  var nkey = function(n){ try{ return normalizeNameKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } };
+  var ckey = function(n){ try{ return normalizeCompanyKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } };
+  var coName = function(c){ try{ return stripCompanyNoise(c)||c; }catch(e){ return c||''; } };
+  var today = function(){ try{ return todayDateString(); }catch(e){ return ''; } };
+  var low = function(s){ return String(s==null?'':s).toLowerCase(); };
+  var el = null, q = '', chip = 'all', all = null, loading = false, openMore = {}, loadedAt = 0;
+  var CHIPS = [['all','All'],['cand','Candidates'],['calls','Calls'],['client','Clients'],['people','People'],['asm','Assess · Onsite'],['tools','Screens']];
+
+  function ensure(){
+    if(all && Date.now()-loadedAt<60000 || loading) return;
+    loading = true;
+    var ps = [];
+    try{ if(!state.assessmentsLoaded && typeof loadAssessments==='function') ps.push(loadAssessments().catch(function(){})); }catch(e){}
+    try{ if(!state.onsitesLoaded && typeof loadOnsites==='function') ps.push(loadOnsites().catch(function(){})); }catch(e){}
+    ps.push((typeof fetchAllRowsAcrossDates==='function' ? fetchAllRowsAcrossDates(false) : Promise.resolve(state.rows||[])).then(function(r){ all = r||[]; }).catch(function(){ all = (state.rows||[]).map(function(r){ return Object.assign({_date:state.date}, r); }); }));
+    Promise.all(ps).then(function(){ loading = false; loadedAt = Date.now(); if(el) paint(); });
+  }
+
+  /* ---- matching ---- */
+  function tokens(s){ return low(s).split(/\s+/).filter(Boolean); }
+  function hit(hay, toks){ var h = low(hay); for(var i=0;i<toks.length;i++){ if(h.indexOf(toks[i])<0) return false; } return true; }
+  var sc = function(name, toks){ var n = low(name), s = 0; toks.forEach(function(t){ if(n.indexOf(t)===0) s+=3; else if(n.indexOf(' '+t)>=0) s+=2; else if(n.indexOf(t)>=0) s+=1; }); return s; };
+
+  function search(query){
+    var toks = tokens(query), R = {cand:[], calls:[], client:[], people:[], asm:[], tools:[], quick:[], alerts:[]};
+    if(!toks.length) return R;
+    var rows = all||[], td = today();
+    // quick jumps
+    var q2 = query.trim().toLowerCase(), dm = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})$/.exec(q2); if(dm) q2 = dm[2]+' '+dm[1];
+    try{ var jd = typeof parseQuickJumpDate==='function' ? parseQuickJumpDate(q2) : null; if(jd) R.quick.push({ic:'📅', t:'Go to '+fmtD(jd)+' ('+jd+')', s:'Open that day’s calls', act:{k:'date', d:jd}}); }catch(e){}
+    var live = rows.filter(function(r){ return r._date===td; });
+    var kw = {unassigned:function(r){ return !r.assignee && !r.woi && !r.status; }, woi:function(r){ return r.woi; }, rescheduled:function(r){ return r.status==='rescheduled'; }, cancelled:function(r){ return r.status==='cancelled'; }, late:function(r){ var m=timeToMinutes(r.time); return m!==9999&&(m>=1320||m<360); }, onsite:function(r){ return r.onsite; }};
+    if(toks.length===1 && kw[toks[0]]){ var n = live.filter(kw[toks[0]]).length; R.quick.push({ic:'🔎', t:toks[0].charAt(0).toUpperCase()+toks[0].slice(1)+' calls today: '+n, s:'Open the Workspace lists', act:{k:'workspace', tab:'lists'}}); }
+    // candidates
+    var cm = {};
+    rows.forEach(function(r){ if(!r.candidate) return; var k = nkey(r.candidate); (cm[k] = cm[k] || {name:r.candidate, rows:[]}).rows.push(r); });
+    Object.keys(cm).forEach(function(k){ var o = cm[k]; if(!hit(o.name, toks) && !o.rows.some(function(r){ return hit(r.candidate+' '+(r.company||'')+' '+(r.role||''), toks) && toks.some(function(t){ return low(r.candidate).indexOf(t)>=0; }); })) return;
+      o.rows.sort(function(a,b){ return String(b._date).localeCompare(String(a._date)); }); var l = o.rows[0], bad = o.rows.filter(function(r){ return r.status; }).length;
+      R.cand.push({sc:sc(o.name,toks)+Math.min(o.rows.length,5)/10, ic:'👤', t:o.name, s:o.rows.length+' call'+(o.rows.length===1?'':'s')+' · last '+fmtD(l._date)+(l.round?' · '+l.round:'')+(l.company?' · '+coName(l.company):'')+(bad?' · ⚠ '+bad+' didn’t go ahead':''), act:{k:'cand', name:o.name}}); });
+    // calls (today ± recent / upcoming first)
+    rows.forEach(function(r){ if(!r.candidate && !r.company) return; if(!hit([r.candidate,r.company,r.role,r.assignee,r.time,r.round,r.interviewer,r.technicalPOC,r.country,r._date,fmtD(r._date)].join(' '), toks)) return;
+      var diff = (Date.parse(r._date+'T00:00:00Z')-Date.parse(td+'T00:00:00Z'))/86400000, near = diff>=-1 && diff<=7 ? 5 : (diff>=-14 && diff<0 ? 2 : 0);
+      R.calls.push({sc:near+sc(r.candidate,toks)+sc(r.company,toks)/2-Math.abs(diff)/100, ic:r.status?'🔁':(r.woi?'⏳':'📞'), t:(r.time||'—')+'  '+(r.candidate||'(no name)'), s:fmtD(r._date)+(r._date===td?' (today)':'')+' · '+[r.company&&coName(r.company), r.round, r.assignee||(r.woi?'waiting for invite':'UNASSIGNED')].filter(Boolean).join(' · ')+(r.status?' · '+(window.statusBadgeInfo?statusBadgeInfo(r.status).label:r.status):''), act:{k:'call', date:r._date, name:r.candidate}}); });
+    // clients
+    var co = {};
+    rows.forEach(function(r){ if(!r.company) return; var k = ckey(r.company); if(!k) return; (co[k] = co[k] || {name:coName(r.company), rows:[], hand:{}}).rows.push(r); if(r.assignee) co[k].hand[r.assignee] = (co[k].hand[r.assignee]||0)+1; });
+    Object.keys(co).forEach(function(k){ var o = co[k]; if(!hit(o.name+' '+k, toks)) return; o.rows.sort(function(a,b){ return String(b._date).localeCompare(String(a._date)); });
+      var th = Object.keys(o.hand).sort(function(a,b){ return o.hand[b]-o.hand[a]; })[0], cands = {}; o.rows.forEach(function(r){ cands[nkey(r.candidate)] = 1; });
+      R.client.push({sc:sc(o.name,toks)+Math.min(o.rows.length,20)/20, ic:'🏢', t:o.name, s:o.rows.length+' calls · '+Object.keys(cands).length+' candidates · last '+fmtD(o.rows[0]._date)+(th?' · mostly '+th:''), act:{k:'client', name:o.name}}); });
+    // people
+    var pe = {}, teamSet; try{ teamSet = getTeamNames(); }catch(e){ teamSet = new Set(); }
+    (state.roster||[]).forEach(function(p){ if(p && p.name && !teamSet.has(p.name)) pe[p.name] = pe[p.name] || {name:p.name, team:p.team||'', n:0, t:0}; });
+    rows.forEach(function(r){ if(!r.assignee) return; var o = pe[r.assignee] = pe[r.assignee] || {name:r.assignee, team:'', n:0, t:0}; o.n++; if(r._date===td) o.t++; });
+    Object.keys(pe).forEach(function(k){ var o = pe[k]; if(!hit(o.name+' '+o.team, toks)) return; R.people.push({sc:sc(o.name,toks)+o.n/1000, ic:'🧑‍💼', t:o.name, s:(o.team?o.team+' · ':'')+o.t+' today · '+o.n+' calls overall', act:{k:'person', name:o.name}}); });
+    // interviewers / POCs
+    var iv = {};
+    rows.forEach(function(r){ ['interviewer','technicalPOC'].forEach(function(f){ String(r[f]||'').split(/[,;\/&]|\band\b/i).map(function(x){ return x.trim(); }).filter(function(x){ return x.length>1; }).forEach(function(nm){ var o = iv[low(nm)] = iv[low(nm)] || {name:nm, n:0, co:{}}; o.n++; if(r.company) o.co[coName(r.company)] = 1; }); }); });
+    Object.keys(iv).forEach(function(k){ var o = iv[k]; if(!hit(o.name, toks)) return; R.people.push({sc:sc(o.name,toks)-0.5, ic:'🎙', t:o.name, s:'Interviewer / POC · '+o.n+' call'+(o.n===1?'':'s')+' · '+Object.keys(o.co).slice(0,3).join(', '), act:{k:'cand', name:o.name}}); });
+    // assessments / onsites / closures
+    (state.assessments||[]).forEach(function(a){ if(!hit(['assessment',a.candidate,a.company,a.assessment,(a.handlers||[]).join(' '),a.date,fmtD(a.date)].join(' '), toks)) return; R.asm.push({sc:sc(a.candidate,toks)+(a.done?0:1), ic:'🧪', t:'Assessment — '+a.candidate, s:fmtD(a.date)+(a.time?' '+a.time:'')+' · '+[a.company&&coName(a.company), a.assessment, (a.handlers||[]).join(', ')||'no handler', a.done?'done':'pending'].filter(Boolean).join(' · '), act:{k:'panel', panel:'showAssessments', name:a.candidate}}); });
+    (state.onsites||[]).forEach(function(o){ if(!hit(['onsite',o.candidate,o.company,o.location,(o.handlers||[]).join(' '),o.date,fmtD(o.date)].join(' '), toks)) return; R.asm.push({sc:sc(o.candidate,toks)+1, ic:'🏢', t:'Onsite — '+o.candidate, s:fmtD(o.date)+(o.time?' '+o.time:'')+' · '+[o.company&&coName(o.company), o.location, (o.handlers||[]).join(', ')||'no handler', o.status].filter(Boolean).join(' · '), act:{k:'panel', panel:'showOnsites', name:o.candidate}}); });
+    (state.expectedClosures||[]).forEach(function(e){ if(!hit(['expected closure',e.candidate,e.company,e.note].join(' '), toks)) return; R.asm.push({sc:sc(e.candidate,toks), ic:'🎯', t:'Expected closure — '+e.candidate, s:[e.company&&coName(e.company), e.round, e.note].filter(Boolean).join(' · '), act:{k:'panel', panel:'showExpectedClosures', name:e.candidate}}); });
+    // alerts inbox
+    try{ (window.livefeedApi ? window.livefeedApi.items() : []).forEach(function(i){ if(hit(i.title+' '+i.body, toks)) R.alerts.push({sc:0, ic:'🔔', t:i.title, s:i.body, act:{k:'cand', name:i.candidate||''}}); }); }catch(e){}
+    // tools / screens
+    try{ (typeof QUICK_JUMP_COMMANDS!=='undefined' ? QUICK_JUMP_COMMANDS : []).forEach(function(c){ if(hit(c.label+' '+(c.keywords||''), toks)) R.tools.push({sc:sc(c.label,toks), ic:'⚙️', t:c.label.replace(/^\S+\s/,''), s:'Open screen', ic2:c.label.split(' ')[0], act:{k:'tool', cmd:c}}); }); }catch(e){}
+    try{ [['Workspace','🧭','board'],['Alert settings','🔔','__s'],['2nd-round pipeline','🌍','__p']].forEach(function(x){ if(hit(x[0]+' workspace board kanban directory workload digest history pipeline settings', toks) && hit(x[0], toks.slice(0,1)) ) R.tools.push({sc:2, ic:x[1], t:x[0], s:'Open', act:{k:'own', id:x[2]}}); }); }catch(e){}
+    Object.keys(R).forEach(function(k){ R[k].sort(function(a,b){ return (b.sc||0)-(a.sc||0); }); });
+    return R;
+  }
+
+  /* ---- UI ---- */
+  var GROUPS = [['quick','Quick',null],['cand','Candidates','cand'],['calls','Calls','calls'],['client','Clients','client'],['people','People & interviewers','people'],['asm','Assessments · Onsites · Closures','asm'],['alerts','Alerts','all'],['tools','Screens & tools','tools']];
+  function item(r, i, g){ return '<button type="button" class="d12-i" data-d12r="'+g+':'+i+'"><span class="d12-ic">'+r.ic+'</span><span class="d12-t"><b>'+esc(r.t)+'</b><small>'+esc(r.s||'')+'</small></span><span class="d12-go">›</span></button>'; }
+  function recents(){ try{ return JSON.parse(LS.get('cd.d12.recent','[]'))||[]; }catch(e){ return []; } }
+  function remember(s){ s = String(s||'').trim(); if(s.length<2) return; var L = recents().filter(function(x){ return x!==s; }); L.unshift(s); LS.set('cd.d12.recent', JSON.stringify(L.slice(0,8))); }
+  var last = null;
+  function paint(){
+    if(!el) return;
+    var body = '', R = null;
+    if(!tokens(q).length){
+      var rc = recents(), td = today(), rows = (all||[]).filter(function(r){ return r._date===td; });
+      var un = rows.filter(function(r){ return !r.assignee && !r.woi && !r.status; }).length;
+      body = (rc.length ? '<div class="d12-g">Recent searches</div><div class="d12-chips">'+rc.map(function(x){ return '<button type="button" class="d12-rc" data-d12q="'+esc(x)+'">'+esc(x)+'</button>'; }).join('')+'<button type="button" class="d12-rc ghost" data-d12a="clear">Clear</button></div>' : '')
+        + '<div class="d12-g">Try</div><div class="d12-chips">'+['unassigned','late','woi','tomorrow','assessment','onsite'].map(function(x){ return '<button type="button" class="d12-rc" data-d12q="'+x+'">'+x+'</button>'; }).join('')+'</div>'
+        + '<p class="d12-hint">One box for candidates, calls on any date, clients, handlers, interviewers, assessments, onsites, alerts and app screens.<br>Examples: <i>ravi</i> · <i>walgreens</i> · <i>dhruva</i> · <i>5:30 pm</i> · <i>25 oct</i> · <i>sephora 2nd</i></p>'
+        + (loading?'<p class="d12-hint">Loading all dates…</p>':'<p class="d12-hint">Searching '+(all?all.length:0)+' calls today and across every date.</p>');
+    } else {
+      R = search(q); last = R;
+      var any = false;
+      GROUPS.forEach(function(g){
+        var L = R[g[0]]; if(!L.length) return; if(chip!=='all' && g[2] && g[2]!==chip && g[0]!=='quick') return; if(chip!=='all' && !g[2] && g[0]!=='quick') return;
+        any = true; var lim = openMore[g[0]] ? 40 : (chip==='all'?4:25);
+        body += '<div class="d12-g">'+esc(g[1])+' <span>'+L.length+'</span></div>'+L.slice(0,lim).map(function(r,i){ return item(r,i,g[0]); }).join('')+(L.length>lim?'<button type="button" class="d12-more" data-d12m="'+g[0]+'">Show '+(L.length-lim)+' more</button>':'');
+      });
+      if(!any) body = '<div class="d12-none"><div>🔍</div><b>Nothing found for “'+esc(q)+'”</b><p>'+(loading?'Still loading all dates…':'Try fewer letters, a different spelling, or just the surname.')+'</p></div>';
+    }
+    var counts = R ? {cand:R.cand.length, calls:R.calls.length, client:R.client.length, people:R.people.length, asm:R.asm.length, tools:R.tools.length} : {};
+    var keepFocus = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('d12-q');
+    var list = $('.d12-list', el), keep = list ? list.scrollTop : 0;
+    el.innerHTML = '<div class="d12-sheet"><div class="d12-h"><div class="d12-sb"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input class="d12-q" type="search" inputmode="search" enterkeyhint="search" placeholder="Search anything…" value="'+esc(q)+'" autocomplete="off" autocapitalize="off" spellcheck="false">'+(q?'<button type="button" class="d12-clr" data-d12a="erase" aria-label="Clear">✕</button>':'')+'</div><button type="button" class="d12-cancel" data-d12a="close">Close</button></div>'
+      +'<div class="d12-chipbar">'+CHIPS.map(function(c){ var n = counts[c[0]]; return '<button type="button" class="'+(chip===c[0]?'on':'')+'" data-d12c="'+c[0]+'">'+c[1]+(n?'<em>'+n+'</em>':'')+'</button>'; }).join('')+'</div>'
+      +'<div class="d12-list">'+body+'</div></div>';
+    var l2 = $('.d12-list', el); if(l2) l2.scrollTop = keep;
+    if(keepFocus || !q){ var inp = $('.d12-q', el); if(inp){ inp.focus(); try{ var n = inp.value.length; inp.setSelectionRange(n,n); }catch(e){} } }
+  }
+  function openS(prefill){
+    q = prefill || ''; chip = 'all'; openMore = {};
+    if(!el){ el = document.createElement('div'); el.id='d12'; document.body.appendChild(el); document.body.classList.add('d12-open'); }
+    paint(); ensure();
+    setTimeout(function(){ var i = $('.d12-q', el); if(i) i.focus(); }, 60);
+  }
+  function closeS(){ if(el){ el.remove(); el = null; } document.body.classList.remove('d12-open'); }
+  window.d12Open = openS;
+
+  function act(a){
+    if(!a) return;
+    remember(q);
+    var k = a.k;
+    if(k==='cand'){ closeS(); if(a.name && typeof openCandidateProfile==='function') openCandidateProfile(a.name); }
+    else if(k==='call'){ closeS(); if(typeof cdOpenFromNotification==='function') cdOpenFromNotification({date:a.date, candidate:a.name}); }
+    else if(k==='client'){ closeS(); try{ openOnlyPanel('showCompanyScorecard'); openCompanyScorecard(a.name); }catch(e){} }
+    else if(k==='person'){ closeS(); try{ closeAllPanels(); state.filter='all'; state.view='all'; state.search=''; state.assigneeFilter=a.name; render(); window.scrollTo({top:0,behavior:'smooth'}); if(window.d2Toast) window.d2Toast('Showing '+a.name+'’s calls — clear it from Filters',{ms:4000}); }catch(e){} }
+    else if(k==='date'){ closeS(); if(typeof jumpToDateFromQuickSearch==='function') jumpToDateFromQuickSearch(a.d).then(function(){ try{ closeAllPanels(); render(); }catch(e){} }); }
+    else if(k==='panel'){ closeS(); try{ openOnlyPanel(a.panel); render(); }catch(e){} }
+    else if(k==='tool'){ closeS(); try{ a.cmd.action(); render(); }catch(e){ console.warn(e); } }
+    else if(k==='workspace'){ closeS(); if(window.d10Open) window.d10Open(a.tab); }
+    else if(k==='own'){ closeS(); if(a.id==='__s' && window.d11Settings) window.d11Settings(); else if(a.id==='__p' && window.d7Open) window.d7Open(); else if(window.d10Open) window.d10Open(a.id); }
+  }
+
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return;
+    var nv = t.closest('#navSearch'); if(nv){ e.preventDefault(); e.stopPropagation(); if(el) closeS(); else openS(); return; }
+    if(!el) return;
+    if(t===el){ closeS(); return; }
+    var a = t.closest('[data-d12a]'); if(a){ var k = a.dataset.d12a; if(k==='close') closeS(); else if(k==='erase'){ q=''; paint(); } else if(k==='clear'){ LS.set('cd.d12.recent','[]'); paint(); } return; }
+    var c = t.closest('[data-d12c]'); if(c){ chip = c.dataset.d12c; paint(); return; }
+    var rq = t.closest('[data-d12q]'); if(rq){ q = rq.dataset.d12q; paint(); return; }
+    var m = t.closest('[data-d12m]'); if(m){ openMore[m.dataset.d12m] = 1; paint(); return; }
+    var r = t.closest('[data-d12r]'); if(r){ var p = r.dataset.d12r.split(':'), L = last && last[p[0]]; if(L && L[+p[1]]) act(L[+p[1]].act); }
+  }, true);
+  var timer = null;
+  document.addEventListener('input', function(e){ if(!el || !e.target.classList || !e.target.classList.contains('d12-q')) return; q = e.target.value; clearTimeout(timer); timer = setTimeout(paint, 90); });
+  document.addEventListener('keydown', function(e){
+    if(!el) return;
+    if(e.key==='Escape'){ closeS(); }
+    else if(e.key==='Enter' && e.target.classList && e.target.classList.contains('d12-q') && last){ var f = ['quick','cand','calls','client','people','asm','tools'].map(function(k){ return last[k] && last[k][0]; }).filter(Boolean)[0]; if(f) act(f.act); }
+  });
+
+  function injectNav(){
+    var nav = document.getElementById('bottomNav'); if(!nav || document.getElementById('navSearch')) return;
+    var b = document.createElement('button'); b.className='bottom-nav-item'; b.id='navSearch'; b.type='button'; b.dataset.nav='search'; b.setAttribute('aria-label','Search everything');
+    b.innerHTML = '<span class="bottom-nav-icon"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span><span class="bottom-nav-label">Search</span>';
+    var home = document.getElementById('navHome'); nav.insertBefore(b, home ? home.nextSibling : nav.firstChild);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d11){ return setTimeout(install,150); }
+    injectNav();
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['search everything find candidate company handler','Search everything','Candidates, calls, clients, people…',function(){ openS(); },'🔍']]); };
+    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectNav(); }catch(e){} return r; };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
