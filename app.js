@@ -7109,6 +7109,7 @@ function render(){
         <span>Removed "${escapeHtml(state.lastDeleted.row.candidate||'call')}"</span>
         <span class="undo-toast-bar-track" aria-hidden="true"><span class="undo-toast-bar" style="animation-duration:${UNDO_TOAST_MS}ms;animation-delay:-${elapsedMs}ms"></span></span>
         <button id="undoDeleteBtn">Undo</button>
+        <button type="button" class="d2-toast-x" id="undoDismissBtn" aria-label="Dismiss">✕</button>
       </div>`;
     })() : ''}
     ${state.showSwipeAssignPicker ? (()=>{
