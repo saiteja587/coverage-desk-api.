@@ -996,8 +996,9 @@ async function loadStudentMatchDecisions(){
     const data = await apiCall('student_match_decisions', {});
     (data.rows||[]).forEach(row=>{
       const pairKey = row.candidateKey + '|' + row.studentId;
-      if(row.decision === 'confirmed') state.confirmedStudentMatches.add(pairKey);
-      else if(row.decision === 'rejected') state.rejectedStudentMatches.add(pairKey);
+      // Later rows win, so a corrected decision replaces the earlier one.
+      if(row.decision === 'confirmed'){ state.rejectedStudentMatches.delete(pairKey); state.confirmedStudentMatches.add(pairKey); }
+      else if(row.decision === 'rejected'){ state.confirmedStudentMatches.delete(pairKey); state.rejectedStudentMatches.add(pairKey); }
     });
     render();
   }catch(e){
@@ -13109,8 +13110,10 @@ function attachHandlers(conflictIds){
       const same = confirm(`Coverage Desk isn't fully sure about this one.\n\nIs "${candidateName}" the same person as "${matchedName}" in Students Master?\n\nClick OK if they're the same person, Cancel if they're different.`);
       const decision = same ? 'confirmed' : 'rejected';
       if(same){
+        state.rejectedStudentMatches.delete(pairKey);
         state.confirmedStudentMatches.add(pairKey);
       } else {
+        state.confirmedStudentMatches.delete(pairKey);
         state.rejectedStudentMatches.add(pairKey);
       }
       render();
@@ -17457,7 +17460,7 @@ function classifyNewStudentCandidates(rows, lookup){
       if(act === 'skip'){ markSkipped(it.key); done('Skipped — it won\'t be asked again. You can still add it from Students Master.'); return; }
       if(act === 'same'){
         const pair = it.pairKey || (it.key + '|' + it.student.id);
-        state.confirmedStudentMatches.add(pair); invalidateStudentMatchCache();
+        state.rejectedStudentMatches.delete(pair); state.confirmedStudentMatches.add(pair); invalidateStudentMatchCache();
         if(API_BASE_URL) await apiCall('student_match_decisions', { method: 'POST', body: { candidateKey: it.key, candidateName: it.name, studentId: it.student.id, decision: 'confirmed' } });
         done('✓ Marked as the same person as ' + escapeHtml(it.student.name) + '.'); render(); return;
       }
@@ -17465,7 +17468,7 @@ function classifyNewStudentCandidates(rows, lookup){
       if(act === 'add'){ name = card.querySelector('[data-sa-name]').value.trim(); country = card.querySelector('[data-sa-country]').value.trim(); if(!name){ msg.textContent = 'Type a name first.'; return; } }
       if(act === 'different'){
         const pair = it.pairKey || (it.key + '|' + it.student.id);
-        state.rejectedStudentMatches.add(pair);
+        state.confirmedStudentMatches.delete(pair); state.rejectedStudentMatches.add(pair);
         if(API_BASE_URL){ try{ await apiCall('student_match_decisions', { method: 'POST', body: { candidateKey: it.key, candidateName: it.name, studentId: it.student.id, decision: 'rejected' } }); }catch(e){} }
       }
       const added = await persistNewStudents([{ name, country }]);
