@@ -3128,3 +3128,83 @@ document.addEventListener('click', function(e){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== d13: Name matches — review / reverse "same person" decisions ===== */
+;(function(){
+  if(window.__d13) return; window.__d13 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var el = null, rows = [], err = '', q = '';
+  function closeS(){ if(el){ el.remove(); el = null; } }
+  function sName(id){ var s = (state.studentsMaster||[]).find(function(x){ return x.id===id; }); return s ? s.name : '(removed from Students Master)'; }
+  function paint(){
+    if(!el) return;
+    var ql = q.trim().toLowerCase();
+    var list = rows.filter(function(r){ return !ql || (r.candidateName+' '+sName(r.studentId)).toLowerCase().indexOf(ql)>=0; });
+    var btn = 'padding:5px 10px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer;font-size:12px';
+    el.querySelector('.d13-body').innerHTML =
+      (err ? '<div style="color:var(--coral,#f66);font-size:12px;margin-bottom:6px">'+esc(err)+'</div>' : '') +
+      (list.length ? list.map(function(r,i){
+        var conf = r.decision==='confirmed';
+        return '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border,#2a2f3a)">' +
+          '<div style="min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.candidateName||r.candidateKey)+'</div>' +
+          '<div style="font-size:12px;opacity:.75">'+(conf?'✓ marked same person as':'✗ marked different from')+' <b>'+esc(sName(r.studentId))+'</b></div></div>' +
+          '<button type="button" data-d13="'+r._i+'" style="'+btn+';white-space:nowrap">'+(conf?'Not the same person':'Same person')+'</button></div>';
+      }).join('') : '<div style="opacity:.7;font-size:13px;padding:10px 0">No saved decisions'+(ql?' match that search':' yet')+'.</div>');
+  }
+  async function flip(i){
+    var r = rows[i]; if(!r) return;
+    var nd = r.decision==='confirmed' ? 'rejected' : 'confirmed';
+    var pair = r.candidateKey+'|'+r.studentId;
+    err = '';
+    try{
+      if(API_BASE_URL) await apiCall('student_match_decisions', {method:'POST', body:{candidateKey:r.candidateKey, candidateName:r.candidateName, studentId:r.studentId, decision:nd}});
+      if(nd==='confirmed'){ state.rejectedStudentMatches.delete(pair); state.confirmedStudentMatches.add(pair); }
+      else { state.confirmedStudentMatches.delete(pair); state.rejectedStudentMatches.add(pair); }
+      r.decision = nd;
+      try{ invalidateStudentMatchCache(); }catch(e){}
+      try{ render(); }catch(e){}
+    }catch(e){ err = 'Could not save: '+((e&&e.message)||e); }
+    paint();
+  }
+  async function openS(){
+    closeS();
+    el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+    el.innerHTML = '<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:520px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:16px;gap:8px">' +
+      '<div style="font-weight:700;font-size:15px">🔁 Name matches</div>' +
+      '<div style="font-size:12px;opacity:.75">Every "same person / different" decision you made against Students Master. Reverse a wrong one here.</div>' +
+      '<input class="d13-q" type="text" placeholder="Search a name…" autocomplete="off" style="padding:8px;border-radius:8px">' +
+      '<div class="d13-body" style="overflow:auto;flex:1;min-height:80px">Loading…</div>' +
+      '<button type="button" class="d13-x" style="'+'padding:8px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer'+'">Close</button></div>';
+    document.body.appendChild(el);
+    try{
+      var d = await apiCall('student_match_decisions', {});
+      rows = (d.rows||[]).slice().reverse().map(function(r,i){ r._i = i; return r; });
+      err = '';
+    }catch(e){ rows = []; err = 'Could not load decisions: '+((e&&e.message)||e); }
+    paint();
+  }
+  document.addEventListener('click', function(e){
+    if(!el) return;
+    if(e.target===el || (e.target.classList && e.target.classList.contains('d13-x'))) return closeS();
+    var b = e.target.closest && e.target.closest('[data-d13]'); if(b) flip(Number(b.dataset.d13));
+  });
+  document.addEventListener('input', function(e){ if(el && e.target.classList && e.target.classList.contains('d13-q')){ q = e.target.value; paint(); } });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && el) closeS(); });
+  window.d13Open = openS;
+  function injectMenu(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD13', dd)) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD13'; b.type='button'; b.title='Review or reverse same-person decisions'; b.innerHTML='🔁 Name matches';
+    b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} openS(); });
+    host.appendChild(b);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d12){ return setTimeout(install,150); }
+    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectMenu(); }catch(e){} return r; };
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['name matches same person students master undo wrong','Name matches','Reverse same-person decisions',openS,'🔁']]); };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
