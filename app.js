@@ -1163,6 +1163,26 @@ function parseAssessmentText(text, defaultDate){
     // "... - 11am IST -> Priya, Ravi" : people after an arrow are the handlers
     let handlers = [];
     { const ai = line.search(/\s*(?:->|→)\s*/); if(ai >= 0){ handlers = assessResolveHandlers(line.slice(ai).replace(/^\s*(?:->|→)\s*/, '')); line = line.slice(0, ai).trim(); } }
+    // Compact form with no spaced separators: "Shree Ramji-(UK)-(3:30pm ist)(Moonpig Group)Assessment".
+    // Rebuild it as "Name (UK) - Company (Assessment) - 3:30pm ist" so the normal splitter can read it.
+    if(!/\s[-–—]+\s|--/.test(line) && /\(/.test(line)){
+      const fi = line.indexOf('(');
+      const nm = line.slice(0, fi).replace(/[\s\-–—:,]+$/, '').trim();
+      const groups = [];
+      const tailTxt = line.slice(fi).replace(/\(([^()]*)\)/g, (m, g) => { groups.push(g.trim()); return '\u0002'; }).replace(/\u0002/g, ' ').replace(/[\-–—]+/g, ' ').replace(/\s+/g, ' ').trim();
+      let cty = '', tm = '', coBits = [], tyBits = [];
+      groups.forEach(g => {
+        const t = normalizeCountryParenText(g);
+        if(/^(uk|ireland|ir|canada|germany)$/.test(t)) cty = g;
+        else if(!tm && assessTimeFrom(g)) tm = g;
+        else if(ASSESS_WORD_RE.test(g) || ASSESS_THROUGH_RE.test(g)) tyBits.push(g);
+        else coBits.push(g);
+      });
+      if(tailTxt) tyBits.push(tailTxt);
+      if(nm && tm && coBits.length){
+        line = nm + (cty ? ' (' + cty + ')' : '') + ' - ' + coBits.join(' ') + (tyBits.length ? ' (' + tyBits.join(' ') + ')' : '') + ' - ' + tm;
+      }
+    }
     // mask dashes inside brackets so "(Interview - through assessment)" is not split
     const masked = line.replace(/\(([^()]*)\)/g, (m, inner) => '(' + inner.replace(/[-–—]/g, '\u0001') + ')');
     const segs = masked.split(/\s*--+\s*|\s+-\s+|\s*[–—]+\s*/).map(x => x.replace(/\u0001/g, '-').trim()).filter(Boolean);
