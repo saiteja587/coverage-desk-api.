@@ -1,4 +1,3 @@
-const STATUS_COLORS = { assigned: 'var(--teal)', woi: 'var(--amber)', unassigned: 'var(--coral)' };
 // Seeded once from the uploaded student-master spreadsheet — after the
 // first successful load, this seed is never used again; all edits go
 // through the normal Students Master panel and its own storage.
@@ -2626,10 +2625,6 @@ function setupOfflineQueue(){
   // queue is already empty, since retryOfflineQueue() returns immediately.
   setInterval(retryOfflineQueue, 30000);
 }
-function saveDaySoon(){
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDayNow, 400);
-}
 async function saveDayNow(){
   syncNotesFromShiftNote(); syncNotesFromAbsent(); syncNotesFromExportedIds();
   if(API_BASE_URL){
@@ -2847,6 +2842,9 @@ const ALERT_WINDOW_BEFORE_MIN = 15; // fire once a call is this close to its sta
 const ALERT_WINDOW_AFTER_MIN = 10;  // still fire up to this many minutes AFTER start if still unassigned
 function checkTimeSensitiveAlerts(){
   if(!state.alertsEnabled) return;
+  // 2026-10-27: the smart-reminder engine (ui.js d11) already raises "unassigned at 30 / 15 min" and
+  // "calls starting soon" alerts — don't fire a second, duplicate one for the same call.
+  try{ if(window.d11Covers && window.d11Covers('unassigned')) return; }catch(e){}
   if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   if(state.date !== todayDateString()) return; // only meaningful for the day actually in progress
   const now = new Date();
@@ -3006,10 +3004,6 @@ function normalizeTeamName(text){
   if(/development/i.test(text)) return 'Development Team';
   if(/marketing/i.test(text)) return 'Marketing Team';
   return null;
-}
-function matchRosterName(name){
-  const found = state.roster.find(p=>p.name.toLowerCase()===name.toLowerCase());
-  return found ? found.name : titleCase(name);
 }
 function matchOrCreateRosterName(name){
   const found = state.roster.find(p=>p.name.toLowerCase()===name.toLowerCase());
@@ -6551,18 +6545,6 @@ function buildTeamGroupedExportText(rows){
   return out.join('\n').trim();
 }
 
-function downloadTextFile(filename, text){
-  const blob = new Blob([text], {type:'text/plain'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
-}
-
 function renderFinalizeControls(){
   if(!state.finalized){
     return `<button class="btn primary" id="finalizeBtn">✅ Finalize all calls</button>`;
@@ -7061,7 +7043,7 @@ function render(){
           <button class="btn ${state.showMoreMenu?'active':''} ${(state.absentIds.length || (CURRENT_ROLE==='admin' && !API_BASE_URL) || dataHealthIssueCount()>0) ? 'notif-alert' : ''}" id="toggleMoreMenu" title="Notifications, Data Health, DB status, and other summaries/lookups">📊 Reports</button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <div class="more-menu-section-label">Today</div>
-            <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">🔔 Notifications${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
+            <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">👥 Returning candidates${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
             ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
@@ -7070,7 +7052,7 @@ function render(){
             <button class="more-menu-item" id="toggleEodWrapup" title="How today went — handled vs. slipped, plus a peek at tomorrow. The evening-facing counterpart to Today's Briefing">🌙 End-of-Day Wrap-Up</button>
             <button class="more-menu-item" id="toggleTimeSensitiveAlerts" title="A notification when an unassigned call is close to its start time — fires in the open tab/app immediately, and as a real background push to every device that's subscribed (needs the server-side check set up — see the deploy notes) even once closed.">${state.alertsEnabled ? '🔔 Alerts: On' : '🔕 Alerts: Off'}</button>
             <div class="more-menu-section-label">Look up</div>
-            <button class="more-menu-item" id="toggleUniversalSearch" title="Search candidate, company, or assignee across every saved date at once — includes a company-only fuzzy mode for client lookups">🔎 Search Everywhere</button>
+            <button class="more-menu-item" id="toggleUniversalSearch" title="One search for candidates, calls, clients, people, assessments and screens (same as the Search button on the phone)">🔎 Search everything</button>
             <button class="more-menu-item" id="openQuickJumpFromMenu" title="Jump straight to a date, a panel, or a candidate — same as pressing Ctrl/Cmd+K anywhere">⌘ Quick Jump <span class="notif-info-badge" title="Keyboard shortcut">Ctrl/⌘+K</span></button>
             <button class="more-menu-item" id="toggleCalendarView" title="See call volume across a whole month at a glance, and jump straight to any date">🗓️ Calendar</button>
             <button class="more-menu-item" id="toggleCompanyScorecard" title="Volume, reliability, conversion rate, and time-to-close for one client — in one place instead of three tabs">🏢 Company Scorecard</button>
@@ -8049,7 +8031,7 @@ const QUICK_JUMP_COMMANDS = [
   { label: '✅ Check against group list', keywords: 'check list compare reconcile missing calls count group list match', action: ()=>{ openOnlyPanel('showListCheck'); } },
   { label: '🧪 Assessments', keywords: 'assessments assessment tests codility hackajob online test interview through assessment', action: ()=>{ openOnlyPanel('showAssessments'); if(!state.assessDate) state.assessDate = todayDateString(); if(!state.assessmentsLoaded) loadAssessments(); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
-  { label: '🔔 Notifications', keywords: 'notifications notif absent absences', action: ()=>{ openOnlyPanel('showNotifications'); } },
+  { label: '👥 Returning candidates', keywords: 'notifications notif absent absences returning', action: ()=>{ openOnlyPanel('showNotifications'); } },
   { label: '🩺 Data Health', keywords: 'data health triage unmatched stale', action: ()=>{
     const wasOpen = state.showDataHealth;
     openOnlyPanel('showDataHealth');
@@ -12747,7 +12729,7 @@ function attachHandlers(conflictIds){
     render();
   };
   const toggleUniversalSearchBtn = document.getElementById('toggleUniversalSearch');
-  if(toggleUniversalSearchBtn) toggleUniversalSearchBtn.onclick = ()=>{ openOnlyPanel('showUniversalSearch'); render(); };
+  if(toggleUniversalSearchBtn) toggleUniversalSearchBtn.onclick = ()=>{ state.showMoreMenu = false; if(window.d12Open){ closeAllPanels(); render(); window.d12Open(); } else { openOnlyPanel('showUniversalSearch'); render(); } };
   const openQuickJumpFromMenuBtn = document.getElementById('openQuickJumpFromMenu');
   if(openQuickJumpFromMenuBtn) openQuickJumpFromMenuBtn.onclick = ()=>{
     closeAllPanels();
@@ -15635,20 +15617,6 @@ function clientPeerBadge(row){
   const title = h.company + ' also had ' + h.others.length + ' earlier call' + (h.others.length===1?'':'s') + ' with other candidates' + (head ? '\n\n' + head : '') + '\n\nAll earlier:\n' + all;
   return `<span class="mini-badge mini-badge-client" title="${escapeHtml(title)}">C${tag}</span>`;
 }
-function findPriorClientOccurrence(row){
-  if(!row.company || !state.clientHistory) return null;
-  const key = normalizeCompanyKey(row.company);
-  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key) || state.clientHistory.find(n => fuzzyCompanyKeyMatch(n.company, row.company));
-  if(!entry) return null;
-  const rowCandidate = (row.candidate||'').trim().toLowerCase();
-  // Always points to a genuinely DIFFERENT candidate — otherwise, if this
-  // company also happens to have a different repeat candidate mixed in, the
-  // badge could accidentally cite this same person's own earlier round
-  // instead of the other candidate, which defeats the point of the check.
-  const prior = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== rowCandidate);
-  if(!prior.length) return null;
-  return prior[0]; // most recent prior occurrence (already sorted newest-first)
-}
 
 // ---------- Interview Portal sync (who's actually handling each call) ----------
 // Pulled from a NEW, separate, read-only endpoint on the Interview Portal
@@ -17254,7 +17222,7 @@ function computeSmartAlerts(allRows, today, opts){
     try{
       if(lf.muted || item.type === 'more') return;
       if(!(document.hidden || !document.hasFocus())) return;
-      cdShowNotification(item.title, { body: item.body, tag: 'cd-lf-' + item.id, data: { kind: 'livefeed', id: item.id, date: item.date || '', candidate: item.candidate || '' } });
+      cdShowNotification(item.title, { body: item.body, tag: item.tag || ('cd-lf-' + item.id), data: { kind: 'livefeed', id: item.id, date: item.date || '', candidate: item.candidate || '' } });
     }catch(e){}
   }
   function showToast(item){
@@ -17337,7 +17305,7 @@ function computeSmartAlerts(allRows, today, opts){
       lf.items = lf.items.slice(0, Math.max(LIVEFEED_MAX_ITEMS, 80));
       save(); paintBell(); if(lf.open) paintPanel();
       showToast(it);
-      try{ if(!lf.muted && it.priority === 'high' && !(document.hidden || !document.hasFocus())) cdShowNotification(it.title, { body: it.body, tag: 'cd-lf-' + it.id, data: { kind: 'livefeed', id: it.id, date: it.date || '', candidate: it.candidate || '' } }); }catch(e){}
+      try{ if(!lf.muted && it.priority === 'high' && (document.hidden || !document.hasFocus())) cdShowNotification(it.title, { body: it.body, tag: it.tag || ('cd-lf-' + it.id), data: { kind: 'livefeed', id: it.id, date: it.date || '', candidate: it.candidate || '' } }); }catch(e){}
       return true;
     },
     hasSeen(id){ return !!lf.seen[id]; },
