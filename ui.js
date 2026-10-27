@@ -3158,7 +3158,7 @@ document.addEventListener('click', function(e){
     var pair = r.candidateKey+'|'+r.studentId;
     err = '';
     try{
-      if(API_BASE_URL) await apiCall('student_match_decisions', {method:'POST', body:{candidateKey:r.candidateKey, candidateName:r.candidateName, studentId:r.studentId, decision:nd}});
+      if(API_BASE_URL) await apiCall('student_match_decisions', {method:'POST', body:{candidateKey:r.candidateKey, candidateName:(r.candidateName||r.candidateKey), studentId:r.studentId, decision:nd}});
       if(nd==='confirmed'){ state.rejectedStudentMatches.delete(pair); state.confirmedStudentMatches.add(pair); }
       else { state.confirmedStudentMatches.delete(pair); state.rejectedStudentMatches.add(pair); }
       r.decision = nd;
