@@ -77,7 +77,11 @@ function setCors(res) {
 }
 
 async function authenticate(req, db) {
-  if (!process.env.ADMIN_PASSWORD) return { ok: true, username: null, role: 'admin' };
+  // Fail CLOSED (same as api/data.js): with no ADMIN_PASSWORD configured nobody gets in, instead of everybody being admin.
+  if (!process.env.ADMIN_PASSWORD) {
+    console.error('ADMIN_PASSWORD is not set — denying all user-management requests until this is configured.');
+    return { ok: false };
+  }
   const adminPw = req.headers['x-admin-password'];
   if (adminPw && adminPw === process.env.ADMIN_PASSWORD) {
     return { ok: true, username: 'admin', role: 'admin' };
