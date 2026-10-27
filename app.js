@@ -5155,7 +5155,7 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
     if(!row.company || !isAdvancedRound(row.round)) return;
     const key = normalizeCompanyKey(row.company);
     byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, role: row.role || ''});
   });
   const results = [];
   Object.values(byCompany).forEach(occ=>{
@@ -11409,7 +11409,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="Ref" ${r.country==='Ref'?'selected':''}>Ref (reference call)</option>
         </select>
       </td>
-      <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${(()=>{ const pc = findPriorClientOccurrence(r); return pc ? `<span class="mini-badge mini-badge-client" title="${escapeHtml(pc.company)} also had a call with ${escapeHtml(pc.candidate||'another candidate')} on ${escapeHtml(pc.date)}${pc.round?', '+escapeHtml(pc.round):''}${pc.assignee?' — handled by '+escapeHtml(pc.assignee):''}">C</span>` : ''; })()}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${clientPeerBadge(r)}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
       <td data-label="Assigned to">
         ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
@@ -15582,6 +15582,43 @@ async function scanClientHistoryAllRounds(forceRefresh){
   });
   results.sort((a,b)=> b.occurrences[0].date.localeCompare(a.occurrences[0].date));
   return results;
+}
+// Role awareness for the "C" (same client, other candidate) badge — 2026-10-27.
+function roleKeyOf(x){ return normalizeCompanyKey(x || ''); }
+function rolesAlike(a, b){
+  const x = roleKeyOf(a), y = roleKeyOf(b);
+  if(!x || !y) return false;
+  return x === y || (x.length >= 5 && y.length >= 5 && (x.startsWith(y) || y.startsWith(x) || x.includes(y) || y.includes(x)));
+}
+// All earlier calls at this client by OTHER candidates, newest first, split by whether the role matches.
+function clientPeerHistory(row){
+  if(!row.company || !state.clientHistory) return null;
+  const key = normalizeCompanyKey(row.company);
+  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key) || state.clientHistory.find(n => fuzzyCompanyKeyMatch(n.company, row.company));
+  if(!entry) return null;
+  const me = (row.candidate||'').trim().toLowerCase();
+  const others = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== me);
+  if(!others.length) return null;
+  const sameRole = row.role ? others.filter(o => rolesAlike(o.role, row.role)) : [];
+  const known = others.filter(o => o.role);
+  return { company: entry.company, others, sameRole, rolesKnown: known.length, thisRole: row.role || '' };
+}
+function clientPeerBadge(row){
+  const h = clientPeerHistory(row); if(!h) return '';
+  const line = o => (o.candidate||'another candidate') + (o.role ? ' \u2014 ' + o.role : '') + ' \u2014 ' + (o.date||'') + (o.round ? ', ' + o.round : '') + (o.assignee ? ', ' + o.assignee : '');
+  let tag = '', head = '';
+  if(h.thisRole && h.sameRole.length){
+    tag = ' = role';
+    head = 'SAME ROLE (' + h.thisRole + ') was already called for here:\n' + h.sameRole.slice(0,5).map(line).join('\n');
+  } else if(h.thisRole && h.rolesKnown){
+    tag = ' \u2260 role';
+    head = 'DIFFERENT ROLE \u2014 this call is for "' + h.thisRole + '"; earlier calls here were for: ' + Array.from(new Set(h.others.map(o=>o.role).filter(Boolean))).slice(0,5).join(', ') + '. May be a new opening.';
+  } else if(!h.thisRole){
+    head = 'No role on this call, so roles can\u2019t be compared.';
+  }
+  const all = h.others.slice(0,6).map(line).join('\n');
+  const title = h.company + ' also had ' + h.others.length + ' earlier call' + (h.others.length===1?'':'s') + ' with other candidates' + (head ? '\n\n' + head : '') + '\n\nAll earlier:\n' + all;
+  return `<span class="mini-badge mini-badge-client" title="${escapeHtml(title)}">C${tag}</span>`;
 }
 function findPriorClientOccurrence(row){
   if(!row.company || !state.clientHistory) return null;
