@@ -2827,7 +2827,8 @@ async function cdShowNotification(title, opts){
 window.cdShowNotification = cdShowNotification;
 // Tapping a notification lands on the right day with that candidate filtered.
 async function cdOpenFromNotification(data){
-  if(!data || (!data.date && !data.candidate)) return;
+  if(!data) return;
+  if(!data.date && !data.candidate){ try{ if(window.d8Open) window.d8Open(); }catch(e){} return; }
   try{
     if(data.date && data.date !== state.date){ await jumpToDateFromQuickSearch(data.date); if(state.date !== data.date) return; }
     closeAllPanels();
@@ -2839,7 +2840,7 @@ async function cdOpenFromNotification(data){
 window.cdOpenFromNotification = cdOpenFromNotification;
 try{
   if('serviceWorker' in navigator){
-    navigator.serviceWorker.addEventListener('message', (e)=>{ if(e.data && e.data.type === 'cd-open') cdOpenFromNotification(e.data); });
+    navigator.serviceWorker.addEventListener('message', (e)=>{ if(e.data && e.data.type === 'cd-open'){ try{ if(e.ports && e.ports[0]) e.ports[0].postMessage('ok'); }catch(x){} cdOpenFromNotification(e.data); } });
   }
 }catch(e){}
 const ALERT_WINDOW_BEFORE_MIN = 15; // fire once a call is this close to its start time
