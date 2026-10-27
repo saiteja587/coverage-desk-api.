@@ -461,6 +461,7 @@ async function main() {
   const mPage = await mBrowser.newPage({ viewport: { width: 390, height: 900 }, isMobile: true, hasTouch: true });
   const mErrors = [];
   mPage.on('pageerror', err => mErrors.push(err.message));
+  await mPage.addInitScript(() => { try { localStorage.setItem('coverage-desk-my-name', 'Test User'); } catch (e) {} });
   await mPage.goto('file://' + INDEX_PATH, { waitUntil: 'domcontentloaded' });
   await mPage.waitForTimeout(2000);
   await mPage.evaluate(() => {
@@ -560,8 +561,9 @@ async function main() {
   });
   await mPage.waitForTimeout(200);
   await mPage.evaluate(() => { const o = document.getElementById('myNamePickerOverlay'); if (o) o.remove(); });
+  await mPage.evaluate(() => { const o = document.getElementById('myNamePickerOverlay'); if (o) o.remove(); });
   const navMoreBtn = await mPage.$('#navMore');
-  if (navMoreBtn) await navMoreBtn.click();
+  if (navMoreBtn) await navMoreBtn.click({ force: true });
   await mPage.waitForTimeout(300);
   const menuCheck = await mPage.evaluate(() => {
     const items = Array.from(document.querySelectorAll('.more-menu-item')).filter(i => i.offsetParent !== null);
