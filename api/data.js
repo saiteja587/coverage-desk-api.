@@ -12,7 +12,7 @@
 const mysql = require('mysql2/promise');
 // Ask Desk chat is optional: if its file is missing or broken, ONLY the chat is unavailable — calls, roster, closures etc. must keep working.
 let handleChat = null;
-try { ({ handleChat } = require('./_ask-desk-chat')); } catch (e) { console.error('Ask Desk chat module not loaded:', e && e.message); }
+try { ({ handleChat } = require('./_lib/ask-desk-chat')); } catch (e) { console.error('Ask Desk chat module not loaded:', e && e.message); }
 const crypto = require('crypto');
 
 // Passwords used to be hashed with plain unsalted SHA-256 — fast by
@@ -275,7 +275,7 @@ module.exports = async (req, res) => {
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
     if (resource === 'chat') {
-      if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_ask-desk-chat.js is missing).', code: 'not_configured' });
+      if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_lib/ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
     }
     return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|whoami' });
