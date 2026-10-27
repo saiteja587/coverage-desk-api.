@@ -4122,7 +4122,19 @@ function parseRescheduleText(text){
   let current = [];
   for(const line of lines){
     if(!line){ if(current.length){ blocks.push(current); current=[]; } continue; }
-    if(/^@/.test(line) && !timeRe.test(line)) continue; // pure @mention line, not data
+    if(/^@/.test(line) && !timeRe.test(line)){
+      // A reply like "@Sashank Bava Sir, the call was cancelled because the position had already been
+      // filled." under a call line is the status for that call — keep it (attach it to the call line
+      // above, even across a blank line) instead of discarding it as a bare @mention.
+      if(!looksLikeRescheduleLine(line)) continue;
+      if(!current.length && blocks.length){
+        const prev = blocks[blocks.length-1];
+        const prevFull = prev.join(' ');
+        if(timeRe.test(prevFull) && !looksLikeRescheduleLine(prevFull)) current = blocks.pop();
+      }
+      current.push(line);
+      continue;
+    }
     let isNewEntry = timeRe.test(line) && /[–\-]/.test(line);
     // A second self-contained status message pasted right after the first
     // with no blank line between them ("... Name (3:30 PM) mentioned ...\nSir,
@@ -4200,7 +4212,9 @@ function parseRescheduleText(text){
 
     let reason = null;
     const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
+    const becauseMatch = full.match(/\b(?:because|as|since)\s+((?:the\s+)?(?:position|role|job|vacancy|requirement|opening)\b[^.]*?|[^.]*?\b(?:filled|closed|on\s+hold|put\s+on\s+hold|withdrawn|no\s+longer\s+(?:required|needed|available))[^.]*?)(?:\s+sir)?\s*\.?\s*$/i);
     if(reasonMatch) reason = reasonMatch[1].trim();
+    else if(becauseMatch) reason = becauseMatch[1].trim().replace(/^./, c=>c.toUpperCase());
     else if(/candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(full)) reason = 'Candidate handling interview independently';
     else if(RESCHED_UNAVAILABLE_RE.test(full) && !/reschedul|cancel/i.test(full)) reason = full.replace(/^@[\w\s]+?(?:sir)?[,:]\s*/i,'').trim().slice(0,400); // the whole message is the explanation
     else if(status === 'no_invite') reason = 'Didn’t receive the invitation link'; // real messages for this case rarely use "due to..." phrasing, so default it directly rather than leaving it blank
