@@ -165,10 +165,15 @@ module.exports = async (req, res) => {
     let sentCount = 0;
     const deadEndpointIds = [];
     for (const call of toAlert) {
+      const callMinNow = timeToMinutes(call.time_text);
+      const minsAway = callMinNow === 9999 ? null : callMinNow - nowMin;
+      const when = minsAway === null ? '' : (minsAway > 0 ? ` — starts in ${minsAway} min` : (minsAway === 0 ? ' — starting now' : ` — started ${-minsAway} min ago`));
       const payload = JSON.stringify({
-        title: 'Unassigned call coming up',
+        title: 'Unassigned call' + when,
         body: `${call.candidate || '(no name)'}${call.company ? ' — ' + call.company : ''} at ${call.time_text || '?'} still has no one assigned.`,
         tag: 'cd-alert-' + call.id,
+        // Lets the app jump straight to this call when the notification is tapped.
+        data: { kind: 'unassigned', date: todayIST, id: call.id, candidate: call.candidate || '' },
       });
       let sentToAnySub = false;
       for (const sub of subs) {
