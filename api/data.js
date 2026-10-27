@@ -663,10 +663,10 @@ async function handleStudents(req, res, db) {
 async function handleStudentMatchDecisions(req, res, db) {
   if (req.method === 'GET') {
     const [rows] = await db.query(
-      'SELECT candidate_key, student_id, decision FROM student_match_decisions'
+      'SELECT candidate_key, candidate_name, student_id, decision FROM student_match_decisions'
     );
     return res.status(200).json({
-      rows: rows.map(r => ({ candidateKey: r.candidate_key, studentId: r.student_id, decision: r.decision })),
+      rows: rows.map(r => ({ candidateKey: r.candidate_key, candidateName: r.candidate_name || '', studentId: r.student_id, decision: r.decision })),
     });
   }
   if (req.method === 'POST') {
