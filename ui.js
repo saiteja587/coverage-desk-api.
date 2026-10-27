@@ -56,7 +56,6 @@
   var KEYS = Object.keys(EMOJI).sort(function(a, b){ return b.length - a.length; });
   var SEL = 'button, .btn, .tab-btn, .more-menu-item, .bottom-nav-icon, .bottom-nav-fab-icon, .filter-chip, .search-icon, .hint > span:first-child, .shift-note-label-row > span:first-child';
   function iconHTML(name){ return '<span class="ic" data-ic="' + name + '" aria-hidden="true">' + S(ICONS[name]) + '</span>'; }
-  window.CDIcon = iconHTML;
 
   function upgrade(root){
     (root || document).querySelectorAll(SEL).forEach(function(el){
@@ -844,10 +843,6 @@
     });
     return out;
   }
-  function setAssignee(r, name){
-    var sel = $('tr[data-id="'+r.id+'"] select[data-field="assignee"]');
-    r.assignee = name;
-  }
 
   /* ================= 1. bulk smart-pick ================= */
   function decorateBulk(){
@@ -1403,7 +1398,6 @@
     }catch(e){ console.warn('d4',e); }
     finally{ organizing = false; }
   }
-  window.d4Organize = function(){ organize(true); };
   function needs(){ var s=$('#d2Strip'); return !!s && !s.querySelector('#d4Bar'); }
   var moT=null;
   function observe(){
@@ -2774,7 +2768,7 @@ document.addEventListener('click', function(e){
     if(c.on.unassigned!==false){
       todays.forEach(function(r){ if(r.woi||r.assignee||r.status) return; var m = tmin(r.time); if(m===9999) return; var diff = m-nowM;
         if(diff<=30 && diff>15) push('unassigned', key('un30',r.id), 'Nobody assigned — '+diff+' min to go', (r.candidate||'(no name)')+(r.company?' — '+r.company:'')+' at '+r.time+'.', {rowId:r.id, candidate:r.candidate, priority:'high'});
-        else if(diff<=15 && diff>=-5) push('unassigned', key('un15',r.id), 'Still nobody assigned — '+Math.max(diff,0)+' min', (r.candidate||'(no name)')+(r.company?' — '+r.company:'')+' at '+r.time+'.', {rowId:r.id, candidate:r.candidate, priority:'high'});
+        else if(diff<=15 && diff>=-5) push('unassigned', key('un15',r.id), 'Still nobody assigned — '+Math.max(diff,0)+' min', (r.candidate||'(no name)')+(r.company?' — '+r.company:'')+' at '+r.time+'.', {rowId:r.id, candidate:r.candidate, priority:'high', tag:'cd-alert-'+r.id});
       });
     }
 
@@ -2896,6 +2890,7 @@ document.addEventListener('click', function(e){
     }).catch(function(e){ console.warn('d11',e); }).then(function(){ running = false; });
   }
   window.d11Run = function(){ run(true); };
+  window.d11Covers = function(t){ try{ return cfg().on[t] !== false; }catch(e){ return false; } };
 
   /* ---------- settings sheet ---------- */
   var el = null;
