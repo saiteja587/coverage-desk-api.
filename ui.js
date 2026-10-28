@@ -3203,3 +3203,252 @@ document.addEventListener('click', function(e){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== d14: Sync Google Doc — pull upcoming calls from the group's tracker doc (preview first, admin only) ===== */
+;(function(){
+  if(window.__d14) return; window.__d14 = true;
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
+  var el = null, S = { url:'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, results:[] };
+  var KEY = 'gdoc_sync_url';
+
+  function closeS(){ if(el){ el.remove(); el = null; } }
+  function nk(t){ return String(t||'').replace(/\s+/g,'').toUpperCase(); }
+  function ck(c){ try{ return normalizeCompanyKey(c); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z0-9]/g,''); } }
+  function rk(r){ try{ return lcRoundKey(r); }catch(e){ return String(r||'').toLowerCase(); } }
+  function parseLink(u){
+    var m = String(u||'').match(/document\/d\/([A-Za-z0-9_-]{20,})/), t = String(u||'').match(/[?&]tab=(t\.[A-Za-z0-9]+)/);
+    return m ? { id:m[1], tab: t ? t[1] : '' } : null;
+  }
+  function fmtDate(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } }
+
+  /* split the doc text into {date: [lines]} (only dates from `from` on) */
+  function sections(text, from){
+    var t = String(text||'').replace(/\\\*/g,'').replace(/\*\*+/g,'').replace(/&#10;|&nbsp;|&#160;|&#13;/g,' ');
+    var re = /^[ \t]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim, heads = [], m;
+    while((m = re.exec(t)) !== null){
+      heads.push({ at:m.index, end:m.index+m[0].length, iso: m[3]+'-'+String(MONTHS[m[1].toLowerCase()]).padStart(2,'0')+'-'+String(m[2]).padStart(2,'0') });
+    }
+    var out = {};
+    heads.forEach(function(h,i){
+      if(h.iso < from) return;
+      var body = t.slice(h.end, i+1<heads.length ? heads[i+1].at : t.length);
+      var lines = body.split('\n').map(function(l){ return l.replace(/^\s*\d{1,3}[\.\)]\s*/,'').replace(/\s+/g,' ').trim(); }).filter(function(l){ return l.length>3 && l.charAt(0)!=='[' && l.charAt(0)!=='#'; });
+      out[h.iso] = (out[h.iso]||[]).concat(lines);
+    });
+    return out;
+  }
+
+  function warnReason(p){
+    var c = String(p.candidate||'');
+    if(/reschedul|cancel/i.test(p.raw||'')) return 'mentions reschedule/cancel — check the doc line';
+    if((!p.time && !p.woi) || !p.company || c.length>45 || /[-–—(]/.test(c)) return 'could not read this line fully — check it';
+    return '';
+  }
+
+  async function dayRows(date){
+    if(date === state.date) return (state.rows||[]).slice();
+    if(!API_BASE_URL) return [];
+    var r = await apiCall('calls', {qs:'date='+encodeURIComponent(date)});
+    return (r && r.rows) || [];
+  }
+
+  async function buildPlan(text){
+    var from = todayDateString();
+    var secs = sections(text, from), dates = Object.keys(secs).sort(), plan = { from:from, days:[], docLines:0 };
+    if(!dates.length) return plan;
+    for(var i=0;i<dates.length;i++){
+      var d = dates[i], lines = secs[d];
+      if(!lines.length) continue;
+      var parsed = [];
+      try{ parsed = parseImportText(lines.join('\n'), d, '1st') || []; }catch(e){ parsed = []; }
+      parsed = parsed.filter(function(p){ return p && p.candidate; });
+      if(!parsed.length) continue;
+      var existing = await dayRows(d);
+      var used = {}, day = { date:d, docCount:parsed.length, fresh:[], same:0, changed:[], onlyApp:0 };
+      var seenKey = {};
+      day.dupes = 0;
+      parsed.forEach(function(p){
+        var dk = String(p.candidate||'').trim().toLowerCase()+'|'+ck(p.company)+'|'+nk(p.time);
+        if(seenKey[dk]){ day.dupes++; return; }
+        seenKey[dk] = 1;
+        var ex = findExistingCallMatch(p, existing);
+        if(!ex){ day.fresh.push({ p:p, warn: warnReason(p) }); return; }
+        used[ex.id] = 1;
+        var diffs = [];
+        if(!p.woi && !ex.woi && p.time && ex.time && nk(p.time)!==nk(ex.time)) diffs.push('time: doc '+p.time+' · app '+ex.time);
+        if(p.company && ex.company && ck(p.company)!==ck(ex.company)) diffs.push('company: doc '+p.company+' · app '+ex.company);
+        var explicit = !(p.doubts||[]).some(function(x){ return /Round wasn.t stated/.test(x); });
+        if(explicit && p.round && ex.round && rk(p.round)!==rk(ex.round)) diffs.push('round: doc '+p.round+' · app '+ex.round);
+        if(diffs.length) day.changed.push({ p:p, ex:ex, diffs:diffs }); else day.same++;
+      });
+      day.onlyApp = existing.filter(function(r){ return r && r.candidate && !used[r.id]; }).length;
+      plan.days.push(day); plan.docLines += parsed.length;
+    }
+    return plan;
+  }
+
+  function planHtml(){
+    var P = S.plan; if(!P) return '';
+    if(!P.days.length) return '<div style="opacity:.75;font-size:13px;padding:8px 0">No calls from '+esc(fmtDate(P.from))+' onwards were found in that text.</div>';
+    var tot = P.days.reduce(function(a,d){ return a+d.fresh.length; },0);
+    var out = '<div style="font-size:13px;margin:6px 0">'+P.docLines+' calls in the doc from '+esc(fmtDate(P.from))+' on · <b>'+tot+' new</b> · '+P.days.reduce(function(a,d){return a+d.same;},0)+' already in the app · '+P.days.reduce(function(a,d){return a+d.changed.length;},0)+' differ</div>';
+    P.days.forEach(function(d,di){
+      out += '<details '+(d.fresh.length||d.changed.length?'open':'')+' style="border-top:1px solid var(--border,#2a2f3a);padding:6px 0"><summary style="cursor:pointer;font-size:13px"><b>'+esc(fmtDate(d.date))+'</b> — '+d.docCount+' in doc · <b>'+d.fresh.length+' new</b> · '+d.same+' same'+(d.changed.length?' · <span style="color:var(--amber,#e8a33d)">'+d.changed.length+' differ</span>':'')+(d.onlyApp?' · '+d.onlyApp+' only in app':'')+(d.dupes?' · '+d.dupes+' repeated in doc':'')+'</summary>';
+      d.fresh.forEach(function(f,fi){
+        var p = f.p;
+        out += '<label style="display:flex;gap:8px;align-items:flex-start;padding:5px 2px;font-size:13px"><input type="checkbox" data-d14="'+di+'|'+fi+'" '+(S.sel[di+'|'+fi]?'checked':'')+'><span><b>'+esc(p.time||'no time')+'</b> · '+esc(p.candidate)+' · '+esc(p.company||'?')+' · '+esc(p.round||'')+(p.country?' · '+esc(p.country):'')+(p.woi?' · waiting for invite':'')+(f.warn?' <span style="color:var(--amber,#e8a33d)">⚠ '+esc(f.warn)+'</span>':'')+'</span></label>';
+      });
+      d.changed.forEach(function(c){
+        out += '<div style="font-size:12.5px;padding:4px 2px 4px 26px;opacity:.85">≠ <b>'+esc(c.p.candidate)+'</b> — '+esc(c.diffs.join('; '))+' <i>(not changed)</i></div>';
+      });
+      out += '</details>';
+    });
+    return out;
+  }
+
+  function paint(){
+    if(!el) return;
+    var btn = 'padding:8px 12px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer;font-size:13px';
+    var nSel = S.plan ? Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length : 0;
+    el.querySelector('.d14-body').innerHTML =
+      '<div style="font-size:12px;opacity:.75">Paste your Google Doc link, then check it. Nothing is saved until you tick calls and press Add. Calls already in the app are never changed or removed.</div>'+
+      '<input class="d14-url" type="text" value="'+esc(S.url)+'" placeholder="https://docs.google.com/document/d/…" autocomplete="off" style="padding:8px;border-radius:8px;width:100%;box-sizing:border-box">'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button type="button" class="d14-fetch" style="'+btn+'" '+(S.busy?'disabled':'')+'>'+(S.busy?'Reading…':'📄 Check the doc')+'</button><span style="font-size:12px;opacity:.7">The doc must be shared as “Anyone with the link can view”.</span></div>'+
+      '<details '+(S.err?'open':'')+' style="font-size:12px"><summary style="cursor:pointer;opacity:.8">…or paste the doc text instead</summary><textarea class="d14-paste" placeholder="Copy from the doc and paste here" style="width:100%;box-sizing:border-box;min-height:90px;margin-top:6px;border-radius:8px;padding:8px">'+esc(S.paste)+'</textarea><button type="button" class="d14-usepaste" style="'+btn+';margin-top:6px">Check pasted text</button></details>'+
+      (S.err?'<div style="color:var(--coral,#f66);font-size:13px">'+esc(S.err)+'</div>':'')+
+      (S.msg?'<div style="font-size:13px;color:var(--teal,#4fd1b0);white-space:pre-line">'+esc(S.msg)+'</div>':'')+
+      planHtml()+
+      (S.plan && S.plan.days.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="d14-apply" style="'+btn+';background:var(--teal-dim,rgba(80,200,160,.18))" '+((S.applying||!nSel)?'disabled':'')+'>'+(S.applying?'Adding…':'Add '+nSel+' selected call'+(nSel===1?'':'s'))+'</button><button type="button" class="d14-all" style="'+btn+'">Select all new</button><button type="button" class="d14-none" style="'+btn+'">Select none</button></div>' : '');
+  }
+
+  function selectDefaults(){
+    S.sel = {};
+    (S.plan ? S.plan.days : []).forEach(function(d,di){ d.fresh.forEach(function(f,fi){ S.sel[di+'|'+fi] = !f.warn; }); });
+  }
+
+  async function runPlan(text){
+    S.lastText = text;
+    S.busy = true; S.err = ''; S.msg = ''; S.plan = null; paint();
+    try{
+      S.plan = await buildPlan(text);
+      selectDefaults();
+      S.msg = '';
+    }catch(e){ S.err = 'Could not read the doc: '+((e&&e.message)||e); }
+    S.busy = false; paint();
+  }
+
+  async function fetchDoc(){
+    var info = parseLink(S.url);
+    if(!info){ S.err = 'That does not look like a Google Doc link.'; paint(); return; }
+    S.busy = true; S.err = ''; S.msg = ''; paint();
+    try{
+      var r = await apiCall('gdoc_fetch', {qs:'id='+encodeURIComponent(info.id)+(info.tab?'&tab='+encodeURIComponent(info.tab):'')+'&from='+encodeURIComponent(todayDateString())});
+      try{ saveAppSetting(KEY, S.url).catch(function(){}); }catch(e){}
+      S.busy = false;
+      await runPlan((r && r.text) || '');
+      if(S.plan && !S.plan.days.length && !S.err){ S.msg = 'The doc was read (' + ((r&&r.sections)||0) + ' day section(s) from today on) but no calls were found.'; paint(); }
+    }catch(e){
+      S.busy = false; S.err = (e && e.message) || 'Could not read the doc.'; paint();
+    }
+  }
+
+  async function apply(){
+    if(S.applying) return;
+    var jobs = [];
+    S.plan.days.forEach(function(d,di){
+      var rows = [];
+      d.fresh.forEach(function(f,fi){ if(S.sel[di+'|'+fi]) rows.push(f.p); });
+      if(rows.length) jobs.push({ date:d.date, rows:rows });
+    });
+    if(!jobs.length) return;
+    S.applying = true; S.err = ''; S.msg = ''; paint();
+    var lines = [], failed = false;
+    for(var i=0;i<jobs.length;i++){
+      var j = jobs[i];
+      try{
+        if(j.date === state.date){
+          await createBackup('pre-gdoc-sync', j.date, state.rows);
+          var fresh = j.rows.filter(function(p){ return !findExistingCallMatch(p, state.rows); });
+          var routed = await autoRouteRows(fresh.map(function(p){ var r = Object.assign({}, p); delete r._targetDate; return r; }), state.rows);
+          state.rows = state.rows.concat(routed);
+          markDirty();
+          await saveAllChanges();
+          if(state.saveError) throw new Error(state.saveError);
+          lines.push('✓ '+fmtDate(j.date)+': '+routed.length+' added'+(fresh.length<j.rows.length?' ('+(j.rows.length-fresh.length)+' already there)':''));
+        } else {
+          var cur = await dayRows(j.date);
+          await createBackup('pre-gdoc-sync', j.date, cur);
+          var fr = j.rows.filter(function(p){ return !findExistingCallMatch(p, cur); });
+          var rt = await autoRouteRows(fr.map(function(p){ var r = Object.assign({}, p); delete r._targetDate; return r; }), cur);
+          var merged = cur.concat(rt);
+          await apiCall('calls', {method:'POST', body:{date:j.date, rows:merged}});
+          var chk = await dayRows(j.date);
+          if(chk.length < merged.length) throw new Error('Save could not be verified: the server shows '+chk.length+' calls, expected '+merged.length+'.');
+          lines.push('✓ '+fmtDate(j.date)+': '+rt.length+' added'+(fr.length<j.rows.length?' ('+(j.rows.length-fr.length)+' already there)':''));
+        }
+      }catch(e){
+        failed = true;
+        lines.push('⚠ '+fmtDate(j.date)+': NOT saved — '+((e&&e.message)||e));
+      }
+    }
+    S.applying = false;
+    S.msg = lines.join('\n');
+    if(failed) S.err = 'Some days failed — see above. Nothing was lost; run the check again to retry.';
+    try{ _allRowsAcrossDatesCacheAt = 0; }catch(e){}
+    try{ render(); }catch(e){}
+    await runPlanKeepMsg();
+  }
+  async function runPlanKeepMsg(){
+    var keepMsg = S.msg, keepErr = S.err, src = S.lastText;
+    if(!src){ paint(); return; }
+    try{ S.plan = await buildPlan(src); selectDefaults(); }catch(e){}
+    S.msg = keepMsg; S.err = keepErr; paint();
+  }
+
+  async function openS(){
+    closeS();
+    S = { url:S.url||'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, sel:{} , lastText:''};
+    try{ S.url = (state.appSettings && state.appSettings[KEY]) || ''; }catch(e){}
+    el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+    el.innerHTML = '<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:640px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:16px;gap:10px"><div style="display:flex;align-items:center"><div style="font-weight:700;font-size:15px;flex:1">📄 Sync Google Doc</div><button type="button" class="d14-x" style="background:transparent;border:0;color:inherit;font-size:18px;cursor:pointer" aria-label="Close">✕</button></div><div class="d14-body" style="overflow:auto;display:flex;flex-direction:column;gap:10px"></div></div>';
+    document.body.appendChild(el);
+    paint();
+  }
+
+  document.addEventListener('click', function(e){
+    if(!el) return;
+    var t = e.target;
+    if(t===el || (t.classList && t.classList.contains('d14-x'))) return closeS();
+    if(t.classList.contains('d14-fetch')){ S.url = ($('.d14-url', el)||{}).value || S.url; return fetchDoc(); }
+    if(t.classList.contains('d14-usepaste')){ S.paste = ($('.d14-paste', el)||{}).value || ''; return runPlan(S.paste); }
+    if(t.classList.contains('d14-apply')) return apply();
+    if(t.classList.contains('d14-all')){ if(S.plan) S.plan.days.forEach(function(d,di){ d.fresh.forEach(function(f,fi){ S.sel[di+'|'+fi] = true; }); }); return paint(); }
+    if(t.classList.contains('d14-none')){ S.sel = {}; return paint(); }
+    if(t.dataset && t.dataset.d14){ S.sel[t.dataset.d14] = t.checked; var b = $('.d14-apply', el); if(b){ var n = Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length; b.disabled = !n; b.textContent = 'Add '+n+' selected call'+(n===1?'':'s'); } }
+  });
+  document.addEventListener('input', function(e){
+    if(!el) return;
+    if(e.target.classList.contains('d14-url')) S.url = e.target.value;
+    if(e.target.classList.contains('d14-paste')) S.paste = e.target.value;
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && el) closeS(); });
+  window.d14Open = openS;
+
+  function injectMenu(){
+    var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD14', dd) || (typeof CURRENT_ROLE!=='undefined' && CURRENT_ROLE!=='admin')) return;
+    var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD14'; b.type='button'; b.title='Pull upcoming calls from the Google Doc tracker (preview first)'; b.innerHTML='📄 Sync Google Doc';
+    b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} openS(); });
+    host.appendChild(b);
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d13){ return setTimeout(install,150); }
+    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectMenu(); }catch(e){} return r; };
+    var prev = window.d2ExtraCmds;
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['sync google doc tracker upcoming calls import','Sync Google Doc','Pull upcoming calls from the tracker doc',openS,'📄']]); };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
