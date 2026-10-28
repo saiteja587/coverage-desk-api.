@@ -8023,7 +8023,7 @@ function renderQuickSearchModal(){
 // candidate/company search, debounced and capped at 6 results so it never
 // turns into a second full search panel.
 const QUICK_JUMP_COMMANDS = [
-  { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
+  { label: '💬 Ask Desk', keywords: 'ask chat question assistant bot ai alt+c', action: ()=>{ closeAllPanels(); setTimeout(()=>{ if(window.openAskDesk) window.openAskDesk(); }, 0); } },
   { label: '📥 Import calls', keywords: 'import paste new calls', action: ()=>{ closeAllPanels(); state.showImport = true; } },
   { label: '🏆 Closures', keywords: 'closures closure job offers placements', action: ()=>{ openOnlyPanel('showClosures'); } },
   { label: '🏢 Onsite interviews', keywords: 'onsite on-site in person face to face interviews', action: ()=>{ openOnlyPanel('showOnsites'); if(!state.onsiteDate) state.onsiteDate = todayDateString(); if(!state.onsitesLoaded) loadOnsites(); } },
@@ -10180,6 +10180,8 @@ function renderHelpPanel(){
     <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:20px">
       <tbody>
         <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">1 – 5</td><td style="padding:7px 4px">Switch between All Calls / 1st Round / 2nd Round &amp; Above / Doubts / Rescheduled tabs</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">Alt + C</td><td style="padding:7px 4px">Open the Ask Desk chat (works even while typing)</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">Ctrl/Cmd + K</td><td style="padding:7px 4px">Search everything and jump to any screen</td></tr>
         <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">Ctrl/Cmd + S</td><td style="padding:7px 4px">Save changes (admin only)</td></tr>
         <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-family:var(--mono);color:var(--teal)">↑ / ↓</td><td style="padding:7px 4px">While editing a text field (Time, Candidate, Company, Round, Duration), jumps to the same field on the row above/below</td></tr>
       </tbody>
@@ -10189,7 +10191,7 @@ function renderHelpPanel(){
       <tbody>
         <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">📊 Reports</td><td style="padding:7px 4px">Search, Calendar, Summary, All Dates, Students Master, Team Sync, Missed Messages check, backups reminder, this Help panel</td></tr>
         <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">🔧 Admin</td><td style="padding:7px 4px">Team roster, Users, Incentives, Backups, Remove Duplicates, Clear All calls — account/data maintenance, not day-to-day lookups</td></tr>
-        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">🔔 Notifications</td><td style="padding:7px 4px">Every cross-date report lives here as a tab: absences, repeat candidates/clients, client reliability, trends, WOI aging, workload heatmap, weekly recap</td></tr>
+        <tr style="border-top:1px solid var(--border-soft)"><td style="padding:7px 4px;font-weight:600;white-space:nowrap">👥 Returning candidates</td><td style="padding:7px 4px">Every cross-date report lives here as a tab: absences, repeat candidates/clients, client reliability, trends, WOI aging, workload heatmap, weekly recap</td></tr>
       </tbody>
     </table>
     <div class="hint" style="margin-top:16px">Swipe a row left/right on mobile to quick-assign or delete. Long lists of tabs/menus scroll — swipe them if something looks cut off.</div>
@@ -16730,6 +16732,13 @@ window.addEventListener('keydown', (e)=>{
       if(!state.assessmentsLoaded || state.assessmentsError) loadAssessments();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setTimeout(()=>{ const el = document.getElementById('assessImportText'); if(el) el.focus(); }, 40);
+      return;
+    }
+    // Alt+C = open the Ask Desk chat (the AI / exact-answer bot) from anywhere.
+    if(k==='c' && e.altKey && !ctrlOrCmd){
+      e.preventDefault();
+      state.showQuickJump = false; state.showImportMenu = false; state.showMoreMenu = false;
+      if(window.openAskDesk) window.openAskDesk();
       return;
     }
     if(k==='o' && e.altKey && CURRENT_ROLE !== 'user' && CURRENT_ROLE !== 'team_lead'){
