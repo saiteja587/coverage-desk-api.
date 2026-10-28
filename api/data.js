@@ -272,13 +272,14 @@ module.exports = async (req, res) => {
     if (resource === 'results') return await handleResults(req, res, db);
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
+    if (resource === 'gdoc_fetch') return await handleGdocFetch(req, res, auth);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
     if (resource === 'chat') {
       if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_lib/ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
     }
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|gdoc_fetch|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -306,6 +307,58 @@ module.exports = async (req, res) => {
     try { await db.end(); } catch (e) { /* already closed or never opened */ }
   }
 };
+
+// ---------- gdoc_fetch: read-only fetch of a shared Google Doc as plain text ----------
+// Used by the app's "Sync Google Doc" screen. The doc must be shared as "Anyone with the link can view" —
+// this fetches the public text export, it never uses anyone's Google login. Admin only. Only docs.google.com
+// document ids are accepted (no arbitrary URLs), and only date sections from `from` onwards are returned so
+// the reply stays small even for a huge tracker doc.
+const GDOC_MONTHS = { january:1, february:2, march:3, april:4, may:5, june:6, july:7, august:8, september:9, october:10, november:11, december:12 };
+function gdocTrimFromDate(text, fromIso) {
+  const re = /^[ \t*]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim;
+  const heads = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const iso = m[3] + '-' + String(GDOC_MONTHS[m[1].toLowerCase()]).padStart(2, '0') + '-' + String(m[2]).padStart(2, '0');
+    heads.push({ idx: m.index, iso });
+  }
+  if (!heads.length) return { text, sections: 0 };
+  const parts = [];
+  heads.forEach((h, i) => {
+    if (h.iso >= fromIso) parts.push(text.slice(h.idx, i + 1 < heads.length ? heads[i + 1].idx : text.length));
+  });
+  return { text: parts.join('\n'), sections: parts.length };
+}
+async function handleGdocFetch(req, res, auth) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
+  if (auth.role !== 'admin') return res.status(403).json({ error: 'Only an admin can sync a Google Doc.' });
+  const id = String((req.query && req.query.id) || '');
+  const tab = String((req.query && req.query.tab) || '');
+  const from = String((req.query && req.query.from) || '');
+  if (!/^[A-Za-z0-9_-]{20,80}$/.test(id)) return res.status(400).json({ error: 'That does not look like a Google Doc id.', code: 'bad_id' });
+  if (tab && !/^t\.[A-Za-z0-9]{1,40}$/.test(tab)) return res.status(400).json({ error: 'Bad tab id.', code: 'bad_tab' });
+  if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) return res.status(400).json({ error: 'Bad from date.', code: 'bad_from' });
+  const url = 'https://docs.google.com/document/d/' + id + '/export?format=txt' + (tab ? '&tab=' + tab : '');
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 9000);
+  let upstream;
+  try {
+    upstream = await fetch(url, { redirect: 'follow', signal: ctl.signal, headers: { 'User-Agent': 'coverage-desk-sync' } });
+  } catch (e) {
+    clearTimeout(timer);
+    return res.status(504).json({ error: 'Google did not answer in time. Try again.', code: 'timeout' });
+  }
+  clearTimeout(timer);
+  const type = String(upstream.headers.get('content-type') || '');
+  if (!upstream.ok || !/text\/plain/i.test(type)) {
+    return res.status(403).json({ error: 'Could not read the doc. Make sure it is shared as "Anyone with the link can view", or paste its text instead.', code: 'not_public' });
+  }
+  let text = await upstream.text();
+  if (text.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'The doc is too large to read.', code: 'too_big' });
+  text = text.replace(/^\uFEFF/, '');
+  const out = from ? gdocTrimFromDate(text, from) : { text, sections: 0 };
+  return res.status(200).json({ text: out.text, sections: out.sections, totalChars: text.length });
+}
 
 // ---------- users (admin management) ----------
 async function handleUsers(req, res, db) {
