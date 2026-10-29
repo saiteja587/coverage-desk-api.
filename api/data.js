@@ -233,6 +233,7 @@ module.exports = async (req, res) => {
       const ok = (req.headers['authorization'] || '') === 'Bearer ' + expected || (req.query && req.query.secret) === expected;
       if (!ok) return res.status(401).json({ error: 'Unauthorized' });
       const r = await gdocSyncStore(db);
+      if (r && r.ok && r.changed && r.added > 0) r.push = await gdocPushNotify(db, r.added);
       return res.status(200).json(r);
     }
 
@@ -402,6 +403,38 @@ function gdocParseLink(u) {
 }
 // Reads the doc and stores it. Returns { ok, changed, error? }. Never throws for expected failures —
 // the failure is recorded in last_error so the inbox screen can show it (no silent failure).
+// Approximate count of call-like lines (lines with a clock time) that are in the new text but not in the old.
+function gdocCountAddedCalls(oldText, newText) {
+  const norm = (l) => String(l).replace(/\\\*|\*+/g, '').replace(/&#10;|&nbsp;|&#160;|&#13;/g, ' ').replace(/^\s*\d{1,3}[.)]\s*/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const seen = new Set(String(oldText).split('\n').map(norm).filter(Boolean));
+  let n = 0;
+  String(newText).split('\n').map(norm).filter(Boolean).forEach((l) => {
+    if (/\d{1,2}([:.]\d{2})?\s*(am|pm)/i.test(l) && !seen.has(l)) { seen.add(l); n++; }
+  });
+  return n;
+}
+// Sends a Web Push to every subscribed device. Silent no-op when push is not set up yet.
+async function gdocPushNotify(db, added) {
+  try {
+    if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return { sent: 0, note: 'push not configured' };
+    let webpush; try { webpush = require('web-push'); } catch (e) { return { sent: 0, note: 'web-push not installed' }; }
+    webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+    const [subs] = await db.query('SELECT id, endpoint, p256dh, auth_key FROM push_subscriptions');
+    const payload = JSON.stringify({
+      title: '📄 Google Doc synced',
+      body: added + ' new call line' + (added === 1 ? '' : 's') + ' found in the doc. Open the Google Doc inbox to review.',
+      tag: 'cd-gdoc',
+      data: { kind: 'gdoc' },
+    });
+    let sent = 0; const dead = [];
+    for (const sub of subs) {
+      try { await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } }, payload); sent++; }
+      catch (err) { if (err && (err.statusCode === 404 || err.statusCode === 410)) dead.push(sub.id); else console.error('gdoc push failed', sub.id, err && err.message); }
+    }
+    if (dead.length) { try { await db.query('DELETE FROM push_subscriptions WHERE id IN (?)', [dead]); } catch (e) {} }
+    return { sent };
+  } catch (e) { console.error('gdocPushNotify', e && e.message); return { sent: 0, note: 'error' }; }
+}
 async function gdocSyncStore(db, urlOverride) {
   await gdocEnsureTable(db);
   let url = String(urlOverride || '').trim();
@@ -418,14 +451,19 @@ async function gdocSyncStore(db, urlOverride) {
   const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10); // IST
   const trimmed = gdocTrimFromDate(text, today).text;
   const hash = require('crypto').createHash('sha1').update(trimmed).digest('hex');
-  const [cur] = await db.query('SELECT content_hash FROM gdoc_inbox WHERE id = 1');
+  const [cur] = await db.query('SELECT content_hash, doc_text FROM gdoc_inbox WHERE id = 1');
   const changed = !cur.length || cur[0].content_hash !== hash;
+  let added = 0;
+  if (changed && cur.length && cur[0].doc_text) added = gdocCountAddedCalls(cur[0].doc_text, trimmed);
   if (changed) {
+    try {
+      await db.query("INSERT INTO app_settings (setting_key, setting_value) VALUES ('gdoc_last_added', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)", [JSON.stringify({ hash, added, at: new Date().toISOString() })]);
+    } catch (e) { /* best-effort */ }
     await db.query('UPDATE gdoc_inbox SET doc_url = ?, doc_text = ?, content_hash = ?, fetched_at = UTC_TIMESTAMP(), changed_at = UTC_TIMESTAMP(), last_error = NULL WHERE id = 1', [url, trimmed, hash]);
   } else {
     await db.query('UPDATE gdoc_inbox SET doc_url = ?, fetched_at = UTC_TIMESTAMP(), last_error = NULL WHERE id = 1', [url]);
   }
-  return { ok: true, changed };
+  return { ok: true, changed, added };
 }
 async function handleGdocInbox(req, res, db, auth) {
   if (auth.role !== 'admin') return res.status(403).json({ error: 'Only an admin can use the Google Doc inbox.' });
@@ -442,6 +480,11 @@ async function handleGdocInbox(req, res, db, auth) {
       url: r.doc_url || null,
       dismissed: dismissedOf(r.dismissed)
     };
+    try {
+      const [la] = await db.query("SELECT setting_value FROM app_settings WHERE setting_key = 'gdoc_last_added'");
+      const j = la.length ? JSON.parse(la[0].setting_value) : null;
+      out.added = (j && j.hash === out.hash) ? (j.added || 0) : 0;
+    } catch (e) { out.added = 0; }
     if (!(req.query && req.query.meta)) out.text = r.doc_text || '';
     return res.status(200).json(out);
   }
