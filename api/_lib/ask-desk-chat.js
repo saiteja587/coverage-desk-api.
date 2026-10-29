@@ -48,6 +48,7 @@ function chatSystemPrompt(today) {
     'Use the "period" argument for relative dates (today, this_week, last_month...) instead of working out dates yourself.',
     'Candidate names in tool results appear as tokens like Candidate_3. Always refer to people by those exact tokens, never invent names. Staff and company names are real.',
     'Answer in 1-6 short lines. Give exact numbers from the tool results. Do not mention tools or JSON. You cannot change data; if asked to assign, delete or edit anything, say you can only look things up.',
+    'NAME RULE: if a tool says no candidate matches the name the user typed, first tell them plainly that name is not on file. If the result has did_you_mean entries, then ask "Did you mean ...?" naming the closest one or two (with company and last call date) and wait for the user to confirm. A did_you_mean entry is only a guess: do not state call details about that person, and do not run more searches about them, until the user confirms. If there are no did_you_mean entries, do NOT repeat the search with only the company or other filters to find a substitute; you may offer, in one line, to list that company\'s calls.',
     'If the question is unclear, ask one short clarifying question.',
   ].join('\n');
 }
