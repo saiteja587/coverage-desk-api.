@@ -2823,6 +2823,7 @@ window.cdShowNotification = cdShowNotification;
 // Tapping a notification lands on the right day with that candidate filtered.
 async function cdOpenFromNotification(data){
   if(!data) return;
+  if(data.kind === 'gdoc'){ try{ if(window.d14Open){ closeAllPanels(); window.d14Open(); } }catch(e){} return; }
   if(!data.date && !data.candidate){ try{ if(window.d8Open) window.d8Open(); }catch(e){} return; }
   try{
     if(data.date && data.date !== state.date){ await jumpToDateFromQuickSearch(data.date); if(state.date !== data.date) return; }
@@ -17314,7 +17315,7 @@ function computeSmartAlerts(allRows, today, opts){
       lf.items = lf.items.slice(0, Math.max(LIVEFEED_MAX_ITEMS, 80));
       save(); paintBell(); if(lf.open) paintPanel();
       showToast(it);
-      try{ if(!lf.muted && it.priority === 'high' && (document.hidden || !document.hasFocus())) cdShowNotification(it.title, { body: it.body, tag: it.tag || ('cd-lf-' + it.id), data: { kind: 'livefeed', id: it.id, date: it.date || '', candidate: it.candidate || '' } }); }catch(e){}
+      try{ if(!lf.muted && it.priority === 'high' && (document.hidden || !document.hasFocus())) cdShowNotification(it.title, { body: it.body, tag: it.tag || ('cd-lf-' + it.id), data: { kind: it.gdoc ? 'gdoc' : 'livefeed', id: it.id, date: it.date || '', candidate: it.candidate || '' } }); }catch(e){}
       return true;
     },
     hasSeen(id){ return !!lf.seen[id]; },
