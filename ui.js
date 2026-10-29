@@ -3210,7 +3210,7 @@ document.addEventListener('click', function(e){
   var $ = function(s,r){ return (r||document).querySelector(s); };
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-  var el = null, S = { url:'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, results:[] };
+  var el = null, S = { url:'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, results:[], dismissed:[], inbox:null, changed:false };
   var KEY = 'gdoc_sync_url';
 
   function closeS(){ if(el){ el.remove(); el = null; } }
@@ -3256,7 +3256,8 @@ document.addEventListener('click', function(e){
 
   async function buildPlan(text){
     var from = todayDateString();
-    var secs = sections(text, from), dates = Object.keys(secs).sort(), plan = { from:from, days:[], docLines:0 };
+    var secs = sections(text, from), dates = Object.keys(secs).sort(), plan = { from:from, days:[], docLines:0, hidden:0 };
+    var dis = {}; (S.dismissed||[]).forEach(function(k){ dis[k] = 1; });
     if(!dates.length) return plan;
     for(var i=0;i<dates.length;i++){
       var d = dates[i], lines = secs[d];
@@ -3274,7 +3275,11 @@ document.addEventListener('click', function(e){
         if(seenKey[dk]){ day.dupes++; return; }
         seenKey[dk] = 1;
         var ex = findExistingCallMatch(p, existing);
-        if(!ex){ day.fresh.push({ p:p, warn: warnReason(p) }); return; }
+        if(!ex){
+          var key = d+'|'+String(p.candidate||'').trim().toLowerCase()+'|'+ck(p.company)+'|'+nk(p.time);
+          if(dis[key]){ day.hidden = (day.hidden||0)+1; return; }
+          day.fresh.push({ p:p, key:key, warn: warnReason(p) }); return;
+        }
         used[ex.id] = 1;
         var diffs = [];
         if(!p.woi && !ex.woi && p.time && ex.time && nk(p.time)!==nk(ex.time)) diffs.push('time: doc '+p.time+' · app '+ex.time);
@@ -3284,7 +3289,7 @@ document.addEventListener('click', function(e){
         if(diffs.length) day.changed.push({ p:p, ex:ex, diffs:diffs }); else day.same++;
       });
       day.onlyApp = existing.filter(function(r){ return r && r.candidate && !used[r.id]; }).length;
-      plan.days.push(day); plan.docLines += parsed.length;
+      plan.days.push(day); plan.docLines += parsed.length; plan.hidden += (day.hidden||0);
     }
     return plan;
   }
@@ -3308,19 +3313,45 @@ document.addEventListener('click', function(e){
     return out;
   }
 
+  function ago(iso){
+    if(!iso) return '';
+    try{ return new Date(iso).toLocaleString(undefined,{weekday:'short',hour:'numeric',minute:'2-digit',day:'numeric',month:'short'}); }catch(e){ return ''; }
+  }
+  function statusHtml(){
+    var I = S.inbox, out = '';
+    if(!I || !I.fetchedAt){
+      out = 'Not checked yet. Press “Check the doc now”.';
+    } else {
+      out = 'Last checked: <b>'+esc(ago(I.fetchedAt))+'</b>'+(I.changedAt?' · doc last changed: <b>'+esc(ago(I.changedAt))+'</b>':'');
+    }
+    var errHtml = (I && I.lastError) ? '<div style="color:var(--coral,#f66);margin-top:3px">⚠ The last check failed: '+esc(I.lastError)+' (showing the previous copy)</div>' : '';
+    return '<div style="font-size:12.5px;padding:8px 10px;border-radius:8px;background:rgba(127,127,127,.12)">'+out+errHtml+'</div>';
+  }
+  async function loadInbox(){
+    var r = await apiCall('gdoc_inbox', {});
+    S.inbox = r || null;
+    S.dismissed = (r && r.dismissed) || [];
+    if(r && r.url && !S.url) S.url = r.url;
+    S.changed = false;
+    try{ localStorage.setItem('cd-gdoc-seen', (r && r.hash) || ''); }catch(e){}
+    try{ var b = document.getElementById('openD14'); if(b) b.innerHTML = '📄 Google Doc inbox'; }catch(e){}
+    return r;
+  }
+
   function paint(){
     if(!el) return;
     var btn = 'padding:8px 12px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer;font-size:13px';
     var nSel = S.plan ? Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length : 0;
     el.querySelector('.d14-body').innerHTML =
-      '<div style="font-size:12px;opacity:.75">Paste your Google Doc link, then check it. Nothing is saved until you tick calls and press Add. Calls already in the app are never changed or removed.</div>'+
-      '<input class="d14-url" type="text" value="'+esc(S.url)+'" placeholder="https://docs.google.com/document/d/…" autocomplete="off" style="padding:8px;border-radius:8px;width:100%;box-sizing:border-box">'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button type="button" class="d14-fetch" style="'+btn+'" '+(S.busy?'disabled':'')+'>'+(S.busy?'Reading…':'📄 Check the doc')+'</button><span style="font-size:12px;opacity:.7">The doc must be shared as “Anyone with the link can view”.</span></div>'+
+      '<div style="font-size:12px;opacity:.75">This is a waiting room. The doc is checked every hour and new calls wait here. Nothing goes into your main calls until you tick calls and press Add. Calls already in the app are never changed or removed.</div>'+
+      statusHtml()+
+      '<details '+(S.url?'':'open')+' style="font-size:12px"><summary style="cursor:pointer;opacity:.8">Google Doc link'+(S.url?' (saved)':'')+'</summary><input class="d14-url" type="text" value="'+esc(S.url)+'" placeholder="https://docs.google.com/document/d/…" autocomplete="off" style="padding:8px;border-radius:8px;width:100%;box-sizing:border-box;margin-top:6px"><div style="opacity:.7;margin-top:4px">The doc must be shared as “Anyone with the link can view”.</div></details>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button type="button" class="d14-fetch" style="'+btn+'" '+(S.busy?'disabled':'')+'>'+(S.busy?'Reading…':'🔄 Check the doc now')+'</button>'+(S.dismissed.length?'<button type="button" class="d14-restore" style="'+btn+'">Show '+S.dismissed.length+' dismissed again</button>':'')+'</div>'+
       '<details '+(S.err?'open':'')+' style="font-size:12px"><summary style="cursor:pointer;opacity:.8">…or paste the doc text instead</summary><textarea class="d14-paste" placeholder="Copy from the doc and paste here" style="width:100%;box-sizing:border-box;min-height:90px;margin-top:6px;border-radius:8px;padding:8px">'+esc(S.paste)+'</textarea><button type="button" class="d14-usepaste" style="'+btn+';margin-top:6px">Check pasted text</button></details>'+
       (S.err?'<div style="color:var(--coral,#f66);font-size:13px">'+esc(S.err)+'</div>':'')+
       (S.msg?'<div style="font-size:13px;color:var(--teal,#4fd1b0);white-space:pre-line">'+esc(S.msg)+'</div>':'')+
       planHtml()+
-      (S.plan && S.plan.days.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="d14-apply" style="'+btn+';background:var(--teal-dim,rgba(80,200,160,.18))" '+((S.applying||!nSel)?'disabled':'')+'>'+(S.applying?'Adding…':'Add '+nSel+' selected call'+(nSel===1?'':'s'))+'</button><button type="button" class="d14-all" style="'+btn+'">Select all new</button><button type="button" class="d14-none" style="'+btn+'">Select none</button></div>' : '');
+      (S.plan && S.plan.days.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="d14-apply" style="'+btn+';background:var(--teal-dim,rgba(80,200,160,.18))" '+((S.applying||!nSel)?'disabled':'')+'>'+(S.applying?'Adding…':'Add '+nSel+' selected to main calls')+'</button><button type="button" class="d14-dismiss" style="'+btn+'" '+((S.applying||!nSel)?'disabled':'')+'>Dismiss selected</button><button type="button" class="d14-all" style="'+btn+'">Select all new</button><button type="button" class="d14-none" style="'+btn+'">Select none</button></div>' : '');
   }
 
   function selectDefaults(){
@@ -3341,17 +3372,40 @@ document.addEventListener('click', function(e){
 
   async function fetchDoc(){
     var info = parseLink(S.url);
-    if(!info){ S.err = 'That does not look like a Google Doc link.'; paint(); return; }
+    if(!info){ S.err = 'Add the Google Doc link first (open “Google Doc link” above and paste it).'; paint(); return; }
     S.busy = true; S.err = ''; S.msg = ''; paint();
     try{
-      var r = await apiCall('gdoc_fetch', {qs:'id='+encodeURIComponent(info.id)+(info.tab?'&tab='+encodeURIComponent(info.tab):'')+'&from='+encodeURIComponent(todayDateString())});
+      await apiCall('gdoc_inbox', {method:'POST', body:{action:'refresh', url:S.url}});
       try{ saveAppSetting(KEY, S.url).catch(function(){}); }catch(e){}
+      await loadInbox();
       S.busy = false;
-      await runPlan((r && r.text) || '');
-      if(S.plan && !S.plan.days.length && !S.err){ S.msg = 'The doc was read (' + ((r&&r.sections)||0) + ' day section(s) from today on) but no calls were found.'; paint(); }
+      await runPlan((S.inbox && S.inbox.text) || '');
+      if(S.plan && !S.plan.days.length && !S.err){ S.msg = 'The doc was read but no calls from today on were found.'; paint(); }
     }catch(e){
-      S.busy = false; S.err = (e && e.message) || 'Could not read the doc.'; paint();
+      S.busy = false; S.err = (e && e.message) || 'Could not read the doc.';
+      try{ await loadInbox(); }catch(x){}
+      paint();
     }
+  }
+
+  async function dismissSel(){
+    if(!S.plan) return;
+    var keys = [];
+    S.plan.days.forEach(function(d,di){ d.fresh.forEach(function(f,fi){ if(S.sel[di+'|'+fi]) keys.push(f.key); }); });
+    if(!keys.length) return;
+    S.busy = true; paint();
+    try{
+      var r = await apiCall('gdoc_inbox', {method:'POST', body:{action:'dismiss', keys:keys}});
+      S.dismissed = (r && r.dismissed) || S.dismissed.concat(keys);
+      S.msg = keys.length+' dismissed. They will not come back unless you press “Show dismissed again”.';
+    }catch(e){ S.err = 'Could not dismiss: '+((e&&e.message)||e); }
+    await runPlanKeepMsg();
+  }
+  async function restoreDismissed(){
+    S.busy = true; paint();
+    try{ await apiCall('gdoc_inbox', {method:'POST', body:{action:'restore'}}); S.dismissed = []; S.msg = 'Dismissed calls are back in the list.'; }
+    catch(e){ S.err = 'Could not restore: '+((e&&e.message)||e); }
+    await runPlanKeepMsg();
   }
 
   async function apply(){
@@ -3404,18 +3458,23 @@ document.addEventListener('click', function(e){
     var keepMsg = S.msg, keepErr = S.err, src = S.lastText;
     if(!src){ paint(); return; }
     try{ S.plan = await buildPlan(src); selectDefaults(); }catch(e){}
-    S.msg = keepMsg; S.err = keepErr; paint();
+    S.busy = false; S.msg = keepMsg; S.err = keepErr; paint();
   }
 
   async function openS(){
     closeS();
-    S = { url:S.url||'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, sel:{} , lastText:''};
+    S = { url:S.url||'', paste:'', busy:false, msg:'', err:'', plan:null, applying:false, sel:{} , lastText:'', dismissed:[], inbox:null, changed:S.changed };
     try{ S.url = (state.appSettings && state.appSettings[KEY]) || ''; }catch(e){}
     el = document.createElement('div');
     el.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
-    el.innerHTML = '<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:640px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:16px;gap:10px"><div style="display:flex;align-items:center"><div style="font-weight:700;font-size:15px;flex:1">📄 Sync Google Doc</div><button type="button" class="d14-x" style="background:transparent;border:0;color:inherit;font-size:18px;cursor:pointer" aria-label="Close">✕</button></div><div class="d14-body" style="overflow:auto;display:flex;flex-direction:column;gap:10px"></div></div>';
+    el.innerHTML = '<div style="background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);border-radius:14px;max-width:640px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:16px;gap:10px"><div style="display:flex;align-items:center"><div style="font-weight:700;font-size:15px;flex:1">📄 Google Doc inbox</div><button type="button" class="d14-x" style="background:transparent;border:0;color:inherit;font-size:18px;cursor:pointer" aria-label="Close">✕</button></div><div class="d14-body" style="overflow:auto;display:flex;flex-direction:column;gap:10px"></div></div>';
     document.body.appendChild(el);
-    paint();
+    S.busy = true; paint();
+    try{
+      await loadInbox();
+      S.busy = false;
+      if(S.inbox && S.inbox.text) await runPlan(S.inbox.text); else paint();
+    }catch(e){ S.busy = false; S.err = 'Could not open the inbox: '+((e&&e.message)||e); paint(); }
   }
 
   document.addEventListener('click', function(e){
@@ -3425,9 +3484,11 @@ document.addEventListener('click', function(e){
     if(t.classList.contains('d14-fetch')){ S.url = ($('.d14-url', el)||{}).value || S.url; return fetchDoc(); }
     if(t.classList.contains('d14-usepaste')){ S.paste = ($('.d14-paste', el)||{}).value || ''; return runPlan(S.paste); }
     if(t.classList.contains('d14-apply')) return apply();
+    if(t.classList.contains('d14-dismiss')) return dismissSel();
+    if(t.classList.contains('d14-restore')) return restoreDismissed();
     if(t.classList.contains('d14-all')){ if(S.plan) S.plan.days.forEach(function(d,di){ d.fresh.forEach(function(f,fi){ S.sel[di+'|'+fi] = true; }); }); return paint(); }
     if(t.classList.contains('d14-none')){ S.sel = {}; return paint(); }
-    if(t.dataset && t.dataset.d14){ S.sel[t.dataset.d14] = t.checked; var b = $('.d14-apply', el); if(b){ var n = Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length; b.disabled = !n; b.textContent = 'Add '+n+' selected call'+(n===1?'':'s'); } }
+    if(t.dataset && t.dataset.d14){ S.sel[t.dataset.d14] = t.checked; var b = $('.d14-apply', el); if(b){ var n = Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length; b.disabled = !n; b.textContent = 'Add '+n+' selected to main calls'; var dm = $('.d14-dismiss', el); if(dm) dm.disabled = !n; } }
   });
   document.addEventListener('input', function(e){
     if(!el) return;
@@ -3440,15 +3501,25 @@ document.addEventListener('click', function(e){
   function injectMenu(){
     var dd = $('.more-menu-dropdown.d6'); if(!dd || $('#openD14', dd) || (typeof CURRENT_ROLE!=='undefined' && CURRENT_ROLE!=='admin')) return;
     var host = $('.d6-grp[data-name="Today"] .d6-body', dd) || $('.d6-body', dd); if(!host) return;
-    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD14'; b.type='button'; b.title='Pull upcoming calls from the Google Doc tracker (preview first)'; b.innerHTML='📄 Sync Google Doc';
+    var b = document.createElement('button'); b.className='more-menu-item'; b.id='openD14'; b.type='button'; b.title='Review upcoming calls found in the Google Doc tracker (nothing is added until you approve)'; b.innerHTML='📄 Google Doc inbox'+(S.changed?' <span style="color:var(--amber,#e8a33d)">● doc updated</span>':'');
     b.addEventListener('click', function(){ try{ state.showMoreMenu=false; render(); }catch(x){} openS(); });
     host.appendChild(b);
   }
   function install(){
     if(typeof window.render!=='function' || !window.__d13){ return setTimeout(install,150); }
     var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ injectMenu(); }catch(e){} return r; };
+    try{
+      if(typeof CURRENT_ROLE!=='undefined' && CURRENT_ROLE==='admin' && API_BASE_URL){
+        var chk = function(){ apiCall('gdoc_inbox', {qs:'meta=1'}).then(function(m){
+          var seen = ''; try{ seen = localStorage.getItem('cd-gdoc-seen') || ''; }catch(e){}
+          S.changed = !!(m && m.hash && m.hash !== seen);
+          var b = document.getElementById('openD14'); if(b) b.innerHTML = '📄 Google Doc inbox'+(S.changed?' <span style="color:var(--amber,#e8a33d)">● doc updated</span>':'');
+        }).catch(function(){}); };
+        setTimeout(chk, 4000); setInterval(chk, 3600000);
+      }
+    }catch(e){}
     var prev = window.d2ExtraCmds;
-    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['sync google doc tracker upcoming calls import','Sync Google Doc','Pull upcoming calls from the tracker doc',openS,'📄']]); };
+    window.d2ExtraCmds = function(){ var base = prev ? prev() : []; return base.concat([['sync google doc tracker upcoming calls import inbox','Google Doc inbox','Review upcoming calls from the tracker doc',openS,'📄']]); };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
