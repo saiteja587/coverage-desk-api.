@@ -3538,3 +3538,98 @@ document.addEventListener('click', function(e){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+/* ===== d15: One UI / iOS feel — tag pop-ups as sheets, swipe-down to close, light haptics ===== */
+;(function(){
+  if(window.__d15) return; window.__d15 = true;
+  var SEL = '#d2Timeline,#d2Handover,#d2Cmd,.d3-overlay,#d8,#m9,#d10,#d11,#d12,.my-name-picker-overlay';
+  var mq = window.matchMedia ? window.matchMedia('(max-width:760px)') : { matches:false };
+  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion:reduce)') : { matches:false };
+
+  function tag(n){
+    if(!n || n.nodeType!==1 || n.classList.contains('d15-ov')) return;
+    var st = n.getAttribute('style') || '';
+    var inline = n.parentNode===document.body && /position:\s*fixed;\s*inset:\s*0/.test(st) && /z-index:\s*100000/.test(st);
+    var known = false; try{ known = n.matches(SEL); }catch(e){}
+    if(!inline && !known) return;
+    if(inline) n.classList.add('d15-inline');
+    n.classList.add('d15-ov');
+  }
+  function scan(){ try{ document.querySelectorAll(SEL).forEach(tag); Array.prototype.forEach.call(document.body.children, tag); }catch(e){} }
+  try{
+    new MutationObserver(function(muts){
+      muts.forEach(function(m){ Array.prototype.forEach.call(m.addedNodes, tag); });
+    }).observe(document.body, { childList:true });
+  }catch(e){}
+  scan();
+
+  /* ----- swipe down to close ----- */
+  var drag = null;
+  function closeOverlay(ov, done){
+    try{ document.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', code:'Escape', bubbles:true })); }catch(e){}
+    setTimeout(function(){
+      if(document.body.contains(ov) && ov.style.display!=='none'){
+        try{ ov.dispatchEvent(new MouseEvent('click', { bubbles:true })); }catch(e){}
+      }
+      setTimeout(function(){ done(!document.body.contains(ov) || ov.style.display==='none'); }, 160);
+    }, 120);
+  }
+  function reset(d){
+    var s = d.sheet; if(!s) return;
+    s.style.transition = 'transform .28s var(--d15-spring)'; s.style.transform = '';
+    d.ov.style.transition = 'opacity .2s'; d.ov.style.opacity = '';
+    setTimeout(function(){ s.style.transition = ''; d.ov.style.transition = ''; }, 320);
+  }
+  document.addEventListener('touchstart', function(e){
+    drag = null;
+    if(!mq.matches || e.touches.length!==1) return;
+    var t = e.target; if(!t || !t.closest) return;
+    var ov = t.closest('.d15-ov'); if(!ov) return;
+    var sheet = ov.firstElementChild; if(!sheet || !sheet.contains(t)) return;
+    var y0 = e.touches[0].clientY, r = sheet.getBoundingClientRect();
+    var inGrab = (y0 - r.top) < 52;
+    var blocked = false;
+    for(var n=t; n && n!==ov; n=n.parentNode){
+      if(n.nodeType===1 && n.scrollHeight>n.clientHeight+1 && n.scrollTop>0){
+        var oy = getComputedStyle(n).overflowY; if(oy==='auto' || oy==='scroll'){ blocked = true; break; }
+      }
+    }
+    var tag = (t.tagName||'').toLowerCase();
+    if(!inGrab && (tag==='input' || tag==='textarea' || tag==='select')) return;
+    drag = { ov:ov, sheet:sheet, x0:e.touches[0].clientX, y0:y0, dy:0, ok: inGrab || !blocked, started:false, t0:Date.now(), h:r.height||600 };
+  }, { passive:true });
+  document.addEventListener('touchmove', function(e){
+    var d = drag; if(!d || !d.ok) return;
+    var tt = e.touches[0], dy = tt.clientY - d.y0, dx = tt.clientX - d.x0;
+    if(!d.started){
+      if(dy>8 && dy>Math.abs(dx)*1.4){ d.started = true; d.sheet.style.transition = 'none'; d.sheet.style.animation = 'none'; d.ov.style.animation = 'none'; }
+      else if(dy<-6 || Math.abs(dx)>12){ drag = null; return; }
+      else return;
+    }
+    if(e.cancelable) e.preventDefault();
+    d.dy = Math.max(0, dy);
+    d.sheet.style.transform = 'translateY(' + d.dy + 'px)';
+    d.ov.style.opacity = String(Math.max(.25, 1 - d.dy/(d.h*1.1)));
+  }, { passive:false });
+  function end(){
+    var d = drag; drag = null;
+    if(!d || !d.started) return;
+    var dt = Math.max(1, Date.now()-d.t0), v = d.dy/dt;
+    if(d.dy>110 || (v>.55 && d.dy>40)){
+      d.sheet.style.transition = 'transform .22s ease-in'; d.sheet.style.transform = 'translateY(100%)';
+      try{ if(navigator.vibrate && !reduce.matches) navigator.vibrate(6); }catch(e){}
+      closeOverlay(d.ov, function(closed){ if(!closed){ reset(d); } });
+    } else { reset(d); }
+  }
+  document.addEventListener('touchend', end, { passive:true });
+  document.addEventListener('touchcancel', end, { passive:true });
+
+  /* ----- light haptic tick on taps (Android Chrome only; silently nothing elsewhere) ----- */
+  var HAP = '.btn,.d2-tool,.d4-chip,.d4-seg,.tab-btn,.bottom-nav-item,.filter-chip,.d3-chip,.more-menu-item,.arrow-btn';
+  document.addEventListener('pointerdown', function(e){
+    try{
+      if(!navigator.vibrate || reduce.matches || e.pointerType!=='touch') return;
+      var t = e.target; if(t && t.closest && t.closest(HAP) && !t.closest('[disabled]')) navigator.vibrate(5);
+    }catch(x){}
+  }, { passive:true });
+})();
