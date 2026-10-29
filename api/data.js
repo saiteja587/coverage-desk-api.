@@ -225,6 +225,17 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true, ts: Date.now(), version: 'single-connection-v5' });
     }
 
+    // Hourly Google Doc check, hit by an EXTERNAL scheduler (cron-job.org) with a shared secret — same secret the
+    // push-alert scheduler uses. It only refreshes the gdoc_inbox staging row; it never writes to calls.
+    if (resource === 'gdoc_cron') {
+      const expected = process.env.PUSH_ALERT_SECRET;
+      if (!expected) return res.status(500).json({ error: 'PUSH_ALERT_SECRET is not configured for this project.' });
+      const ok = (req.headers['authorization'] || '') === 'Bearer ' + expected || (req.query && req.query.secret) === expected;
+      if (!ok) return res.status(401).json({ error: 'Unauthorized' });
+      const r = await gdocSyncStore(db);
+      return res.status(200).json(r);
+    }
+
     const auth = await authenticate(req, db);
     if (auth.rateLimited) return res.status(429).json({ error: `Too many failed login attempts. Please wait ${RATE_LIMIT_WINDOW_MINUTES} minutes and try again.` });
     if (!auth.ok) return res.status(401).json({ error: 'Unauthorized' });
@@ -273,13 +284,14 @@ module.exports = async (req, res) => {
     if (resource === 'app_settings') return await handleAppSettings(req, res, db);
     if (resource === 'push_subscription') return await handlePushSubscription(req, res, db);
     if (resource === 'gdoc_fetch') return await handleGdocFetch(req, res, auth);
+    if (resource === 'gdoc_inbox') return await handleGdocInbox(req, res, db, auth);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
     if (resource === 'chat') {
       if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_lib/ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
     }
-    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|gdoc_fetch|whoami' });
+    return res.status(400).json({ error: 'Unknown resource. Use ?resource=calls|all_calls|roster|notes|dates|finalized|call_status|portal_sync|call_backups|students|student_match_decisions|driving_person|closures|closure_manual_match|expected_closures|assessments|onsites|results|app_settings|push_subscription|users|chat|gdoc_fetch|gdoc_inbox|whoami' });
   } catch (err) {
     console.error(err);
     // FIX (2026-09-27): a save against a table that hasn't been created yet
@@ -329,6 +341,27 @@ function gdocTrimFromDate(text, fromIso) {
   });
   return { text: parts.join('\n'), sections: parts.length };
 }
+async function gdocDownload(id, tab) {
+  const fail = (status, code, error) => { const e = new Error(error); e.status = status; e.code = code; return e; };
+  const url = 'https://docs.google.com/document/d/' + id + '/export?format=txt' + (tab ? '&tab=' + tab : '');
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 9000);
+  let upstream;
+  try {
+    upstream = await fetch(url, { redirect: 'follow', signal: ctl.signal, headers: { 'User-Agent': 'coverage-desk-sync' } });
+  } catch (e) {
+    clearTimeout(timer);
+    throw fail(504, 'timeout', 'Google did not answer in time. Try again.');
+  }
+  clearTimeout(timer);
+  const type = String(upstream.headers.get('content-type') || '');
+  if (!upstream.ok || !/text\/plain/i.test(type)) {
+    throw fail(403, 'not_public', 'Could not read the doc. Make sure it is shared as "Anyone with the link can view", or paste its text instead.');
+  }
+  let text = await upstream.text();
+  if (text.length > 8 * 1024 * 1024) throw fail(413, 'too_big', 'The doc is too large to read.');
+  return text.replace(/^\uFEFF/, '');
+}
 async function handleGdocFetch(req, res, auth) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
   if (auth.role !== 'admin') return res.status(403).json({ error: 'Only an admin can sync a Google Doc.' });
@@ -338,26 +371,104 @@ async function handleGdocFetch(req, res, auth) {
   if (!/^[A-Za-z0-9_-]{20,80}$/.test(id)) return res.status(400).json({ error: 'That does not look like a Google Doc id.', code: 'bad_id' });
   if (tab && !/^t\.[A-Za-z0-9]{1,40}$/.test(tab)) return res.status(400).json({ error: 'Bad tab id.', code: 'bad_tab' });
   if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) return res.status(400).json({ error: 'Bad from date.', code: 'bad_from' });
-  const url = 'https://docs.google.com/document/d/' + id + '/export?format=txt' + (tab ? '&tab=' + tab : '');
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 9000);
-  let upstream;
-  try {
-    upstream = await fetch(url, { redirect: 'follow', signal: ctl.signal, headers: { 'User-Agent': 'coverage-desk-sync' } });
-  } catch (e) {
-    clearTimeout(timer);
-    return res.status(504).json({ error: 'Google did not answer in time. Try again.', code: 'timeout' });
-  }
-  clearTimeout(timer);
-  const type = String(upstream.headers.get('content-type') || '');
-  if (!upstream.ok || !/text\/plain/i.test(type)) {
-    return res.status(403).json({ error: 'Could not read the doc. Make sure it is shared as "Anyone with the link can view", or paste its text instead.', code: 'not_public' });
-  }
-  let text = await upstream.text();
-  if (text.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'The doc is too large to read.', code: 'too_big' });
-  text = text.replace(/^\uFEFF/, '');
+  let text;
+  try { text = await gdocDownload(id, tab); }
+  catch (e) { return res.status(e.status || 500).json({ error: e.message, code: e.code }); }
   const out = from ? gdocTrimFromDate(text, from) : { text, sections: 0 };
   return res.status(200).json({ text: out.text, sections: out.sections, totalChars: text.length });
+}
+
+// ---------- gdoc_inbox: the Google Doc "inbox" (staging area) ----------
+// The hourly check (and the "Check now" button) only ever copies the doc's upcoming-days text into this one
+// row. It NEVER touches the calls table — the admin reviews the inbox screen and presses Add there.
+// Table is created on first use (CREATE TABLE IF NOT EXISTS) so no manual SQL is required.
+async function gdocEnsureTable(db) {
+  await db.query(`CREATE TABLE IF NOT EXISTS gdoc_inbox (
+    id TINYINT NOT NULL PRIMARY KEY,
+    doc_url VARCHAR(500) NULL,
+    doc_text MEDIUMTEXT NULL,
+    content_hash CHAR(40) NULL,
+    fetched_at DATETIME NULL,
+    changed_at DATETIME NULL,
+    last_error VARCHAR(300) NULL,
+    dismissed MEDIUMTEXT NULL
+  )`);
+  await db.query('INSERT IGNORE INTO gdoc_inbox (id) VALUES (1)');
+}
+function gdocParseLink(u) {
+  const m = String(u || '').match(/document\/d\/([A-Za-z0-9_-]{20,80})/);
+  const t = String(u || '').match(/[?&]tab=(t\.[A-Za-z0-9]{1,40})/);
+  return m ? { id: m[1], tab: t ? t[1] : '' } : null;
+}
+// Reads the doc and stores it. Returns { ok, changed, error? }. Never throws for expected failures —
+// the failure is recorded in last_error so the inbox screen can show it (no silent failure).
+async function gdocSyncStore(db, urlOverride) {
+  await gdocEnsureTable(db);
+  let url = String(urlOverride || '').trim();
+  if (!url) {
+    const [r] = await db.query("SELECT setting_value FROM app_settings WHERE setting_key = 'gdoc_sync_url'");
+    url = r.length ? String(r[0].setting_value || '') : '';
+  }
+  const info = gdocParseLink(url);
+  const setErr = async (msg) => { await db.query('UPDATE gdoc_inbox SET last_error = ?, fetched_at = UTC_TIMESTAMP() WHERE id = 1', [String(msg).slice(0, 290)]); };
+  if (!info) { await setErr('No Google Doc link saved yet. Open the Google Doc inbox once and press "Check the doc now".'); return { ok: false, error: 'no_link' }; }
+  let text;
+  try { text = await gdocDownload(info.id, info.tab); }
+  catch (e) { await setErr(e.message || 'Could not read the doc.'); return { ok: false, error: e.code || 'error' }; }
+  const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10); // IST
+  const trimmed = gdocTrimFromDate(text, today).text;
+  const hash = require('crypto').createHash('sha1').update(trimmed).digest('hex');
+  const [cur] = await db.query('SELECT content_hash FROM gdoc_inbox WHERE id = 1');
+  const changed = !cur.length || cur[0].content_hash !== hash;
+  if (changed) {
+    await db.query('UPDATE gdoc_inbox SET doc_url = ?, doc_text = ?, content_hash = ?, fetched_at = UTC_TIMESTAMP(), changed_at = UTC_TIMESTAMP(), last_error = NULL WHERE id = 1', [url, trimmed, hash]);
+  } else {
+    await db.query('UPDATE gdoc_inbox SET doc_url = ?, fetched_at = UTC_TIMESTAMP(), last_error = NULL WHERE id = 1', [url]);
+  }
+  return { ok: true, changed };
+}
+async function handleGdocInbox(req, res, db, auth) {
+  if (auth.role !== 'admin') return res.status(403).json({ error: 'Only an admin can use the Google Doc inbox.' });
+  await gdocEnsureTable(db);
+  const dismissedOf = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+  if (req.method === 'GET') {
+    const [rows] = await db.query('SELECT doc_url, doc_text, content_hash, fetched_at, changed_at, last_error, dismissed FROM gdoc_inbox WHERE id = 1');
+    const r = rows[0] || {};
+    const out = {
+      hash: r.content_hash || null,
+      fetchedAt: r.fetched_at ? new Date(r.fetched_at).toISOString() : null,
+      changedAt: r.changed_at ? new Date(r.changed_at).toISOString() : null,
+      lastError: r.last_error || null,
+      url: r.doc_url || null,
+      dismissed: dismissedOf(r.dismissed)
+    };
+    if (!(req.query && req.query.meta)) out.text = r.doc_text || '';
+    return res.status(200).json(out);
+  }
+  if (req.method === 'POST') {
+    const b = req.body || {};
+    if (b.action === 'refresh') {
+      const r = await gdocSyncStore(db, b.url);
+      if (!r.ok) {
+        const [rows] = await db.query('SELECT last_error FROM gdoc_inbox WHERE id = 1');
+        return res.status(r.error === 'not_public' ? 403 : 502).json({ error: (rows[0] && rows[0].last_error) || 'Could not read the doc.', code: r.error });
+      }
+      return res.status(200).json({ ok: true, changed: r.changed });
+    }
+    if (b.action === 'dismiss' || b.action === 'restore') {
+      const [rows] = await db.query('SELECT dismissed FROM gdoc_inbox WHERE id = 1');
+      let list = dismissedOf(rows[0] && rows[0].dismissed);
+      if (b.action === 'restore') list = [];
+      else {
+        const add = (Array.isArray(b.keys) ? b.keys : []).map(k => String(k).slice(0, 200)).filter(Boolean);
+        list = Array.from(new Set(list.concat(add))).slice(-3000);
+      }
+      await db.query('UPDATE gdoc_inbox SET dismissed = ? WHERE id = 1', [JSON.stringify(list)]);
+      return res.status(200).json({ ok: true, dismissed: list });
+    }
+    return res.status(400).json({ error: 'Unknown action.' });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ---------- users (admin management) ----------
