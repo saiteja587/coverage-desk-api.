@@ -1414,7 +1414,10 @@
       return;
     }
     var a = t.dataset.d4;
-    if(a==='sec'){ var k=t.dataset.k; openSecs[k]=!openSecs[k]; LS.set('d4.open', JSON.stringify(openSecs)); organize(true); if(openSecs[k]){ var d=$('#d4Drawer'); if(d) d.scrollIntoView({behavior:'smooth',block:'nearest'}); } }
+    if(a==='sec'){ var k=t.dataset.k; openSecs[k]=!openSecs[k]; LS.set('d4.open', JSON.stringify(openSecs));
+      // on a phone the app's own chart / note start collapsed to a thin bar — opening one from the chip should show it fully
+      if(openSecs[k]){ try{ if(k==='chart' && !state.mobileStripExpanded){ state.mobileStripExpanded = true; render(); } if(k==='note' && !state.mobileNoteExpanded){ state.mobileNoteExpanded = true; render(); } }catch(e){} }
+      organize(true); if(openSecs[k]){ var d=$('#d4Drawer'); if(d) d.scrollIntoView({behavior:'smooth',block:'nearest'}); } }
     else if(a==='layout'){ setLayout(t.dataset.v); }
     else if(a==='autocfg'){ var cur = LS.get('d4.auto','12:00,14:30,05:00'); var v = prompt('Auto layout times (24-hour, comma separated):\nplanning starts, busy starts, busy ends\n\nPlanning → Full · Busy → Focus · otherwise Compact', cur); if(v){ LS.set('d4.auto', v); lastEff=null; apply(); organize(true); } }
     else if(a==='more'){ menuEl ? closeMenu() : openMenu(t); }
