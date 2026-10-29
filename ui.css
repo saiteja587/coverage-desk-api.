@@ -1122,3 +1122,31 @@ body.d12-open{overflow:hidden}
   .bottom-nav-fab-icon{width:44px!important;height:44px!important;margin-top:-18px!important;border-width:4px!important;font-size:22px}
 }
 @media (max-width:899px){#navHome{order:1}#navSearch{order:2}#navAdd{order:3}#navAlerts{order:4}#navMore{order:5}}
+
+/* ═════════ d15 · One UI / iOS feel — sheets, swipe-down, softer corners ═════════
+   Pure polish on top of the earlier layers: no layout is moved on the main board. */
+:root{--d15-spring:cubic-bezier(.32,1.25,.4,1);--d15-out:cubic-bezier(.22,1,.36,1);--d15-r:20px;}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+button,summary,select,label[for],[role="button"],.d4-chip,.d4-seg{touch-action:manipulation}
+.d4-chip,.d4-seg,.d4-filter-btn{transition:transform .2s var(--d15-spring),border-color .2s,background-color .2s,color .2s,box-shadow .2s}
+.d4-chip:active,.d4-seg:active,.d4-filter-btn:active{transform:scale(.95);transition-duration:.08s}
+
+/* every pop-up / sheet: frosted backdrop, no scroll leaking to the page behind */
+.d15-ov{backdrop-filter:blur(10px) saturate(1.25);-webkit-backdrop-filter:blur(10px) saturate(1.25);overscroll-behavior:contain}
+.d15-ov *{overscroll-behavior:contain}
+.d15-ov>:first-child{border-radius:var(--d15-r);animation:d15-pop .3s var(--d15-out) backwards;box-shadow:0 28px 80px -12px rgba(0,0,0,.6),0 0 0 1px color-mix(in srgb,var(--text) 6%,transparent);will-change:transform}
+@keyframes d15-pop{from{opacity:0;transform:translateY(10px) scale(.965)}to{opacity:1;transform:none}}
+@keyframes d15-up{from{opacity:.4;transform:translateY(46px)}to{opacity:1;transform:none}}
+@keyframes d15-fade{from{opacity:0}to{opacity:1}}
+.d15-ov{animation:d15-fade .22s backwards}
+
+/* phone: bottom sheets with a grab handle */
+@media (max-width:760px){
+  .d15-ov>:first-child{animation:d15-up .36s var(--d15-spring) backwards;border-radius:24px 24px 0 0;overscroll-behavior:contain}
+  .d15-ov>:first-child::before{content:"";display:block;flex:none;width:40px;height:5px;margin:8px auto 4px;border-radius:3px;background:color-mix(in srgb,var(--text) 26%,transparent)}
+  /* centred dialogs become bottom sheets */
+  #d2Timeline.d15-ov,#d2Handover.d15-ov,.d3-overlay.d15-ov,#d10.d15-ov,.d15-inline.d15-ov{align-items:flex-end!important;justify-content:center!important;padding:0!important}
+  #d2Timeline.d15-ov>:first-child,#d2Handover.d15-ov>:first-child,.d3-overlay.d15-ov>:first-child,#d10.d15-ov>:first-child,.d15-inline.d15-ov>:first-child{width:100%!important;max-width:none!important;max-height:92vh!important;max-height:92dvh!important;border-radius:24px 24px 0 0!important;border-bottom:0!important;padding-bottom:max(env(safe-area-inset-bottom),0px)}
+  .d15-inline.d15-ov>:first-child{padding-bottom:max(env(safe-area-inset-bottom),16px)!important}
+}
+@media (prefers-reduced-motion:reduce){.d15-ov,.d15-ov>:first-child{animation:none!important}.d4-chip,.d4-seg{transition:none}}
