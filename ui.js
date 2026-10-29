@@ -3216,6 +3216,8 @@ document.addEventListener('click', function(e){
   function closeS(){ if(el){ el.remove(); el = null; } }
   function nk(t){ return String(t||'').replace(/\s+/g,'').toUpperCase(); }
   function ck(c){ try{ return normalizeCompanyKey(c); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z0-9]/g,''); } }
+  function tmin(t){ try{ var v = timeToMinutes(t); return (typeof v==='number' && v!==9999) ? v : nk(t); }catch(e){ return nk(t); } }
+  function sameCo(a,b){ var x = ck(a), y = ck(b); if(x===y) return true; if(x.length>=5 && y.length>=5 && (x.indexOf(y)>-1 || y.indexOf(x)>-1)) return true; try{ return !!fuzzyCompanyKeyMatch(a,b); }catch(e){ return false; } }
   function rk(r){ try{ return lcRoundKey(r); }catch(e){ return String(r||'').toLowerCase(); } }
   function parseLink(u){
     var m = String(u||'').match(/document\/d\/([A-Za-z0-9_-]{20,})/), t = String(u||'').match(/[?&]tab=(t\.[A-Za-z0-9]+)/);
@@ -3226,7 +3228,7 @@ document.addEventListener('click', function(e){
   /* split the doc text into {date: [lines]} (only dates from `from` on) */
   function sections(text, from){
     var t = String(text||'').replace(/\\\*/g,'').replace(/\*\*+/g,'').replace(/&#10;|&nbsp;|&#160;|&#13;/g,' ');
-    var re = /^[ \t]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim, heads = [], m;
+    var re = /^[^A-Za-z\n]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim, heads = [], m;
     while((m = re.exec(t)) !== null){
       heads.push({ at:m.index, end:m.index+m[0].length, iso: m[3]+'-'+String(MONTHS[m[1].toLowerCase()]).padStart(2,'0')+'-'+String(m[2]).padStart(2,'0') });
     }
@@ -3282,8 +3284,8 @@ document.addEventListener('click', function(e){
         }
         used[ex.id] = 1;
         var diffs = [];
-        if(!p.woi && !ex.woi && p.time && ex.time && nk(p.time)!==nk(ex.time)) diffs.push('time: doc '+p.time+' · app '+ex.time);
-        if(p.company && ex.company && ck(p.company)!==ck(ex.company)) diffs.push('company: doc '+p.company+' · app '+ex.company);
+        if(!p.woi && !ex.woi && p.time && ex.time && tmin(p.time)!==tmin(ex.time)) diffs.push('time: doc '+p.time+' · app '+ex.time);
+        if(p.company && ex.company && !sameCo(p.company, ex.company)) diffs.push('company: doc '+p.company+' · app '+ex.company);
         var explicit = !(p.doubts||[]).some(function(x){ return /Round wasn.t stated/.test(x); });
         if(explicit && p.round && ex.round && rk(p.round)!==rk(ex.round)) diffs.push('round: doc '+p.round+' · app '+ex.round);
         if(diffs.length) day.changed.push({ p:p, ex:ex, diffs:diffs }); else day.same++;
