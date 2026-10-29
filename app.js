@@ -17960,13 +17960,38 @@ function askResolveCandidate(q, ctx){
   if(loose.length > 1) return { status: 'ambiguous', clusters: loose.sort((a, b) => b.n - a.n) };
   return { status: 'none', clusters: [] };
 }
+// "Did you mean…" list for a typed name that matched nobody. SUGGESTIONS ONLY — never used as the answer.
+// With a company given it only looks at people who had a call at that company in the period, and is more
+// forgiving there (few people to choose from); without a company it is stricter.
+function askSuggestNames(a, ctx, rows){
+  try{
+    const qt = deskNameTokens(a.candidate); if(!qt.length) return [];
+    const q0 = qt[0];
+    const rg = askRange(a, ctx.today);
+    const pool = (rows || []).filter(r => r && r._date && askInRange(r._date, rg) && (!a.company || askCompanyMatch(r.company, a.company)));
+    const seen = new Map();
+    pool.forEach(r => { const k = ctx.resolver.keyOf(r.candidate); const e = seen.get(k); if(!e || r._date > e.row._date) seen.set(k, { row: r }); });
+    const strict = !a.company, out = [];
+    seen.forEach((e, k) => {
+      const cl = ctx.resolver.clusters.get(k); const names = cl ? cl.variants : [e.row.candidate];
+      let best = 99;
+      names.forEach(nm => deskNameTokens(nm).forEach(t => {
+        const d = levenshteinDistance(q0, t), len = Math.max(q0.length, t.length);
+        const ok = strict ? (d <= 2 || (d / len <= 0.34 && q0[0] === t[0])) : (d <= 2 || (d / len <= 0.55 && q0[0] === t[0]) || t.startsWith(q0.slice(0, 3)));
+        if(ok && d < best) best = d;
+      }));
+      if(best < 99) out.push({ d: best, candidate: (cl && cl.name) || e.row.candidate, company: e.row.company || '', last_call: e.row._date });
+    });
+    return out.sort((x, y) => x.d - y.d).slice(0, 3).map(x => ({ candidate: x.candidate, company: x.company, last_call: x.last_call }));
+  }catch(e){ return []; }
+}
 function askFilter(rows, a, ctx){
   a = a || {};
   const rg = askRange(a, ctx.today); let keys = null;
   if(a.candidate){
     const rc = askResolveCandidate(a.candidate, ctx);
     if(rc.status === 'ambiguous') return { ambiguous: { ambiguous: true, note: 'More than one candidate matches that name. Ask the user which one.', choices: rc.clusters.slice(0, 8).map(c => c.name) } };
-    if(rc.status === 'none') return { none: true };
+    if(rc.status === 'none') return { none: true, suggestions: askSuggestNames(a, ctx, rows) };
     keys = new Set(rc.clusters.map(c => c.key));
   }
   const rnd = a.round ? (/^\s*1/.test(String(a.round)) ? '1st' : '2nd+') : '';
@@ -17988,7 +18013,7 @@ async function askRunTool(name, args, ctx){
   args = (args && typeof args === 'object') ? args : {};
   const f = (name === 'candidate_summary' || name === 'company_summary' || name === 'count_calls' || name === 'search_calls') ? askFilter(ctx.rows, args, ctx) : null;
   if(f && f.ambiguous) return f.ambiguous;
-  if(f && f.none) return { found: false, note: 'No candidate on file matches that name.' };
+  if(f && f.none) return { found: false, note: 'No candidate on file matches that name.', did_you_mean: f.suggestions || [], hint: 'These are only guesses at a typo. Do not give call details for them. Ask the user whether they meant one.' };
   switch(name){
     case 'search_calls': {
       const list = f.rows.slice().sort(askByDateDesc);
