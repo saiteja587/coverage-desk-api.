@@ -16456,6 +16456,7 @@ document.addEventListener('click', function(e){
   document.addEventListener('touchstart', (e)=>{
     if(refreshing) return;
     if(getActivePanelName()) return; // only the home screen
+    if(document.querySelector('.d15-ov')) return; // a pop-up / sheet is open — its swipe-down must never pull-to-refresh the page behind it
     if(state.quickActionRowId || state.showSwipeAssignPicker || state.expectClosureRowId) return; // a floating sheet/picker is open
     if((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
     if(e.target.closest('tr[data-id]')) return; // leave call-card swipes alone
