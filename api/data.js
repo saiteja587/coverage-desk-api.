@@ -327,7 +327,7 @@ module.exports = async (req, res) => {
 // the reply stays small even for a huge tracker doc.
 const GDOC_MONTHS = { january:1, february:2, march:3, april:4, may:5, june:6, july:7, august:8, september:9, october:10, november:11, december:12 };
 function gdocTrimFromDate(text, fromIso) {
-  const re = /^[ \t*]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim;
+  const re = /^[^A-Za-z\n]*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(20\d\d)\s*\(\w+\)/gim;
   const heads = [];
   let m;
   while ((m = re.exec(text)) !== null) {
