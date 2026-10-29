@@ -2200,6 +2200,7 @@
     var id = row.dataset.d8Open, it = api() && api().items().filter(function(x){ return x.id===id; })[0];
     if(api()) api().markRead(id);
     close();
+    if(it && it.gdoc && window.d14Open){ window.d14Open(); return; }
     if(it && window.cdOpenFromNotification) window.cdOpenFromNotification({ date: it.date, candidate: it.candidate });
   }
   window.addEventListener('livefeed-change', function(){ if(el) paint(); });
@@ -2232,6 +2233,10 @@
     // opened from a tapped notification while the app was closed: ?cd_date=…&cd_cand=…
     try{
       var q = new URLSearchParams(location.search), dt = q.get('cd_date'), cd = q.get('cd_cand');
+      if(q.get('cd_open') === 'gdoc'){
+        history.replaceState(null,'',location.pathname);
+        var tg = 0, wg = setInterval(function(){ tg++; var rd = (typeof state!=='undefined') && !state.needsLogin && (state.rows||[]).length; if((rd || tg>8) && window.d14Open){ clearInterval(wg); window.d14Open(); } if(tg>40) clearInterval(wg); }, 500);
+      }
       if(dt || cd){
         history.replaceState(null,'',location.pathname);
         var tries = 0, wait = setInterval(function(){
@@ -3515,6 +3520,11 @@ document.addEventListener('click', function(e){
         var chk = function(){ apiCall('gdoc_inbox', {qs:'meta=1'}).then(function(m){
           var seen = ''; try{ seen = localStorage.getItem('cd-gdoc-seen') || ''; }catch(e){}
           S.changed = !!(m && m.hash && m.hash !== seen);
+          try{
+            if(S.changed && m.added > 0 && window.livefeedApi){
+              window.livefeedApi.add({ id:'gdoc-'+String(m.hash).slice(0,10), title:'📄 Google Doc synced', body: m.added+' new call line'+(m.added===1?'':'s')+' found. Open the Google Doc inbox to review.', priority:'high', gdoc:true, tag:'cd-gdoc', date:'', candidate:'' });
+            }
+          }catch(e){}
           var b = document.getElementById('openD14'); if(b) b.innerHTML = '📄 Google Doc inbox'+(S.changed?' <span style="color:var(--amber,#e8a33d)">● doc updated</span>':'');
         }).catch(function(){}); };
         setTimeout(chk, 4000); setInterval(chk, 3600000);
