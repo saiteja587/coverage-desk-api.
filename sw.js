@@ -10,7 +10,7 @@
 // Bump CACHE whenever you want to force every device to drop old cached
 // files (rare — the network-first strategy already means this normally
 // isn't needed).
-const CACHE = 'coverage-desk-v5';
+const CACHE = 'coverage-desk-v6';
 const APP_SHELL = [
   './',
   './index.html',
@@ -81,7 +81,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const d = event.notification.data || {};
-  const q = (d.date || d.candidate) ? '?cd_date=' + encodeURIComponent(d.date || '') + '&cd_cand=' + encodeURIComponent(d.candidate || '') : '';
+  const q = d.kind === 'gdoc' ? '?cd_open=gdoc' : (d.date || d.candidate) ? '?cd_date=' + encodeURIComponent(d.date || '') + '&cd_cand=' + encodeURIComponent(d.candidate || '') : '';
   event.waitUntil((async () => {
     const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const client = list.find((c) => 'focus' in c) || null;
