@@ -16846,6 +16846,12 @@ window.addEventListener('keydown', (e)=>{
       render();
       return;
     }
+    // Escape also closes a full panel (Closures, Roster, Backups…) when no pop-up is open on top of it
+    try{
+      if(typeof getActivePanelName === 'function' && getActivePanelName() && !document.querySelector('.d15-ov,#d2Timeline,#d2Handover,#d2Cmd,#d3Suggest,#d3Keys,.d2-pop') && !state.needsLogin){
+        closeAllPanels(); render(); return;
+      }
+    }catch(err){}
   }
   // Spreadsheet-style row navigation: ArrowUp/ArrowDown while focused in a
   // plain text cell (Time/Candidate/Company/Round/Duration) jumps to the
@@ -16904,8 +16910,9 @@ const LIVEFEED_REPEAT_NOSHOW_MIN = 2;     // Rule C: earlier rescheduled/cancell
 const LIVEFEED_COMPANY_MIN_CALLS = 2;     // Rule B: min earlier assigned calls
 const LIVEFEED_STORE_KEY = 'coveragedesk_livefeed_v1';
 const LIVEFEED_MAX_ITEMS = 200;
-const LIVEFEED_MAX_TOASTS = 5;
-const LIVEFEED_TOAST_MS = 10000;
+// phone: at most 2 small banners, gone after ~5 s, so alerts never pile up over the call list
+const LIVEFEED_MAX_TOASTS = (window.innerWidth < 760) ? 2 : 5;
+const LIVEFEED_TOAST_MS = (window.innerWidth < 760) ? 5500 : 10000;
 
 function livefeedDayDiff(a, b){ // b - a, in whole days, both 'YYYY-MM-DD'
   const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
