@@ -1150,3 +1150,60 @@ button,summary,select,label[for],[role="button"],.d4-chip,.d4-seg{touch-action:m
   .d15-inline.d15-ov>:first-child{padding-bottom:max(env(safe-area-inset-bottom),16px)!important}
 }
 @media (prefers-reduced-motion:reduce){.d15-ov,.d15-ov>:first-child{animation:none!important}.d4-chip,.d4-seg{transition:none}}
+
+/* d17 · speed: off-screen call cards are not laid out or painted until scrolled near (phone card list) */
+@media (max-width:759px){
+  html.m-on #tableScrollMain tbody tr.m-card{content-visibility:auto;contain-intrinsic-size:auto 84px}
+}
+
+/* ═════════ d18 · phone flow — full-screen panels with a compact nav bar, calm alerts, quiet save dot ═════════ */
+@keyframes cd-push{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+@keyframes cd-drop{from{opacity:0;transform:translateY(-14px) scale(.98)}to{opacity:1;transform:none}}
+@media (max-width:759px){
+  /* panels: no home header above them */
+  html.cd-pm #app .cd-pm-hide{display:none!important}
+  html.cd-pm body{padding-top:0}
+  html.cd-pm #app{padding-top:0!important}
+  html.cd-pm .panel-header-bar{position:sticky;top:0;z-index:55;display:grid;grid-template-columns:76px 1fr 76px;align-items:center;gap:4px;
+    margin:0 -14px 12px;padding:calc(env(safe-area-inset-top,0px) + 8px) 10px 8px;border:0;border-bottom:1px solid var(--hair,var(--border));
+    background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5)}
+  html.cd-pm .panel-header-bar #backToCalls{justify-self:start;min-height:44px;padding:0 10px 0 6px;font-size:0;background:transparent;border:0;box-shadow:none;color:var(--teal)}
+  html.cd-pm .panel-header-bar #backToCalls::before{content:"‹  Calls";font:600 16px var(--body);letter-spacing:.005em;white-space:nowrap}
+  html.cd-pm .panel-header-title{grid-column:2;text-align:center;font-size:16.5px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html.cd-pm .panel-header-bar::after{content:"";grid-column:3}
+  html.cd-pm #app .footer-note{display:none}
+  html.cd-pm #app{padding-bottom:104px}
+  html.cd-pm-anim .panel-header-bar ~ *{animation:cd-push .34s var(--d15-out,cubic-bezier(.22,1,.36,1)) backwards}
+  html.cd-pm-anim .panel-header-bar{animation:none}
+
+  /* live-feed alerts: calm banners at the top instead of a stack over the list */
+  #liveFeedToasts{position:fixed!important;top:calc(env(safe-area-inset-top,0px) + 8px)!important;left:10px!important;right:10px!important;bottom:auto!important;width:auto!important;max-width:none!important;
+    z-index:9400;display:flex;flex-direction:column;gap:6px;pointer-events:none;max-height:none}
+  #liveFeedToasts .lf-toast{pointer-events:auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px -8px rgba(0,0,0,.55),0 0 0 1px color-mix(in srgb,var(--text) 8%,transparent);
+    background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);animation:cd-drop .32s var(--d15-spring,cubic-bezier(.32,1.25,.4,1)) backwards;transition:transform .2s,opacity .2s}
+  #liveFeedToasts .lf-toast .lf-item{padding:9px 38px 9px 12px;margin:0;border:0;background:transparent}
+  #liveFeedToasts .lf-toast .lf-title{font-size:13px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+  #liveFeedToasts .lf-toast .lf-body{font-size:12px;line-height:1.3;opacity:.8;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;margin-top:1px}
+  #liveFeedToasts .lf-toast .lf-meta{display:none}
+  #liveFeedToasts .lf-toast .lf-actions{margin-top:6px;gap:6px;flex-wrap:nowrap;overflow:hidden}
+  #liveFeedToasts .lf-toast .lf-actions>*{font-size:11.5px;padding:5px 10px;min-height:30px;white-space:nowrap}
+  #liveFeedToasts .lf-toast .lf-x{position:absolute;top:2px;right:2px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;opacity:.6;background:transparent!important;border:0!important;box-shadow:none!important;border-radius:50%;color:inherit;font-size:20px;padding:0}
+  /* the save-status dot only shows when something needs attention */
+  #d2Pill[data-s="ok"]{opacity:0;pointer-events:none;transition:opacity .5s .9s}
+}
+
+/* d18 · phone: comfortable tap targets, scroll hint on the header strip, tidy Students Master rows */
+@keyframes cd-say{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
+.cd-say{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);transform:translateX(-50%);z-index:9600;max-width:min(92vw,460px);padding:12px 18px;border-radius:16px;
+  background:color-mix(in srgb,var(--surface,#1b2230) 92%,transparent);color:var(--text,#fff);font:500 14px/1.35 var(--body,system-ui);box-shadow:0 12px 34px -8px rgba(0,0,0,.6),0 0 0 1px color-mix(in srgb,var(--text,#fff) 10%,transparent);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);animation:cd-say .28s cubic-bezier(.32,1.25,.4,1);white-space:pre-line;transition:opacity .25s}
+@media (max-width:759px){
+  html.m-on #goHomeBtn,html.m-on #toggleClosures,html.m-on #toggleExpectedClosures,html.m-on #toggleQuickSearch,html.m-on #toggleMoreMenu,html.m-on #saveAllBtn,
+  html.m-on .d4-chip,html.m-on .d2-tool,html.m-on .tab-btn,html.m-on #tabAssessments,html.m-on .d4-filter-btn,html.m-on #datePicker{min-height:44px}
+  html.m-on #prevDay,html.m-on #nextDay,html.m-on #toggleThemeBtn{min-width:44px;min-height:44px}
+  html.m-on .d4-seg{min-width:44px;min-height:44px}
+  html.m-on #finalizeBtn,html.m-on #toggleConflicts{min-height:44px}
+  html.m-on .d3-chip,html.m-on .m-as{min-height:40px}
+  html.m-on .d4-chips{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+  #app .row-del{min-width:44px;min-height:44px}
+}
