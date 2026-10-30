@@ -7023,16 +7023,16 @@ function render(){
         <input type="date" id="datePicker" value="${state.date}">
         <button class="arrow-btn" id="nextDay">›</button>
         ${(CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead') ? `<div class="more-menu-wrap" id="importHubWrap">
-          <button class="btn ${(state.showImport||state.showRescheduleImport||state.showImportMenu)?'active':''}" id="toggleImportHub" title="Import new calls or a reschedule/cancel message">📥 Import</button>
+          <button class="btn ${(state.showImport||state.showRescheduleImport||state.showImportMenu)?'active':''}" id="toggleImportHub" aria-label="Import" title="Import new calls or a reschedule/cancel message">📥 <span class="lbl">Import</span></button>
           ${state.showImportMenu ? `<div class="more-menu-backdrop" data-close-menu="showImportMenu"></div><div class="more-menu-dropdown">
             <button class="more-menu-item" id="importMenuNewCalls">＋ Add Calls</button>
             <button class="more-menu-item" id="importMenuReschedule">↻ Reschedule / Cancel</button>
             <button class="more-menu-item" id="importMenuAssessments">🧪 Assessments</button>
           </div>` : ''}
         </div>` : ''}
-        <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 Closures${state.closuresLoaded ? ` (${closuresThisMonthCount()})` : ''}</button>
-        <button class="btn ${state.showExpectedClosures?'active':''}" id="toggleExpectedClosures" title="Calls flagged as 'expecting this to become a closure' based on handler/driving-person feedback — follow up on them here" style="${state.expectedClosuresLoaded && expectedClosuresPendingCount() ? 'color:var(--amber);border-color:#5A4420' : ''}">🎯 Expected${state.expectedClosuresLoaded ? ` (${expectedClosuresPendingCount()})` : ''}</button>
-        <button class="btn" id="toggleQuickSearch" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 Quick Search</button>
+        <button class="btn ${state.showClosures?'active':''}" id="toggleClosures" aria-label="Closures" title="Import a closure/job-offer message and view all recorded closures" style="${state.closuresLoaded && state.closures.length ? 'color:var(--teal);border-color:#1F4A43' : ''}">🏆 <span class="lbl">Closures</span>${state.closuresLoaded ? ` <span class="cnt" data-n="${closuresThisMonthCount()}">${closuresThisMonthCount()}</span>` : ''}</button>
+        <button class="btn ${state.showExpectedClosures?'active':''}" id="toggleExpectedClosures" aria-label="Expected closures" title="Calls flagged as 'expecting this to become a closure' based on handler/driving-person feedback — follow up on them here" style="${state.expectedClosuresLoaded && expectedClosuresPendingCount() ? 'color:var(--amber);border-color:#5A4420' : ''}">🎯 <span class="lbl">Expected</span>${state.expectedClosuresLoaded ? ` <span class="cnt" data-n="${expectedClosuresPendingCount()}">${expectedClosuresPendingCount()}</span>` : ''}</button>
+        <button class="btn" id="toggleQuickSearch" aria-label="Quick search" title="Search any candidate, company, or assignee across every date — opens right here, without leaving this page. Today's matches can be assigned right from the results.">🔍 <span class="lbl">Quick Search</span></button>
         <div class="more-menu-wrap">
           <!-- FIX (2026-09-29): header cleanup — "so many options" complaint.
                Notifications, Data Health, and DB status moved in here from
@@ -7041,7 +7041,7 @@ function render(){
                handler). Quick Search stays top-level by explicit request.
                Active Pipeline removed entirely (real overlap with Data
                Health/WOI Aging/Stuck Pipeline — Saiteja confirmed removal). -->
-          <button class="btn ${state.showMoreMenu?'active':''} ${(state.absentIds.length || (CURRENT_ROLE==='admin' && !API_BASE_URL) || dataHealthIssueCount()>0) ? 'notif-alert' : ''}" id="toggleMoreMenu" title="Notifications, Data Health, DB status, and other summaries/lookups">📊 Reports</button>
+          <button class="btn ${state.showMoreMenu?'active':''} ${(state.absentIds.length || (CURRENT_ROLE==='admin' && !API_BASE_URL) || dataHealthIssueCount()>0) ? 'notif-alert' : ''}" id="toggleMoreMenu" aria-label="Reports" title="Notifications, Data Health, DB status, and other summaries/lookups">📊 <span class="lbl">Reports</span></button>
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <div class="more-menu-section-label">Today</div>
             <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">👥 Returning candidates${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
