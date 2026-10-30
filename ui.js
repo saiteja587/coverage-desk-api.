@@ -1,3 +1,5 @@
+/* d17: cached viewport width — reading innerWidth right after DOM writes forces a full layout, so layers use this instead */
+window.__d17vw = window.innerWidth; window.addEventListener('resize', function(){ window.__d17vw = window.innerWidth; }, { passive:true });
 /* ===== polish.js ===== */
 /* Coverage Desk — interface polish layer (2026-10-19)
    Loaded after app.js. Never changes what a button does: it swaps emoji for a custom icon set, tags each
@@ -402,13 +404,17 @@
     // pinned columns up to Candidate
     var ths = $$('thead th', wrap), ci = -1;
     ths.forEach(function(th,i){ if(ci<0 && /candidate/i.test(th.textContent)) ci=i; });
-    if(ci>=0){
-      var left=0;
-      for(var i=0;i<=ci;i++){
-        var w = ths[i].offsetWidth; ths[i].classList.add('d2-pin'); ths[i].style.left = left+'px';
-        $$('tbody tr', wrap).forEach(function(tr){ var td = tr.children[i]; if(td && !tr.classList.contains('d2-grp')){ td.classList.add('d2-pin'); td.style.left = left+'px'; } });
-        left += w;
-      }
+    if(ci>=0 && window.__d17vw>=760){   // pinned columns only matter on the wide table; phone shows cards
+      // read every width FIRST, then write — interleaving them forced a full re-layout per column per row
+      var widths = [], lefts = [], left = 0, i;
+      for(i=0;i<=ci;i++){ widths.push(ths[i].offsetWidth); }
+      for(i=0;i<=ci;i++){ lefts.push(left); left += widths[i]; }
+      for(i=0;i<=ci;i++){ ths[i].classList.add('d2-pin'); ths[i].style.left = lefts[i]+'px'; }
+      var trsAll = $$('tbody tr', wrap);
+      trsAll.forEach(function(tr){
+        if(tr.classList.contains('d2-grp')) return;
+        for(var c=0;c<=ci;c++){ var td = tr.children[c]; if(td){ td.classList.add('d2-pin'); td.style.left = lefts[c]+'px'; } }
+      });
     }
     // grouping
     var mode = LS.get('d2.group','off');
@@ -739,6 +745,8 @@
 
   /* ---------- global events ---------- */
   document.addEventListener('click', function(e){
+    if(tlEl && e.target===tlEl){ closeTimeline(); return; }       // tap outside closes, like every other pop-up
+    if(hoEl && e.target===hoEl){ closeHandover(); return; }
     var t = e.target.closest && e.target.closest('[data-d2],[data-d2-go],[data-d2-filter],.d2-grp');
     if(!t) return;
     if(t.classList.contains('d2-grp')){ var k=t.dataset.k; collapsed[k]=!collapsed[k]; decorateTable(); return; }
@@ -1219,7 +1227,7 @@
   var rows = function(){ try{ return state.rows||[]; }catch(e){ return []; } };
   var jparse = function(s,d){ try{ var v=JSON.parse(s); return v==null?d:v; }catch(e){ return d; } };
   var mode = function(){ var v = LS.get('d4.layout',''); return (v==='focus'||v==='compact'||v==='full'||v==='auto') ? v : ''; };
-  var roleDefault = function(){ if(window.innerWidth<900) return 'focus'; try{ return CURRENT_ROLE==='admin' ? 'compact' : 'focus'; }catch(e){ return 'compact'; } };
+  var roleDefault = function(){ if(window.__d17vw<900) return 'focus'; try{ return CURRENT_ROLE==='admin' ? 'compact' : 'focus'; }catch(e){ return 'compact'; } };
   var toMin = function(t){ var p=String(t||'').trim().split(':'); var h=parseInt(p[0],10), m=parseInt(p[1]||'0',10); return (isNaN(h)||isNaN(m)) ? null : (h*60+m)%1440; };
   var autoCfg = function(){ var a = LS.get('d4.auto','12:00,14:30,05:00').split(','); var d=[720,870,300]; return [0,1,2].map(function(i){ var v=toMin(a[i]); return v===null?d[i]:v; }); };
   var inWin = function(n,a,b){ return a<=b ? (n>=a && n<b) : (n>=a || n<b); };
@@ -1379,7 +1387,7 @@
   function updateMini(){
     var m = $('#d4Mini'); if(!m) return;
     var c = $('#tableScrollMain'); var show = false;
-    if(innerWidth>=900 && c){ show = c.getBoundingClientRect().top <= 64 && window.scrollY>200; }
+    if(window.__d17vw>=900 && c){ show = c.getBoundingClientRect().top <= 64 && window.scrollY>200; }
     m.classList.toggle('show', show);
   }
   window.addEventListener('scroll', updateMini, {passive:true}); window.addEventListener('resize', updateMini);
@@ -1461,7 +1469,8 @@
   var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
   var isAdmin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
   var rows = function(){ try{ return state.rows||[]; }catch(e){ return []; } };
-  var desktop = function(){ return window.innerWidth>=900; };
+  var __vw = window.innerWidth; window.addEventListener('resize', function(){ __vw = window.innerWidth; }, { passive:true });
+  var desktop = function(){ return __vw>=900; };
   var toast = function(m,o){ if(window.d2Toast) window.d2Toast(m,o); };
   var activeId = null;
 
@@ -1757,7 +1766,7 @@
   var $ = function(s,r){ return (r||document).querySelector(s); };
   var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
   var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
-  var phone = function(){ return window.innerWidth<900; };
+  var phone = function(){ return window.__d17vw<900; };
   var rowOf = function(id){ try{ return (state.rows||[]).find(function(r){ return r.id===id; }); }catch(e){ return null; } };
   var openIds = {};
   var shortDur = function(d){ var m = String(d||'').match(/\d+/); return m ? m[0]+'m' : ''; };
@@ -2212,7 +2221,7 @@
   // phone: the bottom-bar "Alerts" tab opens this inbox instead of the repeat-candidate list
   document.addEventListener('click', function(e){
     var n = e.target.closest && e.target.closest('#navAlerts'); if(!n) return;
-    if(window.innerWidth>=900 || !api()) return;
+    if(window.__d17vw>=900 || !api()) return;
     e.stopPropagation(); e.preventDefault(); if(el) close(); else open();
   }, true);
   window.d8Open = open;
@@ -2415,7 +2424,7 @@ document.addEventListener('click', function(e){
   var dur = function(r){ try{ return parseDurationMinutes(r.duration)||30; }catch(e){ return 30; } };
   var late = function(r){ var m = tmin(r.time); return m!==9999 && (m>=1320 || m<360); };
   var teams = function(){ try{ return getTeamNames(); }catch(e){ return new Set(); } };
-  var coarse = function(){ try{ return window.matchMedia('(pointer:coarse)').matches || innerWidth<900; }catch(e){ return innerWidth<900; } };
+  var coarse = function(){ try{ return window.matchMedia('(pointer:coarse)').matches || window.__d17vw<900; }catch(e){ return window.__d17vw<900; } };
   var asg = function(r){ var a = String(r.assignee||'').trim(); return /^unassigned$/i.test(a) ? '' : a; };
   var nowMin = function(){ var d = new Date(); return d.getHours()*60+d.getMinutes(); };
   var isToday = function(){ try{ return state.date===todayDateString(); }catch(e){ return false; } };
@@ -3632,4 +3641,156 @@ document.addEventListener('click', function(e){
       var t = e.target; if(t && t.closest && t.closest(HAP) && !t.closest('[disabled]')) navigator.vibrate(5);
     }catch(x){}
   }, { passive:true });
+})();
+
+/* ===== d16: phone Back gesture / Android back button — closes the top pop-up or panel, never the whole app ===== */
+;(function(){
+  if(window.__d16) return; window.__d16 = true;
+  var FLAGS = ['showMoreMenu','showToolsMenu','showImportMenu','showNavAddMenu','showQuickSearchModal','showSwipeAssignPicker','showClipboardPicker','quickActionRowId','showQuickJump','expectClosureRowId'];
+  var pushed = 0, ignorePop = 0, fromBack = false, timer = null, lastTopKey = '', stuck = 0;
+
+  function vis(e){ try{ return !!e && e.isConnected && getComputedStyle(e).display!=='none' && getComputedStyle(e).visibility!=='hidden'; }catch(x){ return false; } }
+  function loggedIn(){ try{ return typeof state!=='undefined' && !state.needsLogin; }catch(e){ return false; } }
+
+  /* every currently-open layer, top-most LAST */
+  function layers(){
+    var out = [];
+    if(!loggedIn()) return out;
+    try{
+      if(typeof getActivePanelName==='function' && getActivePanelName()) out.push({ k:'panel:'+getActivePanelName(), close:function(){ closeAllPanels(); render(); } });
+    }catch(e){}
+    try{
+      FLAGS.forEach(function(f){ if(state[f]) out.push({ k:'flag:'+f, close:function(){ state[f] = (f==='quickActionRowId'||f==='expectClosureRowId') ? null : false; render(); } }); });
+    }catch(e){}
+    try{ var lf = document.getElementById('liveFeedPanel'); if(vis(lf)) out.push({ k:'lf', close:function(){ var b = lf.querySelector('.lf-x,[aria-label="Close"],[data-lf-close]'); if(b) b.click(); else esc(); } }); }catch(e){}
+    try{ var m4 = document.getElementById('d4Menu'); if(vis(m4)) out.push({ k:'d4menu', close:esc }); }catch(e){}
+    try{
+      Array.prototype.forEach.call(document.querySelectorAll('.d15-ov'), function(ov, i){
+        if(!vis(ov)) return;
+        // the "who are you" picker is a required step, not something Back may dismiss — but Ask Desk reuses its shell
+        if(ov.classList.contains('my-name-picker-overlay') && !ov.querySelector('.ask-card')) return;
+        out.push({ k:'ov:'+(ov.id||ov.className.split(' ')[0])+':'+i, el:ov, close:function(){ closeOv(ov); } });
+      });
+    }catch(e){}
+    return out;
+  }
+  function esc(){ try{ document.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', code:'Escape', bubbles:true })); }catch(e){} }
+  function closeOv(ov){
+    esc();
+    setTimeout(function(){ if(ov.isConnected && vis(ov)){ try{ ov.dispatchEvent(new MouseEvent('click', { bubbles:true })); }catch(e){} } }, 90);
+  }
+
+  function sync(){
+    timer = null;
+    var n = layers().length;
+    if(n > pushed){
+      for(var i=pushed;i<n;i++){ try{ history.pushState({ cdBack:1 }, '', location.href); }catch(e){} }
+      pushed = n;
+    } else if(n < pushed){
+      var back = pushed - n; pushed = n;
+      ignorePop++; try{ history.go(-back); }catch(e){ ignorePop = 0; }
+    }
+    fromBack = false;
+  }
+  function schedule(ms){ if(timer) return; timer = setTimeout(sync, ms==null ? 70 : ms); }
+
+  window.addEventListener('popstate', function(){
+    if(ignorePop > 0){ ignorePop--; return; }
+    var L = layers();
+    if(!L.length){ pushed = 0; return; }               // nothing open: this Back is a normal one (leaves the app)
+    pushed = Math.max(0, pushed - 1);
+    var top = L[L.length-1];
+    var key = top.k;
+    stuck = (key === lastTopKey) ? stuck + 1 : 0; lastTopKey = key;
+    fromBack = true;
+    try{ top.close(); }catch(e){ console.warn('[d16]', e); }
+    setTimeout(function(){
+      // if that layer refused to close, make sure the next Back can leave instead of trapping the user
+      var after = layers();
+      if(after.some(function(l){ return l.k === key; })){ if(top.el && top.el.isConnected){ try{ top.el.remove(); }catch(e){} } }
+      fromBack = true; schedule(0);
+    }, 260);
+  });
+
+  /* watch for layers opening / closing */
+  try{ new MutationObserver(function(){ schedule(); }).observe(document.body, { childList:true, subtree:true }); }catch(e){}
+  var iv = setInterval(function(){ schedule(0); }, 600);
+  var st = setInterval(function(){ if(typeof window.render==='function' && !window.__d16r){ window.__d16r = true; var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ schedule(); }catch(e){} return r; }; clearInterval(st); } }, 200);
+  window.__d16State = function(){ return { pushed:pushed, layers:layers().map(function(l){ return l.k; }) }; };
+})();
+
+/* ===== d18: phone flow — full-screen panels (nav bar, push animation), swipe-to-dismiss alerts ===== */
+;(function(){
+  if(window.__d18) return; window.__d18 = true;
+  var lastPanel = '', animT = null;
+  var phone = function(){ return window.__d17vw < 760; };
+  function name(){ try{ return (typeof state!=='undefined' && !state.needsLogin && typeof getActivePanelName==='function') ? (getActivePanelName()||'') : ''; }catch(e){ return ''; } }
+  function apply(){
+    var h = document.documentElement, n = phone() ? name() : '';
+    var app = document.getElementById('app');
+    h.classList.toggle('cd-pm', !!n);
+    if(app){
+      Array.prototype.forEach.call(app.querySelectorAll('.cd-pm-hide'), function(e){ e.classList.remove('cd-pm-hide'); });
+      if(n){
+        var bar = app.querySelector('.panel-header-bar');
+        if(bar){ var p = bar.previousElementSibling; while(p){ p.classList.add('cd-pm-hide'); p = p.previousElementSibling; } }
+      }
+    }
+    if(n !== lastPanel){
+      var opened = !!n && !lastPanel;
+      lastPanel = n;
+      if(n){
+        window.scrollTo(0,0);
+        if(phone()){ h.classList.add('cd-pm-anim'); clearTimeout(animT); animT = setTimeout(function(){ h.classList.remove('cd-pm-anim'); }, 420); }
+      } else { h.classList.remove('cd-pm-anim'); }
+    }
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d16){ return setTimeout(install,150); }
+    var o = window.render; window.render = function(){ var r = o.apply(this, arguments); try{ apply(); }catch(e){} return r; };
+    window.addEventListener('resize', function(){ try{ apply(); }catch(e){} }, { passive:true });
+    try{ apply(); }catch(e){}
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+
+  /* swipe a live-feed alert up or sideways to dismiss it */
+  var sw = null;
+  document.addEventListener('touchstart', function(e){
+    sw = null; if(e.touches.length!==1) return;
+    var t = e.target.closest && e.target.closest('#liveFeedToasts .lf-toast'); if(!t) return;
+    sw = { el:t, x:e.touches[0].clientX, y:e.touches[0].clientY, dx:0, dy:0, on:false };
+  }, { passive:true });
+  document.addEventListener('touchmove', function(e){
+    if(!sw) return; var tt = e.touches[0]; sw.dx = tt.clientX - sw.x; sw.dy = tt.clientY - sw.y;
+    if(!sw.on){ if(Math.abs(sw.dx)>10 || sw.dy<-10) sw.on = true; else return; }
+    sw.el.style.transition = 'none';
+    var d = Math.abs(sw.dx) > Math.abs(sw.dy) ? 'translateX('+sw.dx+'px)' : 'translateY('+Math.min(0,sw.dy)+'px)';
+    sw.el.style.transform = d; sw.el.style.opacity = String(Math.max(.2, 1 - Math.max(Math.abs(sw.dx), -sw.dy)/220));
+  }, { passive:true });
+  function swEnd(){
+    var s = sw; sw = null; if(!s || !s.on) return;
+    var far = Math.abs(s.dx) > 70 || s.dy < -34;
+    s.el.style.transition = 'transform .2s, opacity .2s';
+    if(far){
+      s.el.style.transform = Math.abs(s.dx) > Math.abs(s.dy) ? 'translateX('+(s.dx>0?'110%':'-110%')+')' : 'translateY(-120%)'; s.el.style.opacity = '0';
+      setTimeout(function(){ var b = s.el.querySelector('[data-lf-dismiss]'); if(b) b.click(); else s.el.remove(); }, 190);
+    } else { s.el.style.transform = ''; s.el.style.opacity = ''; }
+  }
+  document.addEventListener('touchend', swEnd, { passive:true });
+  document.addEventListener('touchcancel', swEnd, { passive:true });
+})();
+
+/* ===== d18: alert() becomes a small in-app message instead of a blocking browser popup ===== */
+;(function(){
+  if(window.__d18alert) return; window.__d18alert = true;
+  var el = null, t = null;
+  window.alert = function(msg){
+    try{
+      msg = String(msg==null?'':msg); if(!msg) return;
+      if(!el){ el = document.createElement('div'); el.className = 'cd-say'; el.setAttribute('role','status'); document.body.appendChild(el); el.addEventListener('click', function(){ el.style.display='none'; }); }
+      el.textContent = msg; el.style.display = ''; el.style.opacity = '1';
+      el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+      clearTimeout(t); t = setTimeout(function(){ el.style.opacity = '0'; setTimeout(function(){ if(el) el.style.display='none'; }, 260); }, Math.min(9000, 2800 + msg.length*45));
+    }catch(e){ console.log(msg); }
+  };
 })();
