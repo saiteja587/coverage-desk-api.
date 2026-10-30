@@ -1207,3 +1207,34 @@ button,summary,select,label[for],[role="button"],.d4-chip,.d4-seg{touch-action:m
   html.m-on .d4-chips{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
   #app .row-del{min-width:44px;min-height:44px}
 }
+
+/* d19 count badge: parentheses on desktop, round badge on phone */
+.cnt::before{content:"("}.cnt::after{content:")"}
+/* ═════════ d19 · new phone layout — "Today" app screen ═════════ */
+@media (max-width:759px){
+  html.m-on #app .header{padding:calc(env(safe-area-inset-top,0px) + 8px) 0 4px;gap:8px;border:0;margin-bottom:2px}
+  /* date line: ‹ date › ; tools: one row of 44px icon buttons (no scrolling, nothing clipped) */
+  html.m-on #app .date-row{display:flex!important;flex-wrap:wrap;gap:6px;overflow:visible!important;-webkit-mask-image:none!important;mask-image:none!important;align-items:stretch}
+  html.m-on #app .date-row #goHomeBtn{display:none}
+  html.m-on #app .date-row #prevDay,html.m-on #app .date-row #nextDay{flex:0 0 44px;order:1}
+  html.m-on #app .date-row #datePicker{flex:1 1 calc(100% - 100px);order:1;min-width:0;text-align:center;font-weight:700;font-size:16px;border-radius:14px}
+  html.m-on #app .date-row > #importHubWrap,html.m-on #app .date-row > .more-menu-wrap,html.m-on #app .date-row > #toggleClosures,html.m-on #app .date-row > #toggleExpectedClosures,
+  html.m-on #app .date-row > #toggleQuickSearch,html.m-on #app .date-row > #saveAllBtn,html.m-on #app .date-row > #toggleThemeBtn{order:2;flex:1 1 0;min-width:0;position:relative}
+  html.m-on #app .date-row .lbl{display:none}
+  html.m-on #app .date-row > .btn,html.m-on #app .date-row .more-menu-wrap > .btn,html.m-on #app .date-row > .arrow-btn#toggleThemeBtn{width:100%;min-height:44px;padding:0;display:flex;align-items:center;justify-content:center;font-size:19px;border-radius:14px;gap:2px}
+  html.m-on #app .date-row .cnt{position:absolute;top:2px;right:3px;min-width:16px;padding:0 4px;border-radius:9px;background:var(--teal);color:#06231f;font:700 10px/16px var(--mono,monospace);text-align:center}
+  html.m-on #app .date-row #toggleExpectedClosures .cnt{background:var(--amber,#E5B045)}
+  html.m-on #app .date-row #saveAllBtn{font-size:0}
+  html.m-on #app .date-row #saveAllBtn::before{content:"✓";font-size:19px;color:var(--teal)}
+  html.m-on #app .date-row #saveAllBtn.save-pending::before{content:"💾"}
+  html.m-on #app .date-row #saveAllBtn .spinner{margin:0}
+  html.m-on #app .date-row .cnt::before,html.m-on #app .date-row .cnt::after{content:none}
+  html.m-on #app .date-row .cnt[data-n="0"]{display:none}
+  /* calmer middle: no boxes around boxes */
+  html.m-on #app .search-row{padding:0 6px 0 14px;border:1px solid var(--hair,var(--border));border-radius:16px;background:var(--surface-2);min-height:48px;gap:8px}
+  html.m-on #app .search-row .search-box{border:0!important;background:transparent!important;box-shadow:none!important;padding:0;min-height:44px;font-size:16px}
+  html.m-on #app .search-row .d4-filter-btn{border:0;background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal);border-radius:12px;min-height:36px;padding:0 12px}
+  html.m-on #app .toolbar{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important;gap:8px}
+  html.m-on #app .toolbar .btn{flex:1 1 0;justify-content:center;white-space:nowrap}
+  html.m-on #app .d4-layout{margin-left:auto}
+}
