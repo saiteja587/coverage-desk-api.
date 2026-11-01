@@ -6977,7 +6977,7 @@ function render(){
       if(namesEquivalent(r.assignee, state.assigneeFilter)) return true;
       if(namesEquivalent(r.drivingPerson, state.assigneeFilter)) return true;
       const pm = findPortalMatch(r);
-      return !!(pm && namesEquivalent(pm.handler, state.assigneeFilter));
+      return !!(pm && portalHandlerMatchesPerson(pm.handler, state.assigneeFilter));
     });
   }
   if(state.clientFilter){
@@ -10837,20 +10837,51 @@ function renderRosterPanel(){
   </div>`;
 }
 
+// Portal syncs bring in handler spellings that are not team members: case variants ("anji"/"ANji"), typos
+// ("Bharat"/"Bharath"), notes glued to a name ("Avinash - cancel"), two people ("Avinash&Pradeep") and even status words
+// ("Availability"). This maps a portal handler string to the Coverage Desk roster people it really refers to, so the
+// person filter lists TEAM MEMBERS only and a portal-only spelling still finds that member's calls.
+const _portalRosterMemo = new Map();
+function portalHandlerToRoster(handler){
+  const raw = String(handler == null ? '' : handler).trim();
+  if(!raw) return [];
+  const rosterKey = state.roster.map(p=>p.name).join('|');
+  const memoKey = rosterKey + '##' + raw.toLowerCase();
+  if(_portalRosterMemo.has(memoKey)) return _portalRosterMemo.get(memoKey);
+  const clean = x => x.toLowerCase().replace(/\([^)]*\)/g,' ').replace(/\b(cancel(l?ed)?|resched\w*|not responded|no response|portal only)\b/g,' ').replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
+  const people = state.roster.map(p=>({ name:p.name, full:clean(p.name), first:clean(p.name).split(' ')[0] }));
+  const firstCount = {}; people.forEach(p=>{ firstCount[p.first] = (firstCount[p.first]||0)+1; });
+  const out = [];
+  raw.split(/\s*(?:&|\/|,|\band\b|\+)\s*/i).forEach(part=>{
+    const c = clean(part); if(!c) return;
+    let hit = people.find(p=>p.full === c);
+    if(!hit){ const cand = people.filter(p=>p.first === c.split(' ')[0] && firstCount[p.first] === 1 && (c.split(' ').length === 1 || p.full.startsWith(c) || c.startsWith(p.full))); if(cand.length === 1) hit = cand[0]; }
+    if(!hit && c.length >= 5){ const near = people.filter(p=>p.first.length >= 5 && Math.abs(p.first.length - c.length) <= 1 && levenshteinDistance(p.first, c.split(' ')[0]) <= 1 && firstCount[p.first] === 1); if(near.length === 1) hit = near[0]; }
+    if(hit && !out.includes(hit.name)) out.push(hit.name);
+  });
+  _portalRosterMemo.set(memoKey, out);
+  return out;
+}
+function portalHandlerMatchesPerson(handler, person){
+  if(!handler || !person) return false;
+  if(namesEquivalent(handler, person)) return true;
+  return portalHandlerToRoster(handler).some(n => namesEquivalent(n, person));
+}
 function buildCombinedAssigneeFilterOptions(){
-  // Combines Coverage Desk's own roster names with whatever names have
-  // shown up via Portal sync (the 📡 Portal column) — so picking a name
-  // finds a call regardless of which side actually has that person's
-  // name on it right now.
-  const rosterNames = state.roster.map(p=>p.name);
-  const portalNames = (state.portalAssignments||[]).map(p=>p.handler).filter(Boolean);
-  const combined = Array.from(new Set([...rosterNames, ...portalNames])).sort((a,b)=>a.localeCompare(b));
-  return combined.map(name=>{
-    const inRoster = rosterNames.includes(name);
-    const inPortal = portalNames.includes(name);
-    const tag = inRoster && inPortal ? '' : (inPortal ? ' (Portal only)' : '');
-    return `<option value="${escapeHtml(name)}" ${state.assigneeFilter===name?'selected':''}>${escapeHtml(name)}${tag}</option>`;
-  }).join('');
+  // Team members only, grouped by team. Portal-synced names are folded into the matching member (see
+  // portalHandlerToRoster) instead of being listed as separate "(Portal only)" spellings.
+  const teams = {};
+  state.roster.forEach(p=>{ (teams[p.team] = teams[p.team] || []).push(p); });
+  const knownOrder = ["HYD Team","Pradeep Anna Team","Development Team","Marketing Team","Sai Team","Sandeep Anna Team"];
+  const order = [...knownOrder, ...Object.keys(teams).filter(t=>!knownOrder.includes(t))].filter(t=>teams[t] && teams[t].length);
+  const sel = state.assigneeFilter || '';
+  let html = order.map(t=>`<optgroup label="${escapeHtml(t)}">` + teams[t].slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${escapeHtml(p.name)}" ${namesEquivalent(sel, p.name)?'selected':''}>${p.advanced?'★ ':''}${escapeHtml(p.name)}</option>`).join('') + `</optgroup>`).join('');
+  // a filter that was set to a name outside the roster (from a link, or an older session) must still show as selected
+  if(sel && !state.roster.some(p=>namesEquivalent(p.name, sel))){
+    const mapped = portalHandlerToRoster(sel);
+    if(!mapped.length) html += `<optgroup label="Other"><option value="${escapeHtml(sel)}" selected>${escapeHtml(sel)}</option></optgroup>`;
+  }
+  return html;
 }
 
 function buildRosterOptions(round, currentAssignee){
