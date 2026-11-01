@@ -15668,8 +15668,10 @@ function clientPeerBadge(row){
   } else if(!h.thisRole){
     head = 'No role on this call, so roles can\u2019t be compared.';
   }
-  const all = h.others.slice(0,6).map(line).join('\n');
-  const title = h.company + ' also had ' + h.others.length + ' earlier call' + (h.others.length===1?'':'s') + ' with other candidates' + (head ? '\n\n' + head : '') + '\n\nAll earlier:\n' + all;
+  // List each earlier call once: calls already shown under "same role" are not repeated below.
+  const rest = h.sameRole.length ? h.others.filter(o => !h.sameRole.includes(o)) : h.others;
+  const people = new Set(h.others.map(o => (o.candidate||'').trim().toLowerCase())).size;
+  const title = h.company + ' also had ' + h.others.length + ' earlier call' + (h.others.length===1?'':'s') + ' with ' + (people===1 ? 'one other candidate' : people + ' other candidates') + (head ? '\n\n' + head : '') + (rest.length ? '\n\n' + (h.sameRole.length ? 'Other earlier calls' : 'All earlier') + ':\n' + rest.slice(0,6).map(line).join('\n') : '');
   return `<span class="mini-badge mini-badge-client" title="${escapeHtml(title)}">C${tag}</span>`;
 }
 
@@ -18164,6 +18166,27 @@ async function askRunTool(name, args, ctx){
       list = list.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       return { period: rg.label, total: list.length, closures: list.slice(0, 15).map(c => ({ candidate: c.candidate, company: c.company || '', date: String(c.createdAt || '').slice(0, 10) })) };
     }
+    case 'assessments_list': {
+      if(!state.assessmentsLoaded){ try{ await loadAssessments(); }catch(e){} }
+      const rg = askRange(args, ctx.today);
+      let list = (state.assessments || []).filter(a => askInRange(a.date || '0000', rg) || (!rg.from && !rg.to));
+      if(args.company) list = list.filter(a => askCompanyMatch(a.company, args.company));
+      if(args.candidate) list = list.filter(a => deskLooseNameMatch(String(args.candidate), a.candidate || '') || deskTightSameName(String(args.candidate), a.candidate || ''));
+      if(args.handler) list = list.filter(a => (a.handlers || []).some(h => String(h).toLowerCase().includes(String(args.handler).toLowerCase())));
+      if(args.state === 'pending') list = list.filter(a => !a.done); else if(args.state === 'done') list = list.filter(a => a.done);
+      list = list.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+      return { period: rg.label, total: list.length, pending: list.filter(a => !a.done).length, done: list.filter(a => a.done).length, shown: Math.min(12, list.length),
+        assessments: list.slice(0, 12).map(a => ({ candidate: a.candidate, date: a.date || '', time: a.time || '', company: a.company || '', role: a.role || '', assessment: a.assessment || '', handlers: (a.handlers || []).join(', '), done: !!a.done })) };
+    }
+    case 'onsites_list': {
+      const rg = askRange(args, ctx.today);
+      let list = (ctx.rows || []).filter(r => r && r.onsite && r.candidate && askInRange(r._date || '0000', rg));
+      if(args.company) list = list.filter(r => askCompanyMatch(r.company, args.company));
+      if(args.candidate) list = list.filter(r => deskLooseNameMatch(String(args.candidate), r.candidate || '') || deskTightSameName(String(args.candidate), r.candidate || ''));
+      if(args.assignee) list = list.filter(r => String(askHandler(r) || '').toLowerCase().includes(String(args.assignee).toLowerCase()));
+      list = list.slice().sort(askByDateDesc);
+      return { period: rg.label, total: list.length, shown: Math.min(12, list.length), onsites: list.slice(0, 12).map(r => ({ candidate: r.candidate, date: r._date, time: r.time || '', company: r.company || '', round: r.round || '', handler: askHandler(r) || '' })) };
+    }
     default: return { error: 'Unknown tool' };
   }
 }
@@ -18245,6 +18268,12 @@ function askFormat(name, r){
   } else if(name === 'closures_list'){
     L.push(r.total + ' closure' + (r.total === 1 ? '' : 's') + ' (' + r.period + ')' + (r.total > r.closures.length ? ', showing ' + r.closures.length : '') + ':');
     r.closures.forEach(c => L.push('• ' + (c.date || 'date n/a') + ' — ' + c.candidate + ' → ' + (c.company || 'company n/a')));
+  } else if(name === 'assessments_list'){
+    L.push(r.total + ' assessment' + (r.total === 1 ? '' : 's') + ' (' + r.period + '): ' + r.pending + ' pending, ' + r.done + ' done' + (r.total > r.shown ? ', showing ' + r.shown : '') + ':');
+    (r.assessments || []).forEach(a => L.push('• ' + (a.date || 'date n/a') + (a.time ? ' ' + a.time : '') + ' — ' + a.candidate + ' · ' + (a.company || 'no company') + (a.assessment ? ' · ' + a.assessment : '') + (a.handlers ? ' · ' + a.handlers : '') + (a.done ? ' · done' : ' · pending')));
+  } else if(name === 'onsites_list'){
+    L.push(r.total + ' onsite' + (r.total === 1 ? '' : 's') + ' (' + r.period + ')' + (r.total > r.shown ? ', showing ' + r.shown : '') + ':');
+    (r.onsites || []).forEach(o => L.push('• ' + o.date + (o.time ? ' ' + o.time : '') + ' — ' + o.candidate + ' · ' + (o.company || 'no company') + (o.round ? ' · ' + o.round : '') + (o.handler ? ' · ' + o.handler : '')));
   } else L.push(JSON.stringify(r));
   return L;
 }
@@ -18301,6 +18330,21 @@ function askRoute(question, ctx){
   const person = (ctx.roster || []).map(p => p.name).filter(n => n && new RegExp('\\b' + n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(q)).sort((a, b) => b.length - a.length)[0] || '';
   if(/first.*(2nd|second|3rd|third|technical|advanced)|(2nd|second|technical|advanced).*first (time|ever)|new (to|in) (the )?(2nd|second|technical)/.test(q)) return { tool: 'first_advanced', args: { period: period || 'last_30_days' } };
   if(/stale|gone quiet|gone cold|no new calls?|stuck|dried up|haven'?t had a call/.test(q)) return { tool: 'stale_candidates', args: {} };
+  if(/assessment|assesment|\btest\b/.test(q)){
+    const co = askFindCompany(q, ctx);
+    const args = { period: period || 'all' };
+    if(co) args.company = co;
+    if(person) args.handler = person;
+    if(/pending|not done|to do|todo|yet to|remaining/.test(q)) args.state = 'pending'; else if(/\bdone\b|completed|finished/.test(q)) args.state = 'done';
+    return { tool: 'assessments_list', args };
+  }
+  if(/on-?site/.test(q)){
+    const co = askFindCompany(q, ctx);
+    const args = { period: period || 'all' };
+    if(co) args.company = co;
+    if(person) args.assignee = person;
+    return { tool: 'onsites_list', args };
+  }
   if(/closure|closed|offers?\b|placed|placement/.test(q)){
     const co = askFindCompany(q, ctx);
     return { tool: 'closures_list', args: Object.assign({ period: period || 'all' }, co ? { company: co } : {}) };
@@ -18333,7 +18377,7 @@ function askRoute(question, ctx){
 }
 const ASK_HELP = ['I can answer these from your saved calls (exact numbers, nothing guessed):',
   '• "Who got their first 2nd round this week?"', '• "Last call for <candidate name>"', '• "<Company> history" or "who handled <company>?"',
-  '• "How many calls per person this week?"', '• "Calls per role this month" or "<role name> calls"', '• "Unassigned calls today"', '• "Which candidates have gone quiet?"', '• "Closures this month"'];
+  '• "How many calls per person this week?"', '• "Calls per role this month" or "<role name> calls"', '• "Unassigned calls today"', '• "Which candidates have gone quiet?"', '• "Closures this month"', '• "Pending assessments" or "onsites this week"'];
 
 // ---- the chat window ----
 (function setupAskDesk(){
