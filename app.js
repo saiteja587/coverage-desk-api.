@@ -11347,6 +11347,36 @@ function renderTable(rows, conflictIds, clientConflicts){
     if(drivingPersonOptionsCache === null) drivingPersonOptionsCache = buildDrivingPersonOptions('');
     return drivingPersonOptionsCache;
   }
+  // LAZY OPTIONS (2026-11-01): each row used to carry ~50 <option> nodes (about half of all page nodes), which made every
+  // redraw ~35% slower. Rows now render only the CURRENT value in the assignee / driving-person dropdowns and the full list
+  // is filled in (a) the moment a dropdown is touched (pointer, touch, focus, key) and (b) in idle time right after each
+  // redraw — so programmatic/automated selection works too. See also __cdFillLazy below and the idle filler in ui.js.
+  const lazyLabelByValue = new Map();
+  state.roster.forEach(p=>{ lazyLabelByValue.set(p.name, (p.advanced?'★ ':'') + p.name); });
+  state.roster.forEach(p=>{ if(!lazyLabelByValue.has(p.team)) lazyLabelByValue.set(p.team, p.team); });
+  function lazyAssigneeOptions(r){
+    if(!r.assignee) return '';
+    return `<option value="${escapeHtml(r.assignee)}" selected>${escapeHtml(lazyLabelByValue.get(r.assignee) || r.assignee)}</option>`;
+  }
+  function lazyDrivingOptions(r){
+    if(!r.drivingPerson) return '';
+    return `<option value="${escapeHtml(r.drivingPerson)}" selected>${escapeHtml(r.drivingPerson)}</option>`;
+  }
+  window.__cdFillLazy = function(sel){
+    try{
+      if(!sel || !sel.hasAttribute || !sel.hasAttribute('data-lazy')) return false;
+      const kind = sel.getAttribute('data-lazy');
+      const cur = sel.value;
+      const first = sel.options[0];
+      while(sel.options.length > 1) sel.remove(1);
+      // keep the blank first option; replace everything after it
+      const html = kind === 'driving' ? cachedDrivingPersonOptions() : cachedRosterOptions(kind === 'roster-adv');
+      sel.insertAdjacentHTML('beforeend', html);
+      sel.removeAttribute('data-lazy');
+      sel.value = cur;
+      return true;
+    }catch(e){ return false; }
+  };
   // PERFORMANCE NOTE: tried lazy-loading this cached option-list string
   // (only building the full <select> contents when a row's dropdown is
   // actually opened, via a delegated focus handler) — profiling showed a
@@ -11443,9 +11473,9 @@ function renderTable(rows, conflictIds, clientConflicts){
       </td>
       <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${clientPeerBadge(r)}${roleHandlerBadge(r)}${(()=>{ const rel = findCompanyReliabilityFlag(r.company, r.country); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
       <td data-label="Assigned to">
-        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
+        ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? '' : `data-lazy="${advancedRound?'roster-adv':'roster'}"`} ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
-          ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? buildRosterOptions(r.round, r.assignee) : cachedRosterOptions(advancedRound)}
+          ${(r.assignee && !knownAssigneeValues.has(r.assignee)) ? buildRosterOptions(r.round, r.assignee) : lazyAssigneeOptions(r)}
         </select>
       </td>
       <td data-label="Role"><input class="cell-input" data-field="role" value="${escapeHtml(r.role||'')}" placeholder="—" title="Job role for this interview"></td>
@@ -11464,9 +11494,9 @@ function renderTable(rows, conflictIds, clientConflicts){
         </label>
       </td>` : ''}
       ${showDrivingPersonColumn ? `<td data-label="Driving Person">
-        <select class="driving-person-select" data-id="${r.id}" data-driving-value="${escapeHtml(r.drivingPerson||'')}" ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
+        <select class="driving-person-select" data-id="${r.id}" data-driving-value="${escapeHtml(r.drivingPerson||'')}" ${(r.drivingPerson && !knownDrivingPersonNames.has(r.drivingPerson)) ? '' : 'data-lazy="driving"'} ${(!canEditDrivingPerson || r.woi)?'disabled':''} title="Who on the team is actually running this call — separate from the team-level Assigned To">
           <option value="">— none —</option>
-          ${(r.drivingPerson && !knownDrivingPersonNames.has(r.drivingPerson)) ? buildDrivingPersonOptions(r.drivingPerson) : cachedDrivingPersonOptions()}
+          ${(r.drivingPerson && !knownDrivingPersonNames.has(r.drivingPerson)) ? buildDrivingPersonOptions(r.drivingPerson) : lazyDrivingOptions(r)}
         </select>
       </td>` : ''}
       <td data-label="Actions" class="actions-cell">${hasDoubts?`<button class="resolve-doubt" data-id="${r.id}" title="Mark doubt as resolved">✓</button>`:''}<button class="pin-toggle ${(r.interviewer||r.importance||r.technicalPOC||r.candidateFirstInterview)?'pin-toggle-filled':''}" data-id="${r.id}" title="Interviewer, Technical POC, Candidate's 1st Interview &amp; call importance">📌</button>${(()=>{
