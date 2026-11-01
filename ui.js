@@ -380,7 +380,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
   setInterval(pill, 1500);
 
   /* ---------- group-by + sticky + chips + urgency ---------- */
-  var collapsed = {};
+  var collapsed = {}, pinSig = '', pinEl = null;
   function groupKey(r, mode){
     if(mode==='handler') return r.woi ? 'Waiting for invite' : (r.assignee||'— Unassigned —');
     if(mode==='company') return (r.company||'(no company)').trim();
@@ -405,17 +405,23 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     var ths = $$('thead th', wrap), ci = -1;
     ths.forEach(function(th,i){ if(ci<0 && /candidate/i.test(th.textContent)) ci=i; });
     if(ci>=0 && window.__d17vw>=760){   // pinned columns only matter on the wide table; phone shows cards
-      // read every width FIRST, then write — interleaving them forced a full re-layout per column per row
+      // One <style> rule set instead of writing a class + left on every cell of every row (that was ~400 style
+      // invalidations per redraw). Widths are read once; the rules are only rewritten when the widths change.
       var widths = [], lefts = [], left = 0, i;
       for(i=0;i<=ci;i++){ widths.push(ths[i].offsetWidth); }
       for(i=0;i<=ci;i++){ lefts.push(left); left += widths[i]; }
-      for(i=0;i<=ci;i++){ ths[i].classList.add('d2-pin'); ths[i].style.left = lefts[i]+'px'; }
-      var trsAll = $$('tbody tr', wrap);
-      trsAll.forEach(function(tr){
-        if(tr.classList.contains('d2-grp')) return;
-        for(var c=0;c<=ci;c++){ var td = tr.children[c]; if(td){ td.classList.add('d2-pin'); td.style.left = lefts[c]+'px'; } }
-      });
-    }
+      var sig = ci+':'+lefts.join(',');
+      if(sig !== pinSig || !pinEl || !pinEl.isConnected){
+        pinSig = sig;
+        if(!pinEl || !pinEl.isConnected){ pinEl = document.createElement('style'); pinEl.id = 'd2PinStyle'; document.head.appendChild(pinEl); }
+        var K = ci+1, W = '#tableScrollMain ';
+        var css = W+'thead th:nth-child(-n+'+K+'),'+W+'tbody tr:not(.d2-grp)>:nth-child(-n+'+K+'){position:sticky;z-index:3;background:var(--surface)}'
+          + W+'thead th:nth-child(-n+'+K+'){z-index:6;background:var(--surface-2)}'
+          + W+'tbody tr.d5-active:not(.d2-grp)>:nth-child(-n+'+K+'){background:color-mix(in srgb,var(--teal) 9%,var(--surface))}';
+        for(i=0;i<=ci;i++){ css += W+'thead th:nth-child('+(i+1)+'),'+W+'tbody tr:not(.d2-grp)>:nth-child('+(i+1)+'){left:'+lefts[i]+'px}'; }
+        pinEl.textContent = css;
+      }
+    } else if(pinEl && pinEl.isConnected && window.__d17vw<760){ pinEl.textContent = ''; pinSig = ''; }
     // grouping
     var mode = LS.get('d2.group','off');
     $$('tr.d2-grp', tbody).forEach(function(g){ g.remove(); });
@@ -494,6 +500,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
   function assignTo(id, name){
     var r = rows().find(function(x){ return x.id===id; }); if(!r) return;
     var sel = $('tr[data-id="'+id+'"] select[data-field="assignee"]');
+    try{ if(sel && window.__cdFillLazy) window.__cdFillLazy(sel); }catch(e){}
     var has = sel && Array.prototype.some.call(sel.options, function(o){ return o.value===name; });
     if(sel && has){ sel.value = name; sel.dispatchEvent(new Event('change',{bubbles:true})); }
     else { r.assignee = name; markDirty(); render(); }
@@ -3910,4 +3917,37 @@ document.addEventListener('click', function(e){
   }, true);
   ['focusin','keydown','scroll','mousedown','touchstart'].forEach(function(ev){ document.addEventListener(ev, hide, true); });
   window.addEventListener('blur', hide);
+})();
+
+
+/* ===== d21: dropdown options load on demand (touch/focus) and in idle time after each redraw ===== */
+;(function(){
+  if(window.__d21) return; window.__d21 = true;
+  function fill(e){
+    var t = e.target, s = t && t.closest ? t.closest('select[data-lazy]') : null;
+    if(s && window.__cdFillLazy) window.__cdFillLazy(s);
+  }
+  ['pointerdown','mousedown','touchstart','focusin','keydown'].forEach(function(ev){ document.addEventListener(ev, fill, true); });
+  var ver = 0;
+  var ric = window.requestIdleCallback ? function(f,o){ return window.requestIdleCallback(f,o); } : function(f){ return setTimeout(function(){ f({ timeRemaining:function(){ return 8; } }); }, 60); };
+  function schedule(){
+    var v = ++ver;
+    function slice(){
+      if(v !== ver) return;
+      var list = document.querySelectorAll('select[data-lazy]'), n = 0;
+      for(var i=0; i<list.length && n<6; i++){
+        if(document.activeElement === list[i]) continue;
+        if(window.__cdFillLazy && window.__cdFillLazy(list[i])) n++;
+      }
+      if(document.querySelector('select[data-lazy]') && n>0) ric(slice, { timeout:250 });
+    }
+    ric(slice, { timeout:250 });
+  }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,120); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); try{ schedule(); }catch(e){} return r; };
+    try{ schedule(); }catch(e){}
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
