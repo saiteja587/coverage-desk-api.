@@ -24,6 +24,10 @@ const CHAT_TOOLS = [
   { name: 'first_advanced', description: 'Candidates whose first-ever 2nd-or-later round happened in the period.', properties: { period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
   { name: 'stale_candidates', description: 'Candidates with no new call for 14+ days (and not closed).', properties: { limit: 'integer' } },
   { name: 'board_overview', description: 'One day on the board: totals, by round, by person, unassigned and waiting-for-invite counts.', properties: { date: 'YYYY-MM-DD, default today' } },
+  { name: 'assessments_list', description: 'Assessments (tests given to candidates): total, pending vs done, and a list. Filter by company, candidate, handler, state (pending|done) or period.',
+    properties: { company: 'string', candidate: 'string', handler: 'string', state: 'enum: pending|done', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
+  { name: 'onsites_list', description: 'Onsite interviews (calls marked onsite): total and a list. Filter by company, candidate, assignee or period.',
+    properties: { company: 'string', candidate: 'string', assignee: 'string', period: 'enum', date_from: 'YYYY-MM-DD', date_to: 'YYYY-MM-DD' } },
   { name: 'closures_list', description: 'Recorded closures (offers). Filter by company, candidate or period.', properties: { company: 'string', candidate: 'string', period: 'enum' } },
 ];
 function chatToolDefs() {
