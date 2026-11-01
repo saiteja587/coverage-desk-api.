@@ -17664,6 +17664,13 @@ function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, team
     let best = null;
     const fam = deskRoleFamily(r.role);
     const famHist = fam ? prior.filter(x => x._date >= deskDateAdd(today, -60) && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status) && deskRoleFamily(x.role) === fam) : [];
+    // Same client + same kind of role (e.g. another "Data Analyst" call at this
+    // company): whoever handled the most recent one is the natural pick, even if
+    // it was only a single call and longer ago than the 14-day client window.
+    const roleCo = (fam || r.role) && ck ? prior.filter(x => normalizeCompanyKey(x.company) === ck && !countryConflict(x.country, r.country) && x._date >= deskDateAdd(today, -120) && x.assignee && !deskIsTeamName(x.assignee, teamNames) && !DESK_BAD_STATUSES.includes(x.status) && x.role && ((fam && deskRoleFamily(x.role) === fam) || rolesAlike(x.role, r.role)))
+      .sort((a, b) => b._date.localeCompare(a._date)) : [];
+    // Same kind of role anywhere: who handled the latest one.
+    const roleAny = fam ? famHist.slice().sort((a, b) => b._date.localeCompare(a._date)) : [];
     pool.forEach((p, idx) => {
       const clash = (busy[p.name] || []).some(b => iv.s < b.e && b.s < iv.e);
       if(clash) return;
@@ -17675,6 +17682,9 @@ function deskSuggestAssignees(todayRows, allRows, roster, absentIds, today, team
         if(share >= 0.6){ score += 40 * share; if(!why) why = 'handled ' + mine + ' of ' + compHist.length + ' recent ' + r.company + ' calls'; }
       }
       if(sameCand[0] && normalizeNameKey(sameCand[0].assignee) === normalizeNameKey(p.name)){ score += 25; if(!why) why = 'handled ' + r.candidate + ' before (' + sameCand[0]._date + ')'; }
+      if(roleCo[0] && normalizeNameKey(roleCo[0].assignee) === normalizeNameKey(p.name)){ score += 45; if(!why) why = 'handled the last ' + (roleCo[0].role ? String(roleCo[0].role).slice(0, 40) : 'similar') + ' call at ' + r.company + ' (' + roleCo[0]._date + ')'; }
+      else if(roleCo.some(x => normalizeNameKey(x.assignee) === normalizeNameKey(p.name))){ score += 15; if(!why) why = 'has handled ' + (r.role ? String(r.role).slice(0, 40) : 'this kind of role') + ' at ' + r.company + ' before'; }
+      if(roleAny[0] && normalizeNameKey(roleAny[0].assignee) === normalizeNameKey(p.name)){ score += 8; if(!why) why = 'handled the latest ' + fam.replace('it-support', 'IT-support') + ' role call (' + roleAny[0]._date + ')'; }
       if(famHist.length){
         const mineRole = famHist.filter(x => normalizeNameKey(x.assignee) === normalizeNameKey(p.name)).length;
         if(mineRole >= 2){ score += Math.min(20, 4 * mineRole); if(!why) why = 'has handled ' + mineRole + ' recent ' + fam.replace('it-support', 'IT-support') + ' roles (' + String(r.role).slice(0, 40) + ')'; }
