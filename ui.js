@@ -901,6 +901,15 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     var out = [];
     try{ var p = findPriorOccurrence(r); if(p && p.assignee) out.push({n:p.assignee, why:'handled this candidate before'}); }catch(e){}
     try{ var c = findPriorSameClientOccurrence(r); if(c && c.assignee) out.push({n:c.assignee, why:'handled this client before'}); }catch(e){}
+    // same client + same kind of role (e.g. another Data Analyst call at this company): whoever handled the latest one
+    try{
+      var ph = clientPeerHistory(r);
+      if(ph && r.role){
+        var fam = deskRoleFamily(r.role);
+        var hit = (ph.sameRole||[]).find(function(o){ return o.assignee; }) || (fam ? ph.others.find(function(o){ return o.assignee && deskRoleFamily(o.role)===fam; }) : null);
+        if(hit) out.push({n:hit.assignee, why:'handled the last '+String(hit.role||r.role).slice(0,40)+' call at this client ('+(hit.date||'')+')'});
+      }
+    }catch(e){}
     return out;
   }
   function buildSuggestions(){
