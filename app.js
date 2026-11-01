@@ -3992,6 +3992,20 @@ async function autoRouteRowsCore(newRows, existingRows){
     row.assignee = prior.assignee;
     if(row.doubts) row.doubts.push(`Carried forward: ${prior.assignee} handled this candidate’s ${prior.round||'earlier round'} at this company on ${prior.date} — double-check before assuming.`);
   });
+  // Same client + same kind of role (e.g. another "Data Analyst" at this company): the person who handled
+  // the latest one gets it, if they are on the roster and not absent today. Never overrides an existing owner.
+  try{
+    if(!state.clientHistory){ try{ state.clientHistory = await scanClientHistoryAllRounds(); }catch(e){} }
+    newRows.forEach(row=>{
+      if(row.woi || row.assignee || !row.candidate || !row.role || !row.company) return;
+      const hint = roleHandlerHint(row);
+      if(!hint) return;
+      const person = (state.roster || []).find(p => normalizeNameKey(p.name) === normalizeNameKey(hint.name));
+      if(!person || (state.absentIds || []).includes(person.id)) return;
+      row.assignee = person.name;
+      if(row.doubts) row.doubts.push(`Role match: ${person.name} handled the last ${String(hint.role).slice(0,40)} call at this client${hint.date ? ' on ' + hint.date : ''} — double-check before assuming.`);
+    });
+  }catch(e){ /* never let a hint break an import */ }
 
   function hasRoom(team, time){
     const size = team==='HYD Team' ? hydCount : (team==='Pradeep Anna Team' ? paCount : Infinity);
@@ -5164,7 +5178,7 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
   const byCompany = {};
   allRows.forEach(row=>{
     if(!row.company || !isAdvancedRound(row.round)) return;
-    const key = normalizeCompanyKey(row.company);
+    const key = normalizeCompanyKey(row.company) + '|' + canonCountry(row.country);
     byCompany[key] = byCompany[key] || [];
     byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || '', role: row.role || ''});
   });
@@ -5232,9 +5246,10 @@ async function scanClientReliability(forceRefresh){
   const byCompany = {};
   allRows.forEach(row=>{
     if(!row.company || row.woi) return; // WOI rows aren't a committed scheduled slot yet
-    const key = normalizeCompanyKey(row.company);
-    if(!key) return;
-    if(!byCompany[key]) byCompany[key] = { company: row.company, total: 0, bad: 0, breakdown: {rescheduled:0, cancelled:0, not_responded:0} };
+    const key0 = normalizeCompanyKey(row.company);
+    if(!key0) return;
+    const key = key0 + '|' + canonCountry(row.country);
+    if(!byCompany[key]) byCompany[key] = { company: row.company, country: row.country || '', total: 0, bad: 0, breakdown: {rescheduled:0, cancelled:0, not_responded:0} };
     const c = byCompany[key];
     c.total++;
     // Client names get typed inconsistently across dates/coordinators —
@@ -5261,11 +5276,11 @@ async function scanClientReliability(forceRefresh){
 // (so a brand-new client with one bad call never shows as "unreliable"),
 // and only once the rate is genuinely notable.
 const COMPANY_RELIABILITY_FLAG_THRESHOLD = 0.3;
-function findCompanyReliabilityFlag(company){
+function findCompanyReliabilityFlag(company, country){
   if(!company || !state.clientReliabilityData) return null;
   const key = normalizeCompanyKey(company);
   if(!key) return null;
-  const entry = state.clientReliabilityData.find(c => normalizeCompanyKey(c.company) === key);
+  const entry = state.clientReliabilityData.find(c => normalizeCompanyKey(c.company) === key && !countryConflict(c.country, country));
   if(!entry || entry.rate < COMPANY_RELIABILITY_FLAG_THRESHOLD) return null;
   return entry;
 }
@@ -8838,7 +8853,7 @@ function renderNotificationsPanel(){
           c.breakdown.not_responded ? `<span class="notif-chip">${c.breakdown.not_responded} no-response</span>` : ''
         ].join('');
         return `<div class="notif-row">
-          <div class="notif-name">${escapeHtml(c.company)} <span class="notif-warn" style="color:${barColor}">${pct}% (${c.bad} of ${c.total})</span></div>
+          <div class="notif-name">${escapeHtml(c.company)}${c.country ? ` <span class="notif-chip">${escapeHtml(c.country)}</span>` : ''} <span class="notif-warn" style="color:${barColor}">${pct}% (${c.bad} of ${c.total})</span></div>
           <div style="background:var(--surface-2);border-radius:4px;height:6px;margin:4px 0 6px;overflow:hidden;max-width:240px"><div style="width:${pct}%;height:100%;background:${barColor}"></div></div>
           ${breakdownChips ? `<div class="notif-detail">${breakdownChips}</div>` : ''}
         </div>`;
@@ -11426,7 +11441,7 @@ function renderTable(rows, conflictIds, clientConflicts){
           <option value="Ref" ${r.country==='Ref'?'selected':''}>Ref (reference call)</option>
         </select>
       </td>
-      <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${clientPeerBadge(r)}${(()=>{ const rel = findCompanyReliabilityFlag(r.company); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
+      <td data-label="Company">${clientHistoryBadge(r)}${isClientConflict?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(clientConflictReason)}">⏰</span>`:''}${clientPeerBadge(r)}${roleHandlerBadge(r)}${(()=>{ const rel = findCompanyReliabilityFlag(r.company, r.country); return rel ? `<span class="mini-badge mini-badge-reliability" title="⚠ ${escapeHtml(rel.company)}: ${Math.round(rel.rate*100)}% of ${rel.total} recorded calls ended rescheduled/cancelled/no-response — worth planning for.">${Math.round(rel.rate*100)}%</span>` : ''; })()}<input class="cell-input" data-field="company" value="${escapeHtml(r.company)}"></td>
       <td data-label="Assigned to">
         ${showAbsentWarning?`<span class="flag-icon" style="color:var(--coral)" title="${escapeHtml(r.assignee)} is marked absent for ${escapeHtml(state.date)} — this call needs reassigning.">🚫</span>`:''}${showAdvancedWarning?'<span class="flag-icon" title="Not usually a 2nd round+ handler">△</span>':''}<select class="cell-input ${(!r.assignee && !r.woi)?'empty':''} ${isTeamLevel?'team-level':''}" data-field="assignee" data-assignee-value="${escapeHtml(r.assignee)}" ${r.woi?'disabled':''}>
           <option value="">${r.woi?'— WOI —':'— unassigned —'}</option>
@@ -15581,9 +15596,9 @@ async function scanClientHistoryAllRounds(forceRefresh){
       bucketOf[own] = hit || own;
       if(!hit) bucketKeys.push(own);
     }
-    const key = bucketOf[own];
+    const key = bucketOf[own] + '|' + canonCountry(row.country);
     byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || ''});
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || '', role: row.role || ''});
   });
   const results = [];
   Object.values(byCompany).forEach(occ=>{
@@ -15596,7 +15611,7 @@ async function scanClientHistoryAllRounds(forceRefresh){
     const uniqueCandidates = new Set(occ.map(o=>(o.candidate||'').trim().toLowerCase()));
     if(occ.length > 1 && uniqueCandidates.size > 1){
       occ.sort((a,b)=> b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
-      results.push({ company: stripCompanyNoise(occ[0].company) || occ[0].company, occurrences: occ });
+      results.push({ company: stripCompanyNoise(occ[0].company) || occ[0].company, country: occ[0].country || '', occurrences: occ });
     }
   });
   results.sort((a,b)=> b.occurrences[0].date.localeCompare(a.occurrences[0].date));
@@ -15613,7 +15628,8 @@ function rolesAlike(a, b){
 function clientPeerHistory(row){
   if(!row.company || !state.clientHistory) return null;
   const key = normalizeCompanyKey(row.company);
-  const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key) || state.clientHistory.find(n => fuzzyCompanyKeyMatch(n.company, row.company));
+  const cands = state.clientHistory.filter(n => normalizeCompanyKey(n.company) === key || fuzzyCompanyKeyMatch(n.company, row.company)).filter(n => !countryConflict(n.country, row.country));
+  const entry = cands.find(n => canonCountry(n.country) === canonCountry(row.country)) || cands[0];
   if(!entry) return null;
   const me = (row.candidate||'').trim().toLowerCase();
   const others = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== me && !countryConflict(o.country, row.country));
@@ -15621,6 +15637,23 @@ function clientPeerHistory(row){
   const sameRole = row.role ? others.filter(o => rolesAlike(o.role, row.role)) : [];
   const known = others.filter(o => o.role);
   return { company: entry.company, others, sameRole, rolesKnown: known.length, thisRole: row.role || '' };
+}
+// "Who handled this kind of role here last" — shown on the call when it is not already with that person.
+function roleHandlerHint(row){
+  if(!row.role || !row.company) return null;
+  const h = clientPeerHistory(row); if(!h) return null;
+  const fam = (typeof deskRoleFamily === 'function') ? deskRoleFamily(row.role) : '';
+  const hit = (h.sameRole || []).find(o => o.assignee) || (fam ? h.others.find(o => o.assignee && deskRoleFamily(o.role) === fam) : null);
+  if(!hit) return null;
+  const tn = (typeof getTeamNames === 'function') ? getTeamNames() : new Set();
+  if(tn.has && tn.has(hit.assignee)) return null;
+  if(normalizeNameKey(hit.assignee) === normalizeNameKey(row.assignee || '')) return null;
+  return { name: hit.assignee, role: hit.role || row.role, date: hit.date || '' };
+}
+function roleHandlerBadge(row){
+  const h = roleHandlerHint(row); if(!h) return '';
+  const first = String(h.name).split(/\s+/)[0];
+  return `<span class="mini-badge mini-badge-rolehandler" title="${escapeHtml(h.name + ' handled the last ' + String(h.role).slice(0, 50) + ' call at ' + row.company + (h.date ? ' (' + h.date + ')' : '') + '.')}">🎯 ${escapeHtml(first)}</span>`;
 }
 function clientPeerBadge(row){
   const h = clientPeerHistory(row); if(!h) return '';
