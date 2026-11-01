@@ -234,7 +234,18 @@ module.exports = async (req, res) => {
       if (!ok) return res.status(401).json({ error: 'Unauthorized' });
       const r = await gdocSyncStore(db);
       if (r && r.ok && r.changed && r.added > 0) r.push = await gdocPushNotify(db, r.added);
+      if (r && !r.ok) r.push = await gdocPushFailure(db);
       return res.status(200).json(r);
+    }
+
+    // End-of-day wrap-up push, hit once a day by the same external scheduler (cron-job.org) with the same secret.
+    // Read-only: counts today's and tomorrow's calls and sends ONE phone notification per day (IST).
+    if (resource === 'eod_cron') {
+      const expected = process.env.PUSH_ALERT_SECRET;
+      if (!expected) return res.status(500).json({ error: 'PUSH_ALERT_SECRET is not configured for this project.' });
+      const ok = (req.headers['authorization'] || '') === 'Bearer ' + expected || (req.query && req.query.secret) === expected;
+      if (!ok) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(200).json(await eodSendSummary(db, !!(req.query && req.query.force)));
     }
 
     const auth = await authenticate(req, db);
@@ -414,13 +425,13 @@ function gdocCountAddedCalls(oldText, newText) {
   return n;
 }
 // Sends a Web Push to every subscribed device. Silent no-op when push is not set up yet.
-async function gdocPushNotify(db, added) {
+async function gdocPushNotify(db, added, override) {
   try {
     if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return { sent: 0, note: 'push not configured' };
     let webpush; try { webpush = require('web-push'); } catch (e) { return { sent: 0, note: 'web-push not installed' }; }
     webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
     const [subs] = await db.query('SELECT id, endpoint, p256dh, auth_key FROM push_subscriptions');
-    const payload = JSON.stringify({
+    const payload = JSON.stringify(override || {
       title: '📄 Google Doc synced',
       body: added + ' new call line' + (added === 1 ? '' : 's') + ' found in the doc. Open the Google Doc inbox to review.',
       tag: 'cd-gdoc',
@@ -434,6 +445,49 @@ async function gdocPushNotify(db, added) {
     if (dead.length) { try { await db.query('DELETE FROM push_subscriptions WHERE id IN (?)', [dead]); } catch (e) {} }
     return { sent };
   } catch (e) { console.error('gdocPushNotify', e && e.message); return { sent: 0, note: 'error' }; }
+}
+// One phone push per day (IST) when the hourly check cannot read the doc, so a broken link never goes unnoticed
+// and never spams hourly.
+async function gdocPushFailure(db) {
+  try {
+    const day = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+    const [r] = await db.query("SELECT setting_value FROM app_settings WHERE setting_key = 'gdoc_err_push'");
+    if (r.length && String(r[0].setting_value) === day) return { sent: 0, note: 'already sent today' };
+    const [e] = await db.query('SELECT last_error FROM gdoc_inbox WHERE id = 1');
+    const out = await gdocPushNotify(db, 0, {
+      title: '⚠ Google Doc sync failed',
+      body: String((e[0] && e[0].last_error) || 'The hourly check could not read the doc.').slice(0, 140),
+      tag: 'cd-gdoc-err',
+      data: { kind: 'gdoc' },
+    });
+    await db.query("INSERT INTO app_settings (setting_key, setting_value) VALUES ('gdoc_err_push', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)", [day]);
+    return out;
+  } catch (e) { console.error('gdocPushFailure', e && e.message); return { sent: 0, note: 'error' }; }
+}
+async function eodSendSummary(db, force) {
+  try {
+    const day = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 5.5 * 3600 * 1000 + 86400000).toISOString().slice(0, 10);
+    if (!force) {
+      const [r] = await db.query("SELECT setting_value FROM app_settings WHERE setting_key = 'eod_push_sent'");
+      if (r.length && String(r[0].setting_value) === day) return { ok: true, sent: 0, note: 'already sent today' };
+    }
+    let rows;
+    try {
+      [rows] = await db.query('SELECT c.call_date AS d, c.assignee AS a, c.is_woi AS w, cs.status AS s FROM calls c LEFT JOIN call_status cs ON cs.call_id = c.id WHERE c.call_date IN (?, ?)', [day, tomorrow]);
+    } catch (e) {
+      [rows] = await db.query('SELECT call_date AS d, assignee AS a, is_woi AS w FROM calls WHERE call_date IN (?, ?)', [day, tomorrow]);
+    }
+    const today = rows.filter(r => String(r.d).slice(0, 10) === day || (r.d instanceof Date && r.d.toISOString().slice(0, 10) === day));
+    const next = rows.length - today.length;
+    const live = today.filter(r => !r.w);
+    const unassigned = live.filter(r => !String(r.a || '').trim()).length;
+    const moved = today.filter(r => r.s && /resched|cancel|not_responded/i.test(String(r.s))).length;
+    const body = live.length + ' calls today · ' + (live.length - unassigned) + ' assigned' + (unassigned ? ' · ' + unassigned + ' still unassigned' : '') + (moved ? ' · ' + moved + ' rescheduled/cancelled' : '') + '. Tomorrow: ' + next + ' call' + (next === 1 ? '' : 's') + ' so far.';
+    const out = await gdocPushNotify(db, 0, { title: '🌙 Day wrap-up', body: body.slice(0, 180), tag: 'cd-eod', data: { kind: 'eod' } });
+    await db.query("INSERT INTO app_settings (setting_key, setting_value) VALUES ('eod_push_sent', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)", [day]);
+    return { ok: true, body, push: out };
+  } catch (e) { console.error('eodSendSummary', e && e.message); return { ok: false, error: 'eod_failed' }; }
 }
 async function gdocSyncStore(db, urlOverride) {
   await gdocEnsureTable(db);
