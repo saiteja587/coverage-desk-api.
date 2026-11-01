@@ -3852,3 +3852,62 @@ document.addEventListener('click', function(e){
     }catch(e){ console.log(msg); }
   };
 })();
+
+/* ===== d20: hover a candidate's name → their last 10 calls (date, company, round, who handled) ===== */
+;(function(){
+  if(window.__d20) return; window.__d20 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var pop = null, timer = null, curEl = null;
+  function canHover(){ try{ return window.matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){ return true; } }
+  function hide(){ clearTimeout(timer); timer = null; curEl = null; if(pop){ pop.remove(); pop = null; } }
+  function short(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'}); }catch(e){ return d||''; } }
+  function build(name, el){
+    var entry = null; try{ entry = findNotificationEntryForCandidate(name); }catch(e){}
+    var occ = entry && entry.occurrences ? entry.occurrences.slice() : [];
+    var rowId = el.closest && el.closest('tr') ? el.closest('tr').getAttribute('data-id') : '';
+    var row = null; try{ row = (state.rows||[]).find(function(r){ return r.id===rowId; }); }catch(e){}
+    var h = '<div style="font-weight:700;font-size:13px;margin-bottom:2px">'+esc(entry ? entry.candidate : name)+'</div>';
+    if(!occ.length){
+      return h + '<div style="opacity:.75;font-size:12px">No earlier calls on file for this name.</div>';
+    }
+    var shown = occ.slice(0,10);
+    h += '<div style="opacity:.7;font-size:11.5px;margin-bottom:6px">Last '+shown.length+(occ.length>shown.length?' of '+occ.length:'')+' call'+(shown.length===1?'':'s')+'</div>';
+    h += '<div style="display:grid;grid-template-columns:auto 1fr auto auto;gap:3px 12px;font-size:12.5px;align-items:baseline">';
+    shown.forEach(function(o){
+      var isThis = row && o.date===state.date && String(o.time||'')===String(row.time||'') && String(o.round||'')===String(row.round||'');
+      var st = (o.status ? ' <span style="color:var(--amber,#e5b045)" title="'+esc(o.status)+'">⚠</span>' : '');
+      var who = o.assignee ? esc(o.assignee) : '<span style="opacity:.55">unassigned</span>';
+      var st0 = isThis ? 'background:rgba(80,200,160,.14);border-radius:6px;' : '';
+      h += '<span style="white-space:nowrap;opacity:.8;'+st0+'">'+esc(short(o.date))+(isThis?' · now':'')+'</span>'
+        + '<span style="min-width:0;overflow-wrap:anywhere;'+st0+'"><b>'+esc(o.company||'—')+'</b>'+st+'</span>'
+        + '<span style="white-space:nowrap;opacity:.85;'+st0+'">'+esc(o.round||'')+'</span>'
+        + '<span style="white-space:nowrap;'+st0+'">'+who+'</span>';
+    });
+    return h + '</div>';
+  }
+  function show(el){
+    var name = (el.value||'').trim(); if(!name || name.length<2) return;
+    hide(); curEl = el;
+    pop = document.createElement('div'); pop.id = 'd20Hist';
+    pop.style.cssText = 'position:fixed;z-index:100010;max-width:min(560px,94vw);min-width:300px;padding:12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);pointer-events:none;font-family:inherit';
+    pop.innerHTML = build(name, el);
+    document.body.appendChild(pop);
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8));
+    var top = r.bottom + 6; if(top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+    pop.style.left = left+'px'; pop.style.top = top+'px';
+  }
+  document.addEventListener('mouseover', function(e){
+    if(!canHover()) return;
+    var el = e.target && e.target.closest ? e.target.closest('input.cell-input[data-field="candidate"]') : null;
+    if(!el){ return; }
+    if(el === curEl && pop) return;
+    clearTimeout(timer); timer = setTimeout(function(){ try{ show(el); }catch(x){} }, 350);
+  }, true);
+  document.addEventListener('mouseout', function(e){
+    var el = e.target && e.target.closest ? e.target.closest('input.cell-input[data-field="candidate"]') : null;
+    if(el){ var to = e.relatedTarget; if(!to || !el.contains(to)) hide(); }
+  }, true);
+  ['focusin','keydown','scroll','mousedown','touchstart'].forEach(function(ev){ document.addEventListener(ev, hide, true); });
+  window.addEventListener('blur', hide);
+})();
