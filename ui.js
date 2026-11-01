@@ -3295,7 +3295,7 @@ document.addEventListener('click', function(e){
       parsed = parsed.filter(function(p){ return p && p.candidate; });
       if(!parsed.length) continue;
       var existing = await dayRows(d);
-      var used = {}, day = { date:d, docCount:parsed.length, fresh:[], same:0, changed:[], onlyApp:0 };
+      var used = {}, day = { date:d, docCount:parsed.length, fresh:[], same:0, changed:[], onlyApp:0, all:[] };
       var seenKey = {};
       day.dupes = 0;
       parsed.forEach(function(p){
@@ -3305,8 +3305,8 @@ document.addEventListener('click', function(e){
         var ex = findExistingCallMatch(p, existing);
         if(!ex){
           var key = d+'|'+String(p.candidate||'').trim().toLowerCase()+'|'+ck(p.company)+'|'+nk(p.time);
-          if(dis[key]){ day.hidden = (day.hidden||0)+1; return; }
-          day.fresh.push({ p:p, key:key, warn: warnReason(p) }); return;
+          if(dis[key]){ day.hidden = (day.hidden||0)+1; day.all.push({ p:p, st:'hidden' }); return; }
+          day.fresh.push({ p:p, key:key, warn: warnReason(p) }); day.all.push({ p:p, st:'new' }); return;
         }
         used[ex.id] = 1;
         var diffs = [];
@@ -3314,7 +3314,7 @@ document.addEventListener('click', function(e){
         if(p.company && ex.company && !sameCo(p.company, ex.company)) diffs.push('company: doc '+p.company+' · app '+ex.company);
         var explicit = !(p.doubts||[]).some(function(x){ return /Round wasn.t stated/.test(x); });
         if(explicit && p.round && ex.round && rk(p.round)!==rk(ex.round)) diffs.push('round: doc '+p.round+' · app '+ex.round);
-        if(diffs.length) day.changed.push({ p:p, ex:ex, diffs:diffs }); else day.same++;
+        if(diffs.length){ day.changed.push({ p:p, ex:ex, diffs:diffs }); day.all.push({ p:p, ex:ex, st:'diff', diffs:diffs }); } else { day.same++; day.all.push({ p:p, ex:ex, st:'in' }); }
       });
       day.onlyApp = existing.filter(function(r){ return r && r.candidate && !used[r.id]; }).length;
       plan.days.push(day); plan.docLines += parsed.length; plan.hidden += (day.hidden||0);
@@ -3339,6 +3339,42 @@ document.addEventListener('click', function(e){
       out += '</details>';
     });
     return out;
+  }
+
+  var ST = { 'new':['＋ New','rgba(80,200,160,.16)'], 'in':['✓ In app','transparent'], 'diff':['≠ Differs','rgba(232,163,61,.16)'], 'hidden':['Dismissed','rgba(127,127,127,.12)'] };
+  function sheetRows(){
+    var out = [];
+    ((S.plan && S.plan.days) || []).forEach(function(d){ (d.all||[]).forEach(function(a, i){ out.push({ date:d.date, i:i+1, a:a }); }); });
+    return out;
+  }
+  function sheetHtml(){
+    var P = S.plan; if(!P) return '';
+    if(!P.days.length) return '<div style="opacity:.75;font-size:13px;padding:8px 0">No calls from '+esc(fmtDate(P.from))+' onwards were found in the doc.</div>';
+    var G = 'display:grid;grid-template-columns:28px 76px minmax(150px,1.4fr) minmax(130px,1.1fr) 64px 64px 118px;gap:0;min-width:680px;align-items:start';
+    var th = 'padding:6px 8px;font-weight:600;font-size:11.5px;opacity:.75;white-space:nowrap';
+    var td = 'padding:7px 8px;font-size:12.5px;border-top:1px solid var(--border,#2a2f3a);min-width:0;overflow-wrap:anywhere';
+    var out = '<div style="font-size:12px;opacity:.75">A read-only copy of the Google Doc. Nothing here changes your calls — to bring a call in, use the Review tab (or Import as usual).</div>';
+    P.days.forEach(function(d){
+      var nNew = (d.all||[]).filter(function(x){ return x.st==='new'; }).length;
+      out += '<details open style="margin-top:6px"><summary style="cursor:pointer;font-size:13px;padding:4px 0"><b>'+esc(fmtDate(d.date))+'</b> — '+(d.all||[]).length+' calls'+(nNew?' · <b>'+nNew+' not in app</b>':' · all in app')+'</summary>'+
+        '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px"><div role="table" style="min-width:680px"><div role="row" style="'+G+'"><div style="'+th+'">#</div><div style="'+th+'">Time</div><div style="'+th+'">Candidate</div><div style="'+th+'">Company</div><div style="'+th+'">Round</div><div style="'+th+'">Country</div><div style="'+th+'">In app?</div></div>';
+      (d.all||[]).forEach(function(a, i){
+        var p = a.p, st = ST[a.st] || ST['in'];
+        var tip = a.diffs ? ' title="'+esc(a.diffs.join('; '))+'"' : '';
+        out += '<div role="row" style="'+G+';background:'+st[1]+'"><div style="'+td+';opacity:.55">'+(i+1)+'</div><div style="'+td+';white-space:nowrap;font-weight:600">'+esc(p.time||(p.woi?'WOI':'—'))+'</div><div style="'+td+'">'+esc(p.candidate)+'</div><div style="'+td+'">'+esc(p.company||'—')+'</div><div style="'+td+'">'+esc(p.round||'')+'</div><div style="'+td+'">'+esc(p.country||'')+'</div><div style="'+td+'"'+tip+'>'+st[0]+(a.ex && a.ex.assignee ? '<div style="opacity:.7;font-size:11.5px">'+esc(a.ex.assignee)+'</div>' : '')+(a.diffs?'<div style="opacity:.8;font-size:11.5px">'+esc(a.diffs[0])+'</div>':'')+'</div></div>';
+      });
+      out += '</div></div></details>';
+    });
+    out += '<div style="margin-top:8px"><button type="button" class="d14-copy" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer;font-size:13px">📋 Copy as sheet (paste into Google Sheets / Excel)</button></div>';
+    return out;
+  }
+  function copySheet(){
+    var lines = ['Date\tTime\tCandidate\tCompany\tRound\tCountry\tIn app?'];
+    sheetRows().forEach(function(r){ var p = r.a.p; lines.push([r.date, p.time||(p.woi?'WOI':''), p.candidate, p.company||'', p.round||'', p.country||'', (ST[r.a.st]||ST['in'])[0].replace(/^[＋✓≠]\s*/,'')].map(function(x){ return String(x==null?'':x).replace(/[\t\r\n]+/g,' '); }).join('\t')); });
+    var txt = lines.join('\n');
+    var done = function(ok){ S.msg = ok ? ('Copied '+(lines.length-1)+' rows. Paste into a sheet.') : 'Could not copy automatically.'; S.err=''; paint(); };
+    try{ navigator.clipboard.writeText(txt).then(function(){ done(true); }, function(){ done(false); }); }
+    catch(e){ done(false); }
   }
 
   function ago(iso){
@@ -3370,6 +3406,7 @@ document.addEventListener('click', function(e){
     if(!el) return;
     var btn = 'padding:8px 12px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:inherit;cursor:pointer;font-size:13px';
     var nSel = S.plan ? Object.keys(S.sel).filter(function(k){ return S.sel[k]; }).length : 0;
+    try{ el.firstChild.style.maxWidth = S.tab==='sheet' ? '980px' : '640px'; }catch(e){}
     el.querySelector('.d14-body').innerHTML =
       '<div style="font-size:12px;opacity:.75">This is a waiting room. The doc is checked every hour and new calls wait here. Nothing goes into your main calls until you tick calls and press Add. Calls already in the app are never changed or removed.</div>'+
       statusHtml()+
@@ -3378,8 +3415,9 @@ document.addEventListener('click', function(e){
       '<details '+(S.err?'open':'')+' style="font-size:12px"><summary style="cursor:pointer;opacity:.8">…or paste the doc text instead</summary><textarea class="d14-paste" placeholder="Copy from the doc and paste here" style="width:100%;box-sizing:border-box;min-height:90px;margin-top:6px;border-radius:8px;padding:8px">'+esc(S.paste)+'</textarea><button type="button" class="d14-usepaste" style="'+btn+';margin-top:6px">Check pasted text</button></details>'+
       (S.err?'<div style="color:var(--coral,#f66);font-size:13px">'+esc(S.err)+'</div>':'')+
       (S.msg?'<div style="font-size:13px;color:var(--teal,#4fd1b0);white-space:pre-line">'+esc(S.msg)+'</div>':'')+
-      planHtml()+
-      (S.plan && S.plan.days.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="d14-apply" style="'+btn+';background:var(--teal-dim,rgba(80,200,160,.18))" '+((S.applying||!nSel)?'disabled':'')+'>'+(S.applying?'Adding…':'Add '+nSel+' selected to main calls')+'</button><button type="button" class="d14-dismiss" style="'+btn+'" '+((S.applying||!nSel)?'disabled':'')+'>Dismiss selected</button><button type="button" class="d14-all" style="'+btn+'">Select all new</button><button type="button" class="d14-none" style="'+btn+'">Select none</button></div>' : '');
+      (S.plan ? '<div style="display:flex;gap:6px;margin-top:2px"><button type="button" class="d14-tab" data-tab="review" style="'+btn+(S.tab!=='sheet'?';background:var(--teal-dim,rgba(80,200,160,.18));font-weight:700':'')+'">Review new</button><button type="button" class="d14-tab" data-tab="sheet" style="'+btn+(S.tab==='sheet'?';background:var(--teal-dim,rgba(80,200,160,.18));font-weight:700':'')+'">Sheet (whole doc)</button></div>' : '')+
+      (S.tab==='sheet' ? sheetHtml() : planHtml())+
+      (S.tab!=='sheet' && S.plan && S.plan.days.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="d14-apply" style="'+btn+';background:var(--teal-dim,rgba(80,200,160,.18))" '+((S.applying||!nSel)?'disabled':'')+'>'+(S.applying?'Adding…':'Add '+nSel+' selected to main calls')+'</button><button type="button" class="d14-dismiss" style="'+btn+'" '+((S.applying||!nSel)?'disabled':'')+'>Dismiss selected</button><button type="button" class="d14-all" style="'+btn+'">Select all new</button><button type="button" class="d14-none" style="'+btn+'">Select none</button></div>' : '');
   }
 
   function selectDefaults(){
@@ -3511,6 +3549,8 @@ document.addEventListener('click', function(e){
     if(t===el || (t.classList && t.classList.contains('d14-x'))) return closeS();
     if(t.classList.contains('d14-fetch')){ S.url = ($('.d14-url', el)||{}).value || S.url; return fetchDoc(); }
     if(t.classList.contains('d14-usepaste')){ S.paste = ($('.d14-paste', el)||{}).value || ''; return runPlan(S.paste); }
+    if(t.classList.contains('d14-tab')){ S.tab = t.dataset.tab === 'sheet' ? 'sheet' : 'review'; S.msg=''; return paint(); }
+    if(t.classList.contains('d14-copy')) return copySheet();
     if(t.classList.contains('d14-apply')) return apply();
     if(t.classList.contains('d14-dismiss')) return dismissSel();
     if(t.classList.contains('d14-restore')) return restoreDismissed();
