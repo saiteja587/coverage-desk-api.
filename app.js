@@ -3988,6 +3988,7 @@ async function autoRouteRowsCore(newRows, existingRows){
     const prior = findPriorOccurrence(row);
     if(!prior || !prior.assignee || teamNames.has(prior.assignee)) return;
     if(!fuzzyCompanyKeyMatch(row.company, prior.company)) return;
+    if(countryConflict(row.country, prior.country)) return;
     row.assignee = prior.assignee;
     if(row.doubts) row.doubts.push(`Carried forward: ${prior.assignee} handled this candidate’s ${prior.round||'earlier round'} at this company on ${prior.date} — double-check before assuming.`);
   });
@@ -5135,7 +5136,7 @@ async function scanForRepeatCandidates(forceRefresh){
     if(!row.candidate) return;
     const key = row.candidate.trim().toLowerCase();
     byCandidate[key] = byCandidate[key] || [];
-    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, role: row.role || '', status: row.status, statusFields: row.statusFields});
+    byCandidate[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || '', role: row.role || '', status: row.status, statusFields: row.statusFields});
   });
 
   const results = [];
@@ -5165,7 +5166,7 @@ async function scanRepeatClientsAdvancedRounds(forceRefresh){
     if(!row.company || !isAdvancedRound(row.round)) return;
     const key = normalizeCompanyKey(row.company);
     byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, role: row.role || ''});
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || '', role: row.role || ''});
   });
   const results = [];
   Object.values(byCompany).forEach(occ=>{
@@ -11027,6 +11028,22 @@ function stripCompanyNoise(company){
   }
   return c.replace(/\s+/g, ' ').trim();
 }
+// Same company name in two different countries (e.g. an "Amey" call for the UK
+// and one for the US) is NOT the same client. Only a clear mismatch counts:
+// if either side has no country, nothing is ruled out.
+function canonCountry(c){
+  const k = String(c == null ? '' : c).toLowerCase().replace(/[^a-z]/g,'');
+  if(!k) return '';
+  if(/^(us|usa|unitedstates|unitedstatesofamerica|america)$/.test(k)) return 'us';
+  if(/^(uk|gb|gbr|unitedkingdom|greatbritain|britain|england|scotland|wales)$/.test(k)) return 'uk';
+  if(/^(ie|ir|ireland|eire)$/.test(k)) return 'ireland';
+  if(/^(ca|canada)$/.test(k)) return 'canada';
+  return k;
+}
+function countryConflict(a, b){
+  const x = canonCountry(a), y = canonCountry(b);
+  return !!x && !!y && x !== y;
+}
 function normalizeCompanyKey(company){
   return stripCompanyNoise(company).toLowerCase().replace(/[^a-z0-9]/g,'');
 }
@@ -15461,7 +15478,8 @@ function findPriorRescheduleWarning(row){
   return entry.occurrences.find(o =>
     o.status && ['rescheduled','cancelled','not_responded'].includes(o.status) &&
     !(o.date === state.date && o.time === row.time && o.round === row.round) &&
-    normalizeCompanyKey(o.company) === rowCompanyKey
+    normalizeCompanyKey(o.company) === rowCompanyKey &&
+    !countryConflict(o.country, row.country)
   ) || null;
 }
 
@@ -15486,7 +15504,8 @@ function findSameClientHistory(row){
   // preserves that order.
   return entry.occurrences.filter(o =>
     !(o.date === state.date && o.time === row.time && o.round === row.round) &&
-    fuzzyCompanyKeyMatch(o.company, row.company)
+    fuzzyCompanyKeyMatch(o.company, row.company) &&
+    !countryConflict(o.country, row.country)
   );
 }
 function findPriorSameClientOccurrence(row){
@@ -15564,7 +15583,7 @@ async function scanClientHistoryAllRounds(forceRefresh){
     }
     const key = bucketOf[own];
     byCompany[key] = byCompany[key] || [];
-    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company});
+    byCompany[key].push({date: row._date, round: row.round, time: row.time, candidate: row.candidate, assignee: row.assignee, company: row.company, country: row.country || ''});
   });
   const results = [];
   Object.values(byCompany).forEach(occ=>{
@@ -15597,7 +15616,7 @@ function clientPeerHistory(row){
   const entry = state.clientHistory.find(n => normalizeCompanyKey(n.company) === key) || state.clientHistory.find(n => fuzzyCompanyKeyMatch(n.company, row.company));
   if(!entry) return null;
   const me = (row.candidate||'').trim().toLowerCase();
-  const others = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== me);
+  const others = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== me && !countryConflict(o.country, row.country));
   if(!others.length) return null;
   const sameRole = row.role ? others.filter(o => rolesAlike(o.role, row.role)) : [];
   const known = others.filter(o => o.role);
