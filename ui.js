@@ -4353,7 +4353,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.1', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.2', SEEN_KEY = 'cd.v2.seen';
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4364,6 +4364,12 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.2','2026-11-02','Desk tools',[
+      '🧰 Tools hub (header + Command Center): everything below in one place',
+      '📥 Paste a message — opens the reschedule/cancel importer; 📞 Chase list — mark invited / confirmed / no reply, copy chase messages',
+      '🔁 Reschedule helper — next free slots for the same owner plus a ready client message; 🔥 Heads-up for stacked handlers and 👯 duplicate calls',
+      '📌 Client rules shown on every call; 📊 Insights by client, role and owner; 📈 Weekly report with PDF; 🎤 Quick add by typing or voice; 🔗 Handler links'
+    ]],
     ['V2.1','2026-11-02','Automation',[
       'Owners fill themselves from the portal after every sync/import (1st round, and 2nd round when the match is certain); doubtful ones wait in a Confirm list',
       '✨ Fill the day — one button proposes an owner for every unowned call',
@@ -4701,6 +4707,375 @@ window.cdOwnerOf = function(r){
     if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,250); }
     var o = window.render;
     window.render = function(){ var r = o.apply(this, arguments); clearTimeout(t); t = setTimeout(function(){ try{ applyLeave(); autoOwners(); }catch(e){ console.warn('d28', e); } }, 400); return r; };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+/* ===== d29: V2.2 desk tools — paste, chase list, reschedule helper, heads-up, client rules, insights, weekly report, quick add, handler link ===== */
+;(function(){
+  if(window.__d29) return; window.__d29 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var toast = function(m){ try{ if(window.d2Toast) window.d2Toast(m,{ms:4000}); }catch(e){} };
+  var rows = function(){ return state.rows||[]; };
+  var own = function(r){ try{ return window.cdOwnerOf ? window.cdOwnerOf(r) : ((r.assignee||'').trim()?{name:r.assignee}:null); }catch(e){ return null; } };
+  var live = function(){ return rows().filter(function(r){ return !r.woi && !r.status && r.candidate; }); };
+  var first = function(n){ return String(n||'').trim().split(/\s+/)[0]||''; };
+  var pad = function(n){ return (n<10?'0':'')+n; };
+  var fmtT = function(b){ var c=(b+720)%1440, h=Math.floor(c/60), m=c%60; return (h%12||12)+':'+pad(m)+' '+(h>=12?'PM':'AM'); };
+  var dur = function(r){ var d = null; try{ d = parseDurationMinutes(r.duration); }catch(e){} return d>0 ? d : 30; };
+  var ck = function(c){ try{ return normalizeCompanyKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z0-9]/g,''); } };
+  var nk = function(c){ try{ return normalizeNameKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var copy = function(tx, btn, label){
+    var done = function(){ if(btn){ var o = label||btn.textContent; btn.textContent = '✓ Copied'; setTimeout(function(){ btn.textContent = o; }, 1600); } };
+    try{ navigator.clipboard.writeText(tx).then(done, function(){ window.prompt('Copy this', tx); }); }catch(e){ window.prompt('Copy this', tx); }
+  };
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d29-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d29x aria-label="Close">✕</button></div><div class="d29-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d29x]'))) closeOv(el); });
+    return el;
+  }
+  function closeOv(el){ if(el && el.parentNode) el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  function setBody(el, html){ var b = el.querySelector('.d29-body'); if(b){ var s = el.scrollTop; b.innerHTML = html; el.scrollTop = s; } }
+
+  /* ---------- confirmation tracker (per-date note, no new DB column) ---------- */
+  var cid = function(){ return state.date+'-confirm-ids'; };
+  function getConf(){ var e = (state.notes||[]).find(function(n){ return n && n.id===cid(); }); try{ return e ? (JSON.parse(e.text)||{}) : {}; }catch(x){ return {}; } }
+  function setConf(rid, v){
+    var m = getConf(); if(v && m[rid]!==v) m[rid] = v; else delete m[rid];
+    state.notes = state.notes || [];
+    var i = state.notes.findIndex(function(n){ return n && n.id===cid(); }), keys = Object.keys(m);
+    if(keys.length){ var tx = JSON.stringify(m); if(i>=0) state.notes[i].text = tx; else state.notes.push({id:cid(), text:tx}); }
+    else if(i>=0) state.notes.splice(i,1);
+    try{ markDirty(); }catch(e){}
+  }
+  var CONF = [['invited','📨','Invited'],['confirmed','✅','Confirmed'],['noreply','🔕','No reply']];
+  function chaseMsg(r){ return 'Hi '+first(r.candidate)+', a quick reminder: your '+(r.round||'')+' interview with '+(r.company||'the client')+(r.role?' ('+r.role+')':'')+' is today at '+(r.time||'the scheduled time')+'. Please reply to confirm you will be available.'; }
+  function chaseHtml(){
+    var m = getConf(), n = nowBd();
+    var L = live().filter(function(r){ return bd(r.time)!==9999; }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
+    var cnt = {confirmed:0, invited:0, noreply:0, none:0}; L.forEach(function(r){ cnt[m[r.id]||'none']++; });
+    var h = '<div class="d29-sum"><span><b>'+cnt.confirmed+'</b> confirmed</span><span><b>'+cnt.invited+'</b> invited</span><span class="'+(cnt.noreply?'bad':'')+'"><b>'+cnt.noreply+'</b> no reply</span><span><b>'+cnt.none+'</b> not marked</span></div>';
+    var chase = L.filter(function(r){ return m[r.id]!=='confirmed' && bd(r.time)>=n-15; });
+    if(chase.length) h += '<div class="d27-actions"><button type="button" class="d27-btn" data-d29chaseall>📋 Copy '+chase.length+' chase message'+(chase.length===1?'':'s')+'</button></div>';
+    h += '<div class="d27-list">'+(L.length? L.map(function(r){ var s = m[r.id]||'';
+      return '<div class="d29-cr"><div class="d29-crt"><span class="t">'+esc(r.time)+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company,r.round].filter(Boolean).join(' · '))+'</small></span><button type="button" class="d27-btn sm ghost" data-d29chase="'+esc(r.id)+'">📋</button></div>'
+        + '<div class="d29-seg">'+CONF.map(function(c){ return '<button type="button" class="'+(s===c[0]?'on '+c[0]:'')+'" data-d29conf="'+esc(r.id)+'" data-v="'+c[0]+'">'+c[1]+' '+c[2]+'</button>'; }).join('')+'</div></div>'; }).join('') : '<div class="d27-empty">No timed calls today.</div>')+'</div>';
+    return h;
+  }
+
+  /* ---------- reschedule helper ---------- */
+  function slotsFor(r, k){
+    var o = own(r), who = o && o.name;
+    var cal = rows().filter(function(x){ if(x===r || x.woi || x.status || !x.candidate || bd(x.time)===9999) return false; if(who){ var ox = own(x); return ox && ox.name===who; } return (x.assignee||'')===(r.assignee||''); });
+    var d = dur(r), t0 = bd(r.time), base = Math.max(nowBd(), t0===9999?0:t0) + 15, out = [];
+    for(var s = Math.ceil(base/30)*30; s < 1440 && out.length<k; s += 30){
+      var bad = cal.some(function(x){ var b = bd(x.time), e = b+dur(x); return s < e && b < s+d; });
+      if(!bad) out.push(s);
+    }
+    return { who: who, slots: out };
+  }
+  function reschedMsg(r, s){
+    return 'Hi, we need to reschedule '+r.candidate+'’s '+(r.round||'')+' interview for '+(r.company||'your team')+(r.role?' ('+r.role+')':'')+' on '+state.date+' — the earlier slot was '+(r.time||'unconfirmed')+'. Could you confirm '+fmtT(s)+' instead? Please let us know if another time works better.';
+  }
+  var rsId = null, rsPick = null;
+  function reschedHtml(){
+    var r = rows().find(function(x){ return x.id===rsId; });
+    if(!r){
+      var L = live().sort(function(a,b){ return bd(a.time)-bd(b.time); });
+      return '<p class="d29-p">Pick the call that has to move.</p><div class="d27-list">'+(L.length? L.map(function(x){ return '<button type="button" class="d27-row" data-d29rspick="'+esc(x.id)+'"><span class="t">'+esc(x.time||'')+'</span><span class="n"><b>'+esc(x.candidate)+'</b><small>'+esc([x.company,x.round].filter(Boolean).join(' · '))+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">No live calls.</div>')+'</div>';
+    }
+    var p = slotsFor(r, 6); if(rsPick===null || p.slots.indexOf(rsPick)<0) rsPick = p.slots[0]===undefined ? null : p.slots[0];
+    var h = '<div class="d29-rsh"><b>'+esc(r.candidate)+'</b><small>'+esc([r.time,r.company,r.round].filter(Boolean).join(' · '))+'</small><small>'+(p.who?'Free slots for '+esc(p.who):'Free slots (no owner yet — checked against the team)')+'</small></div>';
+    h += p.slots.length ? '<div class="d29-seg wrap">'+p.slots.map(function(s){ return '<button type="button" class="'+(s===rsPick?'on':'')+'" data-d29slot="'+s+'">'+fmtT(s)+'</button>'; }).join('')+'</div>' : '<div class="d27-empty">No free slot left today.</div>';
+    if(rsPick!==null){
+      h += '<textarea class="d29-ta" readonly id="d29rsm">'+esc(reschedMsg(r, rsPick))+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d29rscopy>📋 Copy client message</button>'+(admin()?'<button type="button" class="d27-btn ghost" data-d29rsapply>Move call to '+fmtT(rsPick)+'</button>':'')+'</div>';
+    }
+    return h + '<div class="d27-actions"><button type="button" class="d27-btn ghost" data-d29rsback>‹ Other call</button></div>';
+  }
+
+  /* ---------- heads-up: overload + duplicates ---------- */
+  function overload(){
+    var by = {}, out = [];
+    live().forEach(function(r){ var o = own(r); if(!o || !o.name || bd(r.time)===9999) return; (by[o.name] = by[o.name]||[]).push(r); });
+    Object.keys(by).forEach(function(nm){
+      var L = by[nm].sort(function(a,b){ return bd(a.time)-bd(b.time); }), msg = null, ids = L.map(function(r){ return r.id; });
+      for(var i=0;i<L.length-1;i++){ if(bd(L[i+1].time)-bd(L[i].time) < dur(L[i])+5 && L[i].time!==L[i+1].time){ msg = 'back-to-back '+L[i].time+' → '+L[i+1].time; break; } }
+      if(!msg){ for(var a=0;a+2<L.length;a++){ if(bd(L[a+2].time)-bd(L[a].time) <= 120){ msg = '3 calls within 2 hours from '+L[a].time; break; } } }
+      if(msg) out.push({ic:'🔥', t:nm+' is stacked', s:msg, id:L[0].id, who:nm});
+    });
+    return out;
+  }
+  function dupes(){
+    var m = {}, out = [], hist = null;
+    live().forEach(function(r){ var k = nk(r.candidate)+'|'+ck(r.company); (m[k] = m[k]||[]).push(r); });
+    Object.keys(m).forEach(function(k){ if(m[k].length>1) out.push({ic:'👯', t:'Possible duplicate: '+m[k][0].candidate, s:m[k].length+' entries for '+(m[k][0].company||'same company')+' today', id:m[k][0].id}); });
+    try{ hist = (typeof _allRowsAcrossDatesCache!=='undefined') ? _allRowsAcrossDatesCache : null; }catch(e){}
+    if(hist){
+      var done = {rescheduled:1,cancelled:1,not_responded:1,no_invite:1};
+      live().forEach(function(r){
+        var k = nk(r.candidate)+'|'+ck(r.company)+'|'+String(r.round||'').toLowerCase();
+        var prev = hist.filter(function(h){ return h._date && h._date < state.date && !h.woi && !done[h.status] && (nk(h.candidate)+'|'+ck(h.company)+'|'+String(h.round||'').toLowerCase())===k; })[0];
+        if(prev && !out.some(function(o){ return o.id===r.id; })) out.push({ic:'🔁', t:r.candidate+' already had this round', s:(r.company||'')+' · '+(r.round||'')+' on '+prev._date, id:r.id});
+      });
+    }
+    return out;
+  }
+  function noReplies(){
+    var m = getConf(), n = nowBd();
+    return live().filter(function(r){ return m[r.id]==='noreply' && bd(r.time)!==9999 && bd(r.time)-n<=60 && bd(r.time)-n>=-10; }).map(function(r){ return {ic:'🔕', t:r.candidate+' has not replied', s:'call at '+r.time+' — chase now', id:r.id}; });
+  }
+  function heads(){ var o = []; try{ o = noReplies().concat(overload(), dupes()); }catch(e){ console.warn('d29 heads', e); } return o; }
+  window.d29Heads = heads;
+  var prevNudges = window.d28Nudges;
+  window.d28Nudges = function(){
+    var base = []; try{ base = prevNudges ? prevNudges() : []; }catch(e){}
+    var mon = []; try{ if(new Date().getDay()===1 && !LS.g('cd.wk.'+state.date,'')) mon = [{ic:'📈', t:'Monday — last week’s report is ready', s:'open 🧰 Tools → Weekly report', tool:'week'}]; }catch(e){}
+    return base.concat(heads(), mon).slice(0,8);
+  };
+
+  /* ---------- client rules ---------- */
+  var RULES = {}, rulesLoaded = false;
+  async function loadRules(){
+    try{ RULES = JSON.parse(LS.g('cd.rules','{}'))||{}; }catch(e){ RULES = {}; }
+    try{ var d = await apiCall('app_settings', {qs:'key=client_rules'}); if(d && d.value){ RULES = JSON.parse(d.value)||{}; LS.s('cd.rules', d.value); } }catch(e){}
+    inject();
+  }
+  async function saveRules(){
+    var v = JSON.stringify(RULES); LS.s('cd.rules', v);
+    try{ await apiCall('app_settings', {method:'POST', body:{key:'client_rules', value:v}}); toast('Client rules saved'); }catch(e){ toast('Saved on this device only — server save failed'); }
+  }
+  function companies(){
+    var m = {}; rows().forEach(function(r){ if(r.company){ var k = ck(r.company); if(k && !m[k]) m[k] = r.company.trim(); } });
+    Object.keys(RULES).forEach(function(k){ if(!m[k]) m[k] = k; });
+    return m;
+  }
+  function rulesHtml(){
+    var cs = companies(), keys = Object.keys(cs).sort(function(a,b){ return (RULES[b]?1:0)-(RULES[a]?1:0) || cs[a].localeCompare(cs[b]); });
+    return '<p class="d29-p">One note per client — shown on every call for that client. '+(admin()?'Tap a client to write or change its rule.':'Only the admin can edit these.')+'</p><div class="d27-list">'
+      + (keys.length? keys.map(function(k){ return '<div class="d29-rl"><button type="button" class="d27-row" data-d29rule="'+esc(k)+'"'+(admin()?'':' disabled')+'><span class="n"><b>'+esc(cs[k])+'</b><small>'+(RULES[k]?esc(RULES[k]):'No rule yet')+'</small></span><span class="o">'+(RULES[k]?'✎':'＋')+'</span></button></div>'; }).join('') : '<div class="d27-empty">No clients on this day yet.</div>')+'</div>';
+  }
+  function ruleEdit(el, k){
+    var cs = companies();
+    setBody(el, '<p class="d29-p"><b>'+esc(cs[k]||k)+'</b></p><textarea class="d29-ta" id="d29rt" rows="5" placeholder="e.g. Always send the Zoom link 30 min early · No calls after 6 PM · Ask for the TA before rescheduling">'+esc(RULES[k]||'')+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d29rsave="'+esc(k)+'">Save</button>'+(RULES[k]?'<button type="button" class="d27-btn ghost" data-d29rdel="'+esc(k)+'">Remove</button>':'')+'<button type="button" class="d27-btn ghost" data-d29rback>Back</button></div>');
+  }
+
+  /* ---------- call-card injection (rule banner + quick actions) ---------- */
+  var curId = null;
+  var o23 = window.d23Open; if(o23) window.d23Open = function(id){ curId = id; return o23.apply(this, arguments); };
+  var o5 = window.d5OpenSide; if(o5) window.d5OpenSide = function(id){ curId = id; return o5.apply(this, arguments); };
+  function box(r){
+    var t = RULES[ck(r.company)], m = getConf()[r.id], cl = CONF.filter(function(c){ return c[0]===m; })[0];
+    return '<div class="d29-box" data-d29for="'+esc(r.id)+'">'+(t?'<div class="d29-rule"><b>📌 '+esc(r.company)+' rule</b><span>'+esc(t)+'</span></div>':'')
+      + '<div class="d29-qa"><button type="button" data-d29qa="rs" data-id="'+esc(r.id)+'">🔁 Next free slot</button><button type="button" data-d29qa="cf" data-id="'+esc(r.id)+'">'+(cl?cl[1]+' '+cl[2]:'📞 Confirmation')+'</button></div></div>';
+  }
+  function rowForSide(side){
+    var nm = ((side.querySelector('.d5-ht b')||{}).textContent||'').trim(); if(!nm) return null;
+    var tm = (side.querySelector('[data-f="time"]')||{}).value;
+    var c = rows().filter(function(r){ return (r.candidate||'').trim()===nm; });
+    return (tm && c.filter(function(r){ return r.time===tm; })[0]) || c[0] || null;
+  }
+  var injT = 0;
+  function inject(){
+    var c23 = document.querySelector('#d23 .d23-card'), r;
+    if(c23 && curId){ r = rows().filter(function(x){ return x.id===curId; })[0]; var ex = c23.querySelector('.d29-box');
+      if(r && !r.woi && (!ex || ex.getAttribute('data-d29for')!==String(r.id) || ex.__sig!==(RULES[ck(r.company)]||'')+(getConf()[r.id]||''))){ if(ex) ex.remove(); var a = c23.querySelector('.d23-chips'); if(a){ a.insertAdjacentHTML('afterend', box(r)); var nb = c23.querySelector('.d29-box'); if(nb) nb.__sig = (RULES[ck(r.company)]||'')+(getConf()[r.id]||''); } } }
+    var side = document.querySelector('#d5Side .d5-body');
+    if(side){ var sd = document.getElementById('d5Side'); r = rowForSide(sd); var ex2 = side.querySelector('.d29-box');
+      if(r && !r.woi && (!ex2 || ex2.getAttribute('data-d29for')!==String(r.id) || ex2.__sig!==(RULES[ck(r.company)]||'')+(getConf()[r.id]||''))){ if(ex2) ex2.remove(); side.insertAdjacentHTML('afterbegin', box(r)); var nb2 = side.querySelector('.d29-box'); if(nb2) nb2.__sig = (RULES[ck(r.company)]||'')+(getConf()[r.id]||''); } }
+  }
+  try{ new MutationObserver(function(){ clearTimeout(injT); injT = setTimeout(inject, 60); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+
+  /* ---------- insights ---------- */
+  async function insightsHtml(){
+    var all = []; try{ all = await fetchAllRowsAcrossDates(); }catch(e){}
+    all = (all||[]).filter(function(r){ return r.candidate && !r.woi; });
+    if(!all.length) return '<div class="d27-empty">No history loaded yet.</div>';
+    function grp(keyFn, label){
+      var m = {}; all.forEach(function(r){ var k = keyFn(r); if(!k) return; var o = m[k] || (m[k] = {k:k, name:label(r), n:0, rs:0, cx:0, nr:0}); o.n++; if(r.status==='rescheduled') o.rs++; else if(r.status==='cancelled') o.cx++; else if(r.status==='not_responded'||r.status==='no_invite') o.nr++; });
+      return Object.keys(m).map(function(k){ return m[k]; }).filter(function(o){ return o.n>=3; }).sort(function(a,b){ return b.n-a.n; }).slice(0,8);
+    }
+    var pc = function(a,n){ return n? Math.round(a/n*100)+'%' : '0%'; };
+    function tbl(title, L){
+      return '<div class="d27-sec"><b>'+title+'</b><span>calls · resched · cancel · no-show</span></div><div class="d27-list">'+(L.length? L.map(function(o){ var bad = (o.rs+o.cx+o.nr)/o.n >= 0.3; return '<div class="d29-ir"><span class="n"><b>'+esc(o.name)+'</b></span><span>'+o.n+'</span><span class="'+(o.rs/o.n>=.2?'bad':'')+'">'+pc(o.rs,o.n)+'</span><span class="'+(o.cx/o.n>=.2?'bad':'')+'">'+pc(o.cx,o.n)+'</span><span class="'+(o.nr/o.n>=.2?'bad':'')+'">'+pc(o.nr,o.n)+'</span></div>'; }).join('') : '<div class="d27-empty">Not enough calls yet (needs 3+).</div>')+'</div>';
+    }
+    var h = '<p class="d29-p">Based on '+all.length+' calls across all saved days.</p>';
+    h += tbl('Clients', grp(function(r){ return ck(r.company); }, function(r){ return r.company; }));
+    h += tbl('Roles', grp(function(r){ try{ return deskRoleFamily(r.role); }catch(e){ return ''; } }, function(r){ try{ return deskRoleFamily(r.role); }catch(e){ return ''; } }));
+    h += tbl('Owners', grp(function(r){ return (r.drivingPerson||'').trim() || ''; }, function(r){ return r.drivingPerson; }));
+    try{
+      var perf = await computeClosuresPerformance(); var calls = {};
+      all.forEach(function(r){ var w = (r.drivingPerson||r.assignee||'').trim(); if(w) calls[w] = (calls[w]||0)+1; });
+      var L = (perf.rows||[]).filter(function(x){ return x.closures>0; }).sort(function(a,b){ return b.closures-a.closures; }).slice(0,8);
+      h += '<div class="d27-sec"><b>Closures by handler</b><span>closures · per 100 calls</span></div><div class="d27-list">'+(L.length? L.map(function(x){ var c = calls[x.handler]||0; return '<div class="d29-ir two"><span class="n"><b>'+esc(x.handler)+'</b></span><span>'+x.closures+'</span><span>'+(c? (x.closures/c*100).toFixed(1) : '—')+'</span></div>'; }).join('') : '<div class="d27-empty">No closures matched yet.</div>')+'</div>';
+    }catch(e){}
+    return h;
+  }
+
+  /* ---------- weekly report ---------- */
+  var wkStart = null, wkAll = null;
+  async function weekHtml(){
+    if(!wkAll){ try{ wkAll = await fetchAllRowsAcrossDates(); }catch(e){ wkAll = []; } }
+    if(!wkStart) wkStart = deskDateAdd(deskMonday(todayDateString()), -7);
+    var rep = deskWeeklyReport(wkAll, wkStart, getTeamNames()), tx = deskWeeklyText(rep);
+    LS.s('cd.wk.'+todayDateString(), '1');
+    return '<div class="d29-wk"><button type="button" class="d27-btn sm ghost" data-d29wk="-1">‹</button><b>'+esc(rep.start)+' → '+esc(rep.end)+'</b><button type="button" class="d27-btn sm ghost" data-d29wk="1">›</button></div>'
+      + '<div class="d29-sum"><span><b>'+(rep.totals.total||0)+'</b> calls</span><span><b>'+(rep.totals.resched||0)+'</b> resched</span><span><b>'+(rep.totals.cancelled||0)+'</b> cancelled</span><span><b>'+rep.woi+'</b> WOI</span></div>'
+      + '<textarea class="d29-ta" readonly rows="10" id="d29wkt">'+esc(tx)+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d29wkcopy>📋 Copy for WhatsApp</button><button type="button" class="d27-btn ghost" data-d29wkpdf>🖨 Print / Save PDF</button></div>';
+  }
+  function weekPdf(){
+    var rep = deskWeeklyReport(wkAll||[], wkStart, getTeamNames()), w = window.open('', '_blank'); if(!w){ toast('Allow pop-ups to print'); return; }
+    var q = function(x){ return esc(x); };
+    w.document.write('<!doctype html><title>Coverage Desk week '+q(rep.start)+'</title><style>body{font:14px system-ui;padding:28px;color:#111}h1{font-size:20px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:14px}th,td{border:1px solid #bbb;padding:6px 9px;text-align:left}th{background:#eee}td+td,th+th{text-align:right}</style><h1>Coverage Desk — weekly report</h1><div>'+q(rep.start)+' to '+q(rep.end)+' · '+(rep.totals.total||0)+' calls · '+rep.woi+' waiting for invite</div><table><tr><th>Person</th><th>Total</th><th>1st</th><th>Advanced</th><th>Resched</th><th>Cancelled</th><th>No response</th></tr>'
+      + rep.rows.map(function(r){ return '<tr><td>'+q(r.name)+'</td><td>'+r.total+'</td><td>'+r.first+'</td><td>'+r.adv+'</td><td>'+r.resched+'</td><td>'+r.cancelled+'</td><td>'+r.noresp+'</td></tr>'; }).join('')+'</table>');
+    w.document.close(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 300);
+  }
+
+  /* ---------- quick add (type or speak) ---------- */
+  var qaDraft = null;
+  function parseQuick(tx){
+    var s = ' '+tx.replace(/\s+/g,' ').trim()+' ', out = {candidate:'', company:'', role:'', time:'', round:'1st'};
+    var tm = s.match(/(\d{1,2})(?:[:.\s](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)/i);
+    if(tm){ var h = +tm[1], mi = tm[2]?+tm[2]:0, ap = /p/i.test(tm[3]); if(h>=1&&h<=12&&mi<60){ out.time = h+':'+pad(mi)+' '+(ap?'PM':'AM'); s = s.replace(tm[0],' '); } }
+    if(/\b(second|2nd|advanced|final|third|3rd)\b/i.test(s)){ out.round = '2nd Round'; s = s.replace(/\b(second|2nd|advanced|final|third|3rd)\s*(round)?\b/ig,' '); } else s = s.replace(/\b(first|1st)\s*(round)?\b/ig,' ');
+    var known = {}; rows().forEach(function(r){ if(r.company) known[r.company.trim()] = 1; });
+    var low = s.toLowerCase(), best = '';
+    Object.keys(known).forEach(function(c){ if(c.length>best.length && low.indexOf(c.toLowerCase())>=0) best = c; });
+    if(best){ out.company = best; s = s.replace(new RegExp(best.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),' | '); }
+    var rm = s.match(/([A-Za-z\/& ]{0,30}\b(?:engineer|analyst|developer|scientist|manager|architect|administrator|consultant|specialist|tester|designer)\b)/i);
+    if(rm){ out.role = rm[1].replace(/^\s*(for|as|a|an|the|at|with|and)\b\s*/i,'').trim(); s = s.replace(rm[1],' | '); }
+    var parts = s.split(/[,|]| (?:at|with|for) /i).map(function(x){ return x.replace(/\b(call|interview|schedule|add|new|candidate)\b/ig,'').trim(); }).filter(Boolean);
+    out.candidate = (parts[0]||'').replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+    if(!out.company && parts[1]) out.company = parts[1].replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+    return out;
+  }
+  function qaHtml(){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition, d = qaDraft;
+    var h = '<p class="d29-p">Type or speak one line, e.g. <i>“Ravi Kumar, Google, 3 pm, data analyst, second round”</i>.</p><textarea class="d29-ta" id="d29qt" rows="3" placeholder="Candidate, company, time, role, round">'+esc(d?d.src:'')+'</textarea>'
+      + '<div class="d27-actions">'+(SR?'<button type="button" class="d27-btn ghost" data-d29mic id="d29mic">🎤 Speak</button>':'')+'<button type="button" class="d27-btn" data-d29parse>Read it</button></div>';
+    if(d){
+      h += '<div class="d29-form">'+[['candidate','Candidate'],['company','Company'],['role','Role'],['time','Time (e.g. 3:00 PM)']].map(function(f){ return '<label>'+f[1]+'<input data-d29f="'+f[0]+'" value="'+esc(d[f[0]])+'"></label>'; }).join('')
+        + '<label>Round<select data-d29f="round"><option'+(d.round==='1st'?' selected':'')+'>1st</option><option'+(d.round!=='1st'?' selected':'')+'>2nd Round</option></select></label></div>'
+        + (d.warn?'<div class="d29-warn">⚠ '+esc(d.warn)+'</div>':'')
+        + '<div class="d27-actions"><button type="button" class="d27-btn" data-d29add>＋ Add this call</button></div>';
+    }
+    return h;
+  }
+  function dupWarn(d){
+    var k = nk(d.candidate)+'|'+ck(d.company), w = '';
+    if(rows().some(function(r){ return r.candidate && (nk(r.candidate)+'|'+ck(r.company))===k; })) w = d.candidate+' at '+d.company+' is already on today’s list.';
+    else { try{ var h = _allRowsAcrossDatesCache||[]; var p = h.filter(function(x){ return x._date && (nk(x.candidate)+'|'+ck(x.company))===k; })[0]; if(p) w = d.candidate+' already had a call at '+d.company+' on '+p._date+'.'; }catch(e){} }
+    return w;
+  }
+
+  /* ---------- handler link ---------- */
+  function handlerHtml(){
+    var ppl = (state.roster||[]).filter(function(p){ return p && p.name; });
+    return '<p class="d29-p">A personal link that opens the app already filtered to one person’s own calls. They sign in with their normal account — no admin rights needed.</p><div class="d27-list">'
+      + (ppl.length? ppl.map(function(p){ return '<div class="d27-row" style="cursor:default"><span class="n"><b>'+esc(p.name)+'</b><small>'+esc(p.team||'')+'</small></span><button type="button" class="d27-btn sm" data-d29link="'+esc(p.name)+'">📋 Copy link</button></div>'; }).join('') : '<div class="d27-empty">Roster is empty.</div>')+'</div>';
+  }
+  (function(){ try{
+    var p = new URLSearchParams(location.search).get('handler'); if(!p) return;
+    var tries = 0, go = function(){ if(typeof state==='undefined' || typeof setMyAssigneeName!=='function'){ if(tries++<40) setTimeout(go,250); return; }
+      try{ setMyAssigneeName(p); state.assigneeFilter = p; state.filter = 'all'; document.documentElement.classList.add('d29-handler'); render(); }catch(e){} };
+    go();
+  }catch(e){} })();
+
+  /* ---------- hub ---------- */
+  var hub = null;
+  function hubHtml(){
+    var hd = heads();
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person']];
+    return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
+      + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
+  }
+  var tool = null;
+  function openTool(k){
+    tool = k; if(hub){ closeOv(hub); hub = null; }
+    if(k==='paste'){ try{ openOnlyPanel('showRescheduleImport'); render(); }catch(e){ state.showRescheduleImport = true; render(); } return; }
+    var M = { chase:['Chase list','CONFIRMATIONS',chaseHtml], resched:['Reschedule helper','NEXT FREE SLOT',reschedHtml], rules:['Client rules','PER CLIENT',rulesHtml], insights:['Insights','HISTORY',null], week:['Weekly report','REPORT',null], quick:['Quick add','NEW CALL',qaHtml], handler:['Handler link','SHARE',handlerHtml] }[k];
+    if(!M) return;
+    if(k==='resched' && !rsId) rsPick = null;
+    var el = ov('d29T', M[0], M[1], M[2] ? M[2]() : '<div class="d27-empty">Loading…</div>'); el.__k = k;
+    if(k==='insights') insightsHtml().then(function(h){ if(el.isConnected) setBody(el, h); });
+    if(k==='week') weekHtml().then(function(h){ if(el.isConnected) setBody(el, h); });
+    el.addEventListener('click', onTool);
+    el.addEventListener('input', function(e){ var f = e.target.closest && e.target.closest('[data-d29f]'); if(f && qaDraft) qaDraft[f.getAttribute('data-d29f')] = f.value; });
+  }
+  function repaint(el){ var k = el.__k; var fn = { chase:chaseHtml, resched:reschedHtml, rules:rulesHtml, quick:qaHtml, handler:handlerHtml }[k]; if(fn) setBody(el, fn()); }
+  var rec = null;
+  function onTool(e){
+    var el = e.currentTarget, t = e.target; if(!t.closest) return;
+    var b;
+    if((b = t.closest('[data-d29conf]'))){ setConf(b.getAttribute('data-d29conf'), b.getAttribute('data-v')); repaint(el); return; }
+    if((b = t.closest('[data-d29chase]'))){ var r = rows().filter(function(x){ return x.id===b.getAttribute('data-d29chase'); })[0]; if(r) copy(chaseMsg(r), b, '📋'); return; }
+    if((b = t.closest('[data-d29chaseall]'))){ var m = getConf(), n = nowBd(); copy(live().filter(function(r){ return bd(r.time)!==9999 && m[r.id]!=='confirmed' && bd(r.time)>=n-15; }).sort(function(a,c){ return bd(a.time)-bd(c.time); }).map(function(r){ return r.candidate+' — '+r.time+'\n'+chaseMsg(r); }).join('\n\n'), b); return; }
+    if((b = t.closest('[data-d29rspick]'))){ rsId = b.getAttribute('data-d29rspick'); rsPick = null; repaint(el); return; }
+    if((b = t.closest('[data-d29slot]'))){ rsPick = +b.getAttribute('data-d29slot'); repaint(el); return; }
+    if(t.closest('[data-d29rsback]')){ rsId = null; rsPick = null; repaint(el); return; }
+    if((b = t.closest('[data-d29rscopy]'))){ copy((document.getElementById('d29rsm')||{}).value||'', b); return; }
+    if(t.closest('[data-d29rsapply]')){ var rr = rows().filter(function(x){ return x.id===rsId; })[0]; if(rr && rsPick!==null){ rr.time = fmtT(rsPick); try{ markDirty(); render(); }catch(x){} toast('Moved '+rr.candidate+' to '+rr.time); rsId = null; rsPick = null; repaint(el); } return; }
+    if((b = t.closest('[data-d29rule]'))){ ruleEdit(el, b.getAttribute('data-d29rule')); return; }
+    if((b = t.closest('[data-d29rsave]'))){ var kk = b.getAttribute('data-d29rsave'), v = (document.getElementById('d29rt')||{}).value||''; if(v.trim()) RULES[kk] = v.trim(); else delete RULES[kk]; saveRules(); inject(); repaint(el); return; }
+    if((b = t.closest('[data-d29rdel]'))){ delete RULES[b.getAttribute('data-d29rdel')]; saveRules(); inject(); repaint(el); return; }
+    if(t.closest('[data-d29rback]')){ repaint(el); return; }
+    if((b = t.closest('[data-d29wk]'))){ wkStart = deskDateAdd(wkStart, 7*(+b.getAttribute('data-d29wk'))); weekHtml().then(function(h){ setBody(el, h); }); return; }
+    if((b = t.closest('[data-d29wkcopy]'))){ copy((document.getElementById('d29wkt')||{}).value||'', b); return; }
+    if(t.closest('[data-d29wkpdf]')){ weekPdf(); return; }
+    if(t.closest('[data-d29parse]')){ var src = (document.getElementById('d29qt')||{}).value||''; if(!src.trim()) return; qaDraft = parseQuick(src); qaDraft.src = src; qaDraft.warn = qaDraft.candidate ? dupWarn(qaDraft) : ''; repaint(el); return; }
+    if(t.closest('[data-d29mic]')){
+      var SR = window.SpeechRecognition || window.webkitSpeechRecognition, mic = document.getElementById('d29mic'); if(!SR) return;
+      if(rec){ try{ rec.stop(); }catch(x){} rec = null; return; }
+      rec = new SR(); rec.lang = 'en-IN'; rec.interimResults = false; rec.maxAlternatives = 1;
+      rec.onresult = function(ev){ var tx = ev.results[0][0].transcript; var ta = document.getElementById('d29qt'); if(ta) ta.value = tx; qaDraft = parseQuick(tx); qaDraft.src = tx; qaDraft.warn = qaDraft.candidate ? dupWarn(qaDraft) : ''; repaint(el); };
+      rec.onend = function(){ rec = null; var m2 = document.getElementById('d29mic'); if(m2) m2.textContent = '🎤 Speak'; };
+      rec.onerror = function(){ toast('Could not hear that — try again'); };
+      try{ rec.start(); if(mic) mic.textContent = '● Listening…'; }catch(x){} return;
+    }
+    if(t.closest('[data-d29add]')){
+      var d = qaDraft; if(!d || !d.candidate.trim()){ toast('Add a candidate name'); return; }
+      var doAdd = function(){
+        rows().push({id:uid(), time:d.time||'', company:d.company||'', candidate:d.candidate.trim(), round:d.round==='1st'?'1st':'2nd Round', duration:'', woi:!d.time, assignee:'', country:'USA', doubts:[], raw:d.src||'', interviewer:'', role:d.role||'', technicalPOC:'', importance:'', onsite:false, candidateFirstInterview:false, drivingPerson:''});
+        try{ markDirty(); render(); }catch(x){} toast('Added '+d.candidate); qaDraft = null; repaint(el);
+      };
+      if(d.warn && window.cdConfirm) window.cdConfirm(d.warn+'\nAdd it anyway?', {title:'Possible duplicate'}).then(function(ok){ if(ok) doAdd(); }); else doAdd();
+      return;
+    }
+    if((b = t.closest('[data-d29link]'))){ copy(location.origin+location.pathname+'?handler='+encodeURIComponent(b.getAttribute('data-d29link')), b); return; }
+  }
+  function openHub(){ if(hub) closeOv(hub); hub = ov('d29Hub', 'Desk tools', state.date+' · V2.2', hubHtml()); hub.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('[data-d29t]'); if(t){ openTool(t.getAttribute('data-d29t')); return; }
+    var o = e.target.closest && e.target.closest('[data-d29open]'); if(o){ closeOv(hub); hub = null; if(window.d23Open) window.d23Open(o.getAttribute('data-d29open')); }
+  }); }
+  window.d29OpenTools = openHub; window.d29OpenTool = openTool;
+
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return;
+    var b = t.closest('[data-d29hub]'); if(b){ e.preventDefault(); e.stopPropagation(); var cc = document.getElementById('d27CC'); if(cc) cc.remove(); openHub(); return; }
+    var q = t.closest('[data-d29qa]');
+    if(q){ e.preventDefault(); e.stopPropagation(); var id = q.getAttribute('data-id'), k = q.getAttribute('data-d29qa');
+      if(k==='rs'){ rsId = id; rsPick = null; openTool('resched'); }
+      else { var cur = getConf()[id] || '', ix = (['', 'invited','confirmed','noreply'].indexOf(cur)+1)%4; setConf(id, ['', 'invited','confirmed','noreply'][ix]); inject(); }
+    }
+  }, true);
+
+  /* ---------- buttons in header box + command center ---------- */
+  function mountBtn(){
+    var box = document.getElementById('d27Box'); if(box && !box.querySelector('[data-d29hub]')){ var b = document.createElement('button'); b.type = 'button'; b.className = 'd27-cmd d29-hb'; b.setAttribute('data-d29hub',''); b.textContent = '🧰 Tools'; box.insertBefore(b, box.firstChild.nextSibling); }
+    var act = document.querySelector('#d27CC .d27-actions'); if(act && !act.querySelector('[data-d29hub]')){ var c = document.createElement('button'); c.type = 'button'; c.className = 'd27-btn ghost'; c.setAttribute('data-d29hub',''); c.textContent = '🧰 More tools'; act.appendChild(c); }
+  }
+  var rt = 0;
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,250); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); clearTimeout(rt); rt = setTimeout(function(){ try{ mountBtn(); inject(); if(!rulesLoaded && typeof state!=='undefined' && !state.needsLogin){ rulesLoaded = true; loadRules(); } }catch(e){ console.warn('d29', e); } }, 120); return r; };
+    try{ new MutationObserver(function(){ mountBtn(); }).observe(document.body, {childList:true}); }catch(e){}
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
