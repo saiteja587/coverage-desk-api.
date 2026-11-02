@@ -1095,6 +1095,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
   }
 
   /* ================= celebration when everything is covered ================= */
+  setTimeout(function(){ try{ window.d3Confetti = confetti; }catch(e){} },0);
   var prevUn = null, prevDate = null;
   function confetti(){
     var c = document.createElement('canvas'); c.id='d3Confetti'; c.width=innerWidth; c.height=innerHeight; document.body.appendChild(c);
@@ -3888,6 +3889,10 @@ document.addEventListener('click', function(e){
     var rowId = el.closest && el.closest('tr') ? el.closest('tr').getAttribute('data-id') : '';
     var row = null; try{ row = (state.rows||[]).find(function(r){ return r.id===rowId; }); }catch(e){}
     var h = '<div style="font-weight:700;font-size:13px;margin-bottom:2px">'+esc(entry ? entry.candidate : name)+'</div>';
+    if(row){
+      var ow = window.cdOwnerOf ? window.cdOwnerOf(row) : null;
+      h += '<div style="font-size:12px;margin:2px 0 4px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="opacity:.6">Team</span> <b>'+esc(row.assignee||'—')+'</b></span><span><span style="opacity:.6">Owner</span> <b>'+(ow?esc(ow.name)+(ow.src==='portal'?' 📡':ow.src==='driving'?' 🚗':''):'<span style="opacity:.6">not set</span>')+'</b></span></div>';
+    }
     if(!occ.length){
       return h + '<div style="opacity:.75;font-size:12px">No earlier calls on file for this name.</div>';
     }
@@ -3973,6 +3978,17 @@ document.addEventListener('click', function(e){
 })();
 
 
+/* shared: who actually owns a call — the person it is assigned to, else the Driving Person / Interview Portal handler */
+window.cdOwnerOf = function(r){
+  try{
+    var tn = getTeamNames(), a = (r.assignee||'').trim();
+    if(a && !tn.has(a)) return { name:a, src:'assigned' };
+    if(r.drivingPerson) return { name:r.drivingPerson, src:'driving' };
+    var m = null; try{ m = findPortalMatch(r); }catch(e){}
+    if(m && (m.handler || m.assignee)) return { name:(m.handler||m.assignee), src:'portal' };
+  }catch(e){}
+  return null;
+};
 /* ===== d22: phone Home — "Next up" hero + "Needs an owner" quick-assign strip (phones only) ===== */
 ;(function(){
   if(window.__d22) return; window.__d22 = true;
@@ -4000,7 +4016,7 @@ document.addEventListener('click', function(e){
     var n = nowBd();
     var next = rows.filter(function(r){ return bd(r.time) >= n-10; })[0];
     var tn2 = null; try{ tn2 = getTeamNames(); }catch(e){}
-    var needs = function(r){ try{ return !r.assignee || (typeof deskNeedsPerson==='function' && tn2 && deskNeedsPerson(r, tn2)); }catch(e){ return !r.assignee; } };
+    var needs = function(r){ try{ var team = !r.assignee || (typeof deskNeedsPerson==='function' && tn2 && deskNeedsPerson(r, tn2)); return team && !window.cdOwnerOf(r); }catch(e){ return !r.assignee; } };
     var need = rows.filter(needs);
     var admin = true; try{ admin = (CURRENT_ROLE==='admin'); }catch(e){}
     var h = '<div class="d22">';
@@ -4013,22 +4029,23 @@ document.addEventListener('click', function(e){
       + '<button type="button" class="d22-ch warn'+(needOn?' on':'')+'" data-d22f="need">Needs owner <em>'+need.length+'</em></button></div>';
     if(next){
       var nn = needs(next), b = nn ? best(next) : null, mins = bd(next.time)-n;
-      h += '<div class="d22-hero'+(nn?' un':'')+'" data-d22open="'+esc(next.id)+'">'
+      h += '<div class="d22-hero'+(nn?' un':'')+(nn&&mins<=5?' hot2':(nn&&mins<=15?' hot':''))+'" data-d22open="'+esc(next.id)+'">'
+        + (mins>=0&&mins<=60?'<div class="d22-cd"><i style="width:'+Math.max(2,Math.round((1-mins/60)*100))+'%"></i></div>':'')
         + '<div class="d22-top"><span class="d22-k">Next up</span><span class="d22-when">'+esc(rel(mins))+'</span></div>'
         + '<div class="d22-time">'+esc(next.time||'')+'</div>'
         + '<div class="d22-name">'+esc(next.candidate)+'</div>'
         + '<div class="d22-sub">'+esc([next.company, next.role].filter(Boolean).join(' · '))+'</div>'
         + '<div class="d22-meta">'+(next.round?'<span>'+esc(next.round)+'</span>':'')+(next.country?'<span>'+esc(next.country)+'</span>':'')+(next.duration?'<span>'+esc(next.duration)+'</span>':'')+'</div>'
         + (!nn
-            ? '<div class="d22-own">Handled by <b>'+esc(next.assignee)+'</b></div>'+(admin?'<div class="d22-act"><button type="button" class="d22-b ghost" data-d22pick="'+esc(next.id)+'">Change handler</button></div>':'')
+            ? '<div class="d22-own">Handled by <b>'+esc((window.cdOwnerOf(next)||{name:next.assignee}).name)+'</b>'+((window.cdOwnerOf(next)||{}).src==='portal'?' <small>(portal)</small>':'')+(next.assignee&&(window.cdOwnerOf(next)||{}).name!==next.assignee?' <small>· '+esc(next.assignee)+'</small>':'')+'</div>'+(admin?'<div class="d22-act"><button type="button" class="d22-b ghost" data-d22pick="'+esc(next.id)+'">Change handler</button></div>':'')
             : '<div class="d22-own warn">'+(next.assignee?esc(next.assignee)+' — no person yet':'No owner yet')+'</div>'+(admin?'<div class="d22-act">'+(b?'<button type="button" class="d22-b" data-d22as="'+esc(next.id)+'" data-d22n="'+esc(b.name)+'">Assign '+esc(b.name)+'</button>':'')+'<button type="button" class="d22-b ghost" data-d22pick="'+esc(next.id)+'">Choose…</button></div>':''))
         + '</div>';
     }
     var strip = need.filter(function(r){ return !next || r.id!==next.id; });
     if(strip.length && admin){
       h += '<div class="d22-sh"><b>Needs an owner</b><span>'+need.length+'</span></div><div class="d22-strip">'
-        + strip.slice(0,30).map(function(r){ var b = best(r);
-          return '<div class="d22-card" data-d22open="'+esc(r.id)+'"><div class="d22-ct">'+esc(r.time||'')+'</div><div class="d22-cn">'+esc(r.candidate)+'</div><div class="d22-cs">'+esc(r.company||'')+'</div>'
+        + strip.slice(0,30).map(function(r){ var b = best(r); var sn = (window.__d26seen = window.__d26seen || {}); var fc = sn[r.id] ? '' : ' fresh'; sn[r.id] = 1;
+          return '<div class="d22-card'+fc+'" data-d22open="'+esc(r.id)+'"><div class="d22-ct">'+esc(r.time||'')+'</div><div class="d22-cn">'+esc(r.candidate)+'</div><div class="d22-cs">'+esc(r.company||'')+'</div>'
             + (b?'<button type="button" class="d22-b sm" data-d22as="'+esc(r.id)+'" data-d22n="'+esc(b.name)+'">→ '+esc(b.name.split(' ')[0])+'</button>':'')
             + '<button type="button" class="d22-b sm ghost" data-d22pick="'+esc(r.id)+'">Other</button></div>'; }).join('')+'</div>';
     } else if(!need.length){
@@ -4118,7 +4135,8 @@ document.addEventListener('click', function(e){
     var ad = admin();
     var h = '<div class="d23-grab"></div><div class="d23-hd"><div><div class="d23-t">'+esc(r.time||(r.woi?'Waiting for invite':''))+'</div><div class="d23-n">'+esc(r.candidate||'')+'</div><div class="d23-s">'+esc([r.company,r.role].filter(Boolean).join(' · '))+'</div></div><button type="button" class="d23-x" data-d23="close" aria-label="Close">✕</button></div>'
       + '<div class="d23-chips">'+[r.round,r.country,r.duration].filter(Boolean).map(function(x){ return '<span>'+esc(x)+'</span>'; }).join('')+(r.status?'<span class="st">'+esc(r.status.replace('_',' '))+'</span>':'')+'</div>';
-    h += '<div class="d23-sec"><span>Owner</span><b>'+esc(r.assignee||'Not assigned')+'</b></div>';
+    var ow = window.cdOwnerOf ? window.cdOwnerOf(r) : null;
+    h += '<div class="d23-sec"><span>Team</span><b>'+esc(r.assignee||'Not assigned')+'</b></div><div class="d23-sec" style="margin-top:2px"><span>Owner'+(ow&&ow.src==='portal'?' (portal)':ow&&ow.src==='driving'?' (driving person)':'')+'</span><b>'+esc(ow?ow.name:'Not set')+'</b></div>';
     if(ad){
       h += '<div class="d23-pick">'+rank.slice(0,5).map(function(p){ return '<button type="button" class="d23-p'+(p.name===r.assignee?' on':'')+(p.clash?' clash':'')+'" data-d23as="'+esc(p.name)+'"><b>'+esc(p.name)+'</b><small>'+(p.prior==='candidate'?'handled this candidate':p.prior==='client'?'handled this client':p.load+' call'+(p.load===1?'':'s'))+(p.clash?' · clash':'')+'</small></button>'; }).join('')+'<button type="button" class="d23-p more" data-d23="more"><b>More…</b><small>everyone</small></button></div>';
       h += '<div class="d23-sec"><span>Status</span></div><div class="d23-st">'+STAT.map(function(s){ return '<button type="button" class="d23-sb'+(r.status===s[0]?' on':'')+'" data-d23st="'+s[0]+'">'+s[1]+'</button>'; }).join('')+(r.status?'<button type="button" class="d23-sb clr" data-d23st="">Clear status</button>':'')+'</div>';
@@ -4223,4 +4241,105 @@ document.addEventListener('click', function(e){
       });
     }, 0);
   }, true);
+})();
+
+
+/* ===== d26: game feel — snap, sound, haptics, combo flare, tension, board-clear victory ===== */
+;(function(){
+  if(window.__d26) return; window.__d26 = true;
+  var reduce = function(){ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; } };
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var soundOn = LS.g('cd.d26.snd','1')==='1';
+  var ac = null;
+  function ctx(){ try{ if(!ac){ var C = window.AudioContext||window.webkitAudioContext; if(!C) return null; ac = new C(); } if(ac.state==='suspended') ac.resume(); return ac; }catch(e){ return null; } }
+  function tone(f, t0, dur, type, vol){
+    var c = ctx(); if(!c) return; var o = c.createOscillator(), g = c.createGain(), t = c.currentTime + t0;
+    o.type = type||'sine'; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol||0.08, t+0.012); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+dur+0.02);
+  }
+  var fx = {
+    snap:function(n){ if(!soundOn) return; var base = 520*Math.pow(1.0595, Math.min(7,(n||1)-1)*2); tone(base,0,.09,'triangle',.07); tone(base*1.5,.06,.12,'sine',.06); },
+    undo:function(){ if(!soundOn) return; tone(300,0,.1,'sine',.05); },
+    win:function(){ if(!soundOn) return; [523,659,784,1047].forEach(function(f,i){ tone(f,i*.09,.28,'triangle',.08); }); },
+    warn:function(){ if(!soundOn) return; tone(220,0,.12,'square',.03); },
+    buzz:function(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms||12); }catch(e){} }
+  };
+  window.d26fx = fx;
+
+  /* sound toggle */
+  function toggleBtn(){
+    var b = document.getElementById('d26Snd');
+    if(!b){ b = document.createElement('button'); b.id='d26Snd'; b.type='button'; b.setAttribute('aria-label','Sound on/off'); document.body.appendChild(b);
+      b.onclick = function(){ soundOn = !soundOn; LS.s('cd.d26.snd', soundOn?'1':'0'); b.textContent = soundOn?'🔊':'🔇'; if(soundOn){ fx.snap(1); fx.buzz(10); } }; }
+    b.textContent = soundOn?'🔊':'🔇';
+  }
+
+  /* ripple + check burst at an element */
+  function burst(el){
+    if(reduce() || !el) return;
+    var r = el.getBoundingClientRect(); if(!r.width) return;
+    var b = document.createElement('div'); b.className = 'd26-burst';
+    b.style.left = (r.left + r.width/2)+'px'; b.style.top = (r.top + Math.min(r.height/2, 60))+'px';
+    var h = '<i class="d26-ring"></i>';
+    for(var k=0;k<8;k++){ var a = k/8*Math.PI*2; h += '<i class="d26-dot" style="--dx:'+Math.round(Math.cos(a)*46)+'px;--dy:'+Math.round(Math.sin(a)*46)+'px"></i>'; }
+    b.innerHTML = h + '<span class="d26-ck">✓</span>';
+    document.body.appendChild(b); setTimeout(function(){ b.remove(); }, 750);
+  }
+  /* combo flare */
+  var combo = 0, comboT = 0, flareEl = null;
+  var WORDS = ['','','Nice','Smooth','On fire','Unstoppable','Legendary'];
+  function flare(n){
+    if(n<2 || reduce()) return;
+    if(!flareEl){ flareEl = document.createElement('div'); flareEl.className = 'd26-flare'; document.body.appendChild(flareEl); }
+    flareEl.textContent = (WORDS[Math.min(n,WORDS.length-1)]||'Legendary')+' ×'+n;
+    flareEl.classList.remove('go'); void flareEl.offsetWidth; flareEl.classList.add('go');
+  }
+  /* victory overlay */
+  function victory(){
+    if(reduce()){ return; }
+    var o = document.createElement('div'); o.className = 'd26-win';
+    o.innerHTML = '<div><span>✓</span><b>Board clear</b><small>Every call has an owner</small></div>';
+    document.body.appendChild(o); fx.win(); fx.buzz([20,40,20,40,60]);
+    try{ if(window.d3Confetti) window.d3Confetti(); }catch(e){}
+    setTimeout(function(){ o.classList.add('out'); setTimeout(function(){ o.remove(); }, 400); }, 1900);
+    o.addEventListener('click', function(){ o.remove(); });
+  }
+
+  var prev = null, prevDate = '', won = {};
+  function track(){
+    var d = ''; try{ d = state.date; }catch(e){} if(!d) return;
+    var rows = state.rows||[], tn = null; try{ tn = getTeamNames(); }catch(e){}
+    var person = function(a){ a = (a||'').trim(); return !!(a && !(tn && tn.has(a))); };
+    var cur = {}; rows.forEach(function(r){ cur[r.id] = person(r.assignee); });
+    if(prev && prevDate===d){
+      var n = 0, last = null;
+      Object.keys(cur).forEach(function(id){ if(cur[id] && prev[id]===false){ n++; last = id; } });
+      if(n){
+        var now = Date.now(); combo = (now - comboT < 7000) ? combo + n : n; comboT = now;
+        fx.snap(combo); fx.buzz(combo>=3?[10,30,14]:12);
+        var el = document.querySelector('.d22-hero[data-d22open="'+last+'"]') || document.querySelector('tr[data-id="'+last+'"]') || document.querySelector('.d22-hero');
+        burst(el); flare(combo);
+      }
+      var live = rows.filter(function(r){ return !r.woi && !r.status; });
+      var un = live.filter(function(r){ return !(r.assignee||'').trim(); }).length;
+      if(rows.length>=3 && live.length && un===0 && !won[d]){ won[d] = 1; victory(); }
+    } else if(!prev || prevDate!==d){
+      var lv = rows.filter(function(r){ return !r.woi && !r.status; });
+      if(lv.length && lv.every(function(r){ return (r.assignee||'').trim(); })) won[d] = 1;   /* already clear on open: no replay */
+    }
+    prev = cur; prevDate = d; toggleBtn();
+  }
+  var t = 0;
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,200); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); clearTimeout(t); t = setTimeout(function(){ try{ track(); }catch(e){ console.warn('d26',e); } }, 40); return r; };
+    setTimeout(function(){ try{ track(); }catch(e){} }, 600);
+  }
+  /* tap feedback on the big phone buttons even when nothing is assigned yet */
+  document.addEventListener('pointerdown', function(e){
+    var b = e.target.closest && e.target.closest('.d22-b, .d22-ch, .d23-p, .d23-sb'); if(b){ fx.buzz(8); }
+  }, true);
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
