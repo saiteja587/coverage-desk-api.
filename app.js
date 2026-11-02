@@ -11861,7 +11861,14 @@ function attachHandlers(conflictIds){
     render();
   };
   const searchBox = document.getElementById('searchBox');
-  if(searchBox) searchBox.oninput = (e)=>{ state.search = e.target.value; render(); };
+  if(searchBox) searchBox.oninput = (e)=>{
+    // Debounced: re-drawing the whole board on every keystroke made typing lag (esp. on phones).
+    // The text is kept in state immediately; the board redraws once typing pauses.
+    state.search = e.target.value;
+    clearTimeout(window.__searchT);
+    window.__searchT = setTimeout(() => { if(document.getElementById('searchBox') && document.getElementById('searchBox').value === state.search) render(); }, (window.innerWidth < 760 ? 380 : 220));
+  };
+  if(searchBox) searchBox.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ clearTimeout(window.__searchT); state.search = searchBox.value; render(); } });
   const clearSearchBtn = document.getElementById('clearSearch');
   if(clearSearchBtn) clearSearchBtn.onclick = ()=>{ state.search = ''; render(); };
 
