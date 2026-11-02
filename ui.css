@@ -1465,3 +1465,8 @@ body.d27-open{overflow:hidden}
 .d27-row .t{white-space:nowrap}.d27-row .n{min-width:0}
 .d27-ov.full{overflow-x:hidden}.d27-cc{min-width:0;box-sizing:border-box}
 @media (max-width:759px){.d27-kpis{grid-template-columns:repeat(2,1fr)}.d27-k:last-child{grid-column:span 2}.d27-row .t{font-size:11.5px}}
+
+.d27-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.d27-actions .d27-btn{flex:1 1 150px;min-height:44px;font-size:14px}
+.d28-form{display:grid;grid-template-columns:1fr 1fr;gap:8px}.d28-form select{grid-column:1/-1}
+.d28-form select,.d28-form input{min-height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:0 10px;font-size:15px;width:100%;box-sizing:border-box}
+.d28-form label{font-size:12px;color:var(--text-muted);display:grid;gap:4px}.d28-form .d27-btn{grid-column:1/-1}
