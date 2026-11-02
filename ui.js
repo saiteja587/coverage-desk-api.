@@ -4353,7 +4353,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.2', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.3', SEEN_KEY = 'cd.v2.seen';
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4364,6 +4364,10 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.3','2026-11-02','Round menu',[
+      '⚪ Floating round menu (like iOS AssistiveTouch): drag it anywhere, tap it and the shortcuts fan out in a circle — Command, Tools, Search, Quick add, Alerts, Sound, Top',
+      'Sound button moved into the round menu so it no longer covers the alerts bell'
+    ]],
     ['V2.2','2026-11-02','Desk tools',[
       '🧰 Tools hub (header + Command Center): everything below in one place',
       '📥 Paste a message — opens the reschedule/cancel importer; 📞 Chase list — mark invited / confirmed / no reply, copy chase messages',
@@ -5077,5 +5081,77 @@ window.cdOwnerOf = function(r){
     window.render = function(){ var r = o.apply(this, arguments); clearTimeout(rt); rt = setTimeout(function(){ try{ mountBtn(); inject(); if(!rulesLoaded && typeof state!=='undefined' && !state.needsLogin){ rulesLoaded = true; loadRules(); } }catch(e){ console.warn('d29', e); } }, 120); return r; };
     try{ new MutationObserver(function(){ mountBtn(); }).observe(document.body, {childList:true}); }catch(e){}
   }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+/* ===== d30: round floating menu (iOS AssistiveTouch style) — drag it anywhere, tap to fan out the shortcuts ===== */
+;(function(){
+  if(window.__d30) return; window.__d30 = true;
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var S = 56, R = 92, orb = null, wrap = null, open = false, pos = null;
+  var snd = function(){ var b = document.getElementById('d26Snd'); return !!(b && /🔊/.test(b.textContent)); };
+  var ITEMS = [
+    ['⌘','Command', function(){ if(window.d27OpenCommand) window.d27OpenCommand(); }],
+    ['🧰','Tools', function(){ if(window.d29OpenTools) window.d29OpenTools(); }],
+    ['🔎','Search', function(){ if(window.d12Open) window.d12Open(); }],
+    ['＋','Quick add', function(){ if(window.d29OpenTool) window.d29OpenTool('quick'); }],
+    ['🔔','Alerts', function(){ var b = document.querySelector('.lf-bell'); if(b) b.click(); }],
+    ['SND','Sound', function(){ var b = document.getElementById('d26Snd'); if(b) b.click(); }],
+    ['⬆','Top', function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); var s = document.getElementById('tableScrollMain'); if(s) s.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }]
+  ];
+  function load(){ try{ pos = JSON.parse(LS.g('cd.orb','null')); }catch(e){ pos = null; } if(!pos || typeof pos.y!=='number') pos = {side:'left', y:.55}; }
+  function place(){
+    if(!orb) return; var W = innerWidth, H = innerHeight, y = Math.min(Math.max(pos.y*H, 70), H-S-90);
+    orb.style.top = y+'px'; orb.style.left = (pos.side==='right' ? W-S-14 : 14)+'px';
+  }
+  function center(){ var r = orb.getBoundingClientRect(); return {x:r.left+S/2, y:r.top+S/2}; }
+  function fan(){
+    var c = center(), W = innerWidth, H = innerHeight, n = ITEMS.length;
+    var toC = Math.atan2(H/2-c.y, W/2-c.x);
+    var edge = Math.min(c.x, W-c.x, c.y, H-c.y), span = edge < 150 ? Math.PI*0.92 : Math.PI*1.7, RR = edge < 150 ? 118 : R;
+    var pts = function(base){ var o = []; for(var i=0;i<n;i++){ var a = base - span/2 + (n===1?0.5:i/(n-1))*span; o.push([Math.cos(a)*RR, Math.sin(a)*RR]); } return o; };
+    var fits = function(P){ return P.every(function(p){ var x = c.x+p[0], y = c.y+p[1]; return x>=30 && x<=W-30 && y>=30 && y<=H-30; }); };
+    var best = null;
+    for(var k=0;k<=36 && !best;k++){ var off = Math.ceil(k/2)*(Math.PI/18)*(k%2?1:-1); var P = pts(toC+off); if(fits(P)) best = P; }
+    if(!best) best = pts(toC).map(function(p){ return [Math.min(Math.max(c.x+p[0],34),W-34)-c.x, Math.min(Math.max(c.y+p[1],34),H-34)-c.y]; });
+    wrap.querySelectorAll('.d30-i').forEach(function(el,i){ el.style.setProperty('--x', best[i][0]+'px'); el.style.setProperty('--y', best[i][1]+'px'); el.style.transitionDelay = (i*22)+'ms'; });
+    wrap.style.left = c.x+'px'; wrap.style.top = c.y+'px';
+  }
+  function setOpen(v){
+    open = v; if(!wrap) return;
+    if(v){ var b = wrap.querySelector('[data-d30i="5"] .ic'); if(b) b.textContent = snd()?'🔊':'🔇'; fan(); }
+    wrap.classList.toggle('on', v); orb.classList.toggle('on', v);
+    try{ if(window.d26fx) window.d26fx.buzz(8); }catch(e){}
+  }
+  function build(){
+    if(document.getElementById('d30Orb')) return;
+    load();
+    orb = document.createElement('button'); orb.id = 'd30Orb'; orb.type = 'button'; orb.setAttribute('aria-label','Shortcuts menu'); orb.innerHTML = '<i></i>';
+    wrap = document.createElement('div'); wrap.id = 'd30Wrap';
+    wrap.innerHTML = '<div class="d30-bg"></div>' + ITEMS.map(function(it,i){ return '<button type="button" class="d30-i" data-d30i="'+i+'"><span class="ic">'+(it[0]==='SND'?'🔊':it[0])+'</span><small>'+it[1]+'</small></button>'; }).join('');
+    document.body.appendChild(wrap); document.body.appendChild(orb); place();
+    wrap.addEventListener('click', function(e){
+      var b = e.target.closest('[data-d30i]');
+      if(!b){ setOpen(false); return; }
+      var it = ITEMS[+b.getAttribute('data-d30i')]; setOpen(false); setTimeout(function(){ try{ it[2](); }catch(x){} }, 120);
+    });
+    var sx, sy, ox, oy, moved = false, drag = false;
+    orb.addEventListener('pointerdown', function(e){ drag = true; moved = false; sx = e.clientX; sy = e.clientY; var r = orb.getBoundingClientRect(); ox = r.left; oy = r.top; try{ orb.setPointerCapture(e.pointerId); }catch(x){} orb.style.transition = 'none'; });
+    orb.addEventListener('pointermove', function(e){
+      if(!drag) return; var dx = e.clientX-sx, dy = e.clientY-sy;
+      if(!moved && Math.hypot(dx,dy) < 6) return; moved = true; if(open) setOpen(false);
+      orb.style.left = Math.min(Math.max(ox+dx, 4), innerWidth-S-4)+'px'; orb.style.top = Math.min(Math.max(oy+dy, 60), innerHeight-S-70)+'px';
+    });
+    function end(e){
+      if(!drag) return; drag = false; orb.style.transition = '';
+      if(moved){ var r = orb.getBoundingClientRect(); pos = {side: (r.left+S/2) > innerWidth/2 ? 'right' : 'left', y: r.top/innerHeight}; LS.s('cd.orb', JSON.stringify(pos)); place(); }
+      else if(e.type==='pointerup'){ setOpen(!open); }
+    }
+    orb.addEventListener('pointerup', end); orb.addEventListener('pointercancel', end);
+    orb.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); setOpen(!open); } });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && open) setOpen(false); });
+    addEventListener('resize', function(){ place(); if(open) fan(); });
+  }
+  function install(){ if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,300); } build(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
