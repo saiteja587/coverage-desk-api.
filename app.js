@@ -18850,7 +18850,7 @@ function deskRoleFix(rows){
         return '<div class="dt-row"><div class="dt-main"><b>' + esc(x.candidate) + '</b> — ' + esc(x.company || 'no company') + (x.role ? ' · <i>' + esc(x.role) + '</i>' : '') + ' ' + chip(x.round || '1st') +
           chip(x.age ? x.age + ' day' + (x.age > 1 ? 's' : '') + ' waiting' : 'today', x.age >= 3 ? 'bad' : (x.age >= 1 ? 'warn' : '')) +
           '<div class="dt-sub">Since ' + esc(x.date) + (x.assignee ? ' · ' + esc(x.assignee) : '') + '</div></div>' +
-          (onBoard && can ? '<span style="display:flex;gap:4px;align-items:center"><input class="sa-in" style="width:84px" placeholder="7:30 PM" data-dt-woitime="' + esc(x.rowId) + '"><button class="lf-act primary" data-dt-woiset="' + esc(x.rowId) + '">Set</button></span>' : '<button class="lf-act" data-dt-gotodate="' + esc(x.date) + '">Open day</button>') + '</div>';
+          '<span style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end">' + (onBoard && can ? '<input class="sa-in" style="width:84px" placeholder="7:30 PM" data-dt-woitime="' + esc(x.rowId) + '"><button class="lf-act primary" data-dt-woiset="' + esc(x.rowId) + '">Set</button>' : '<button class="lf-act" data-dt-gotodate="' + esc(x.date) + '">Open day</button>') + (can ? '<button class="lf-act" style="color:var(--coral)" data-dt-woirm="' + esc(x.rowId) + '" data-dt-woirmdate="' + esc(x.date) + '" title="Remove this waiting-for-invite call">✕ Remove</button>' : '') + '</span></div>';
       }).join('');
       return h;
     }
@@ -19104,6 +19104,33 @@ function deskRoleFix(rows){
       if(!row){ dt.woiMsg = '⚠ That call is not on the open day any more.'; paint(); return; }
       row.time = tm; row.woi = false; markDirty(); render();
       dt.woiMsg = '✅ ' + (row.candidate || 'Call') + ' set to ' + tm + ' — press Save changes to keep it.'; paint(); return;
+    }
+    const wrm = t.closest('[data-dt-woirm]');
+    if(wrm && CURRENT_ROLE === 'admin'){
+      const id = wrm.getAttribute('data-dt-woirm'), date = wrm.getAttribute('data-dt-woirmdate');
+      const item = deskWoiOpen(allRows(), todayDateString(), resolver().keyOf).find(x => String(x.rowId) === id);
+      const askMsg = 'Remove ' + (item ? item.candidate + (item.company ? ' (' + item.company + ')' : '') : 'this call') + ' from the waiting-for-invite list?\n\nThe call is deleted from ' + date + ' (a backup is kept).';
+      (async () => {
+        const okRm = window.cdConfirm ? await window.cdConfirm(askMsg, { title: 'Remove WOI call', ok: 'Remove', danger: true }) : confirm(askMsg);
+        if(!okRm) return;
+        const orig = state.date;
+        try{
+          if(date === state.date){
+            if(!state.rows.some(r => String(r.id) === id)){ dt.woiMsg = '⚠ That call is not on this day any more.'; paint(); return; }
+            state.rows = state.rows.filter(r => String(r.id) !== id); markDirty(); render();
+            await saveAllChanges();
+          } else {
+            if(state.dirty){ await saveAllChanges(); if(state.dirty){ dt.woiMsg = '⚠ Save your open changes first, then remove it.'; paint(); return; } }
+            state.date = date; await loadDay(date);
+            if(!state.rows.some(r => String(r.id) === id)){ state.date = orig; await loadDay(orig); render(); dt.woiMsg = '⚠ Could not find that call on ' + date + '.'; paint(); return; }
+            state.rows = state.rows.filter(r => String(r.id) !== id); markDirty(); await saveAllChanges();
+            state.date = orig; await loadDay(orig); render();
+          }
+          dt.woiMsg = '✅ Removed' + (item ? ' ' + item.candidate : '') + ' from ' + date + '.';
+          await ensureData(true);
+        }catch(e){ dt.woiMsg = '⚠ Could not remove it: ' + (e && e.message || e); try{ if(state.date !== orig){ state.date = orig; await loadDay(orig); render(); } }catch(_){} paint(); }
+      })();
+      return;
     }
     if(t.closest('[data-dt-woicopy]')){ copy(deskWoiText(deskWoiOpen(allRows(), todayDateString(), resolver().keyOf)), t.closest('[data-dt-woicopy]')); return; }
     if(t.closest('[data-dt-rolescan]')){ dt.roleMsg = ''; ensureData(true); return; }
