@@ -3971,3 +3971,166 @@ document.addEventListener('click', function(e){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+
+/* ===== d22: phone Home — "Next up" hero + "Needs an owner" quick-assign strip (phones only) ===== */
+;(function(){
+  if(window.__d22) return; window.__d22 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var isPhone = function(){ return (window.__d17vw || window.innerWidth) < 760; };
+  var live = function(r){ return r && !r.woi && !r.status && r.candidate; };
+  function best(r){
+    var list = []; try{ list = window.d2Rank ? window.d2Rank(r) : []; }catch(e){}
+    var tn = null; try{ tn = getTeamNames(); }catch(e){}
+    var ppl = list.filter(function(h){ return !h.isTeam && !(tn && tn.has(h.name)); });
+    for(var i=0;i<ppl.length;i++){ if(!ppl[i].absent && !ppl[i].clash) return ppl[i]; }
+    return ppl[0] || list[0] || null;
+  }
+  function rel(mins){
+    if(mins <= -1) return Math.abs(mins)+'m ago';
+    if(mins < 1) return 'now';
+    if(mins < 60) return 'in '+Math.round(mins)+'m';
+    return 'in '+Math.floor(mins/60)+'h '+Math.round(mins%60)+'m';
+  }
+  function build(){
+    var rows = (state.rows||[]).filter(live).filter(function(r){ return bd(r.time)!==9999; }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
+    if(!rows.length) return '';
+    var n = nowBd();
+    var next = rows.filter(function(r){ return bd(r.time) >= n-10; })[0];
+    var tn2 = null; try{ tn2 = getTeamNames(); }catch(e){}
+    var needs = function(r){ try{ return !r.assignee || (typeof deskNeedsPerson==='function' && tn2 && deskNeedsPerson(r, tn2)); }catch(e){ return !r.assignee; } };
+    var need = rows.filter(needs);
+    var admin = true; try{ admin = (CURRENT_ROLE==='admin'); }catch(e){}
+    var h = '<div class="d22">';
+    if(next){
+      var nn = needs(next), b = nn ? best(next) : null, mins = bd(next.time)-n;
+      h += '<div class="d22-hero'+(nn?' un':'')+'" data-d22open="'+esc(next.id)+'">'
+        + '<div class="d22-top"><span class="d22-k">Next up</span><span class="d22-when">'+esc(rel(mins))+'</span></div>'
+        + '<div class="d22-time">'+esc(next.time||'')+'</div>'
+        + '<div class="d22-name">'+esc(next.candidate)+'</div>'
+        + '<div class="d22-sub">'+esc([next.company, next.role].filter(Boolean).join(' · '))+'</div>'
+        + '<div class="d22-meta">'+(next.round?'<span>'+esc(next.round)+'</span>':'')+(next.country?'<span>'+esc(next.country)+'</span>':'')+(next.duration?'<span>'+esc(next.duration)+'</span>':'')+'</div>'
+        + (!nn
+            ? '<div class="d22-own">Handled by <b>'+esc(next.assignee)+'</b></div>'+(admin?'<div class="d22-act"><button type="button" class="d22-b ghost" data-d22pick="'+esc(next.id)+'">Change handler</button></div>':'')
+            : '<div class="d22-own warn">'+(next.assignee?esc(next.assignee)+' — no person yet':'No owner yet')+'</div>'+(admin?'<div class="d22-act">'+(b?'<button type="button" class="d22-b" data-d22as="'+esc(next.id)+'" data-d22n="'+esc(b.name)+'">Assign '+esc(b.name)+'</button>':'')+'<button type="button" class="d22-b ghost" data-d22pick="'+esc(next.id)+'">Choose…</button></div>':''))
+        + '</div>';
+    }
+    var strip = need.filter(function(r){ return !next || r.id!==next.id; });
+    if(strip.length && admin){
+      h += '<div class="d22-sh"><b>Needs an owner</b><span>'+need.length+'</span></div><div class="d22-strip">'
+        + strip.slice(0,30).map(function(r){ var b = best(r);
+          return '<div class="d22-card" data-d22open="'+esc(r.id)+'"><div class="d22-ct">'+esc(r.time||'')+'</div><div class="d22-cn">'+esc(r.candidate)+'</div><div class="d22-cs">'+esc(r.company||'')+'</div>'
+            + (b?'<button type="button" class="d22-b sm" data-d22as="'+esc(r.id)+'" data-d22n="'+esc(b.name)+'">→ '+esc(b.name.split(' ')[0])+'</button>':'')
+            + '<button type="button" class="d22-b sm ghost" data-d22pick="'+esc(r.id)+'">Other</button></div>'; }).join('')+'</div>';
+    } else if(!need.length){
+      h += '<div class="d22-done">✓ Every live call has an owner</div>';
+    }
+    return h + '</div>';
+  }
+  var raf = 0;
+  function paint(){
+    raf = 0;
+    var old = document.getElementById('d22Host');
+    if(!isPhone() || state.needsLogin || (typeof getActivePanelName==='function' && getActivePanelName())){ if(old) old.remove(); return; }
+    var wrap = document.getElementById('tableScrollMain'); if(!wrap){ if(old) old.remove(); return; }
+    var html = ''; try{ html = build(); }catch(e){ html = ''; }
+    var host = old || document.createElement('div'); host.id = 'd22Host';
+    if(host.__h !== html){ host.innerHTML = html; host.__h = html; }
+    var anchor = wrap.closest('.table-wrap, .table-scroll') || wrap;
+    if(host.parentNode !== anchor.parentNode || host.nextSibling !== anchor) anchor.parentNode.insertBefore(host, anchor);
+  }
+  function sched(){ if(!raf) raf = requestAnimationFrame(paint); }
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.closest) return;
+    var as = t.closest('[data-d22as]');
+    if(as){ e.preventDefault(); e.stopPropagation(); if(window.d2AssignTo) window.d2AssignTo(as.getAttribute('data-d22as'), as.getAttribute('data-d22n')); return; }
+    var pk = t.closest('[data-d22pick]');
+    if(pk){ e.preventDefault(); e.stopPropagation(); if(window.d2OpenAssign) window.d2OpenAssign(pk.getAttribute('data-d22pick'), pk); return; }
+    var op = t.closest('[data-d22open]');
+    if(op){ var id = op.getAttribute('data-d22open'); if(window.d23Open) window.d23Open(id); else if(window.d5OpenSide) window.d5OpenSide(id); }
+  }, true);
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,150); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); try{ sched(); }catch(e){} return r; };
+    window.addEventListener('resize', sched);
+    sched();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+
+/* ===== d23: in-app confirm sheet + phone "call sheet" (assign · status · history · edit · delete) ===== */
+;(function(){
+  if(window.__d23) return; window.__d23 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var rowOf = function(id){ return (state.rows||[]).find(function(r){ return String(r.id)===String(id); }); };
+
+  /* ---- confirm sheet: window.cdConfirm(message, {title, ok, danger}) -> Promise<boolean> ---- */
+  window.cdConfirm = function(msg, o){
+    o = o || {};
+    return new Promise(function(res){
+      var el = document.createElement('div'); el.className = 'd23-cf';
+      el.innerHTML = '<div class="d23-cfc" role="dialog" aria-modal="true"><b>'+esc(o.title||'Are you sure?')+'</b><p>'+esc(msg).replace(/\n/g,'<br>')+'</p><div class="d23-cfb"><button type="button" class="d23-b ghost" data-n>Cancel</button><button type="button" class="d23-b'+(o.danger?' danger':'')+'" data-y>'+esc(o.ok||'Confirm')+'</button></div></div>';
+      function done(v){ document.removeEventListener('keydown', key, true); el.remove(); res(v); }
+      function key(e){ if(e.key==='Escape'){ e.stopPropagation(); done(false); } }
+      el.addEventListener('click', function(e){ if(e.target===el || e.target.closest('[data-n]')) done(false); else if(e.target.closest('[data-y]')) done(true); });
+      document.addEventListener('keydown', key, true);
+      document.body.appendChild(el);
+      var y = el.querySelector('[data-y]'); if(y) y.focus();
+    });
+  };
+
+  /* ---- call sheet ---- */
+  var sh = null, curId = null;
+  function close(){ if(sh){ sh.remove(); sh = null; } curId = null; document.body.classList.remove('d23-open'); }
+  function history(r){
+    var entry = null; try{ entry = findNotificationEntryForCandidate(r.candidate); }catch(e){}
+    var occ = (entry && entry.occurrences ? entry.occurrences : []).filter(function(o){ return !(o.date===state.date && String(o.time||'')===String(r.time||'')); }).slice(0,6);
+    if(!occ.length) return '<div class="d23-q">No earlier calls on file.</div>';
+    return occ.map(function(o){ return '<div class="d23-h"><span>'+esc(o.date||'')+'</span><span>'+esc(o.company||'—')+(o.round?' · '+esc(o.round):'')+'</span><b>'+esc(o.assignee||'—')+'</b></div>'; }).join('');
+  }
+  var STAT = [['rescheduled','↻ Rescheduled'],['cancelled','✕ Cancelled'],['not_responded','☎ No response'],['no_invite','📨 No invite']];
+  function paint(){
+    var r = rowOf(curId); if(!r){ close(); return; }
+    var rank = []; try{ rank = (window.d2Rank ? window.d2Rank(r) : []).filter(function(h){ return !h.isTeam && !h.absent; }); }catch(e){}
+    rank.sort(function(a,b){ return (!!a.clash-!!b.clash) || ((b.prior?1:0)-(a.prior?1:0)) || (a.load-b.load); });
+    var ad = admin();
+    var h = '<div class="d23-grab"></div><div class="d23-hd"><div><div class="d23-t">'+esc(r.time||(r.woi?'Waiting for invite':''))+'</div><div class="d23-n">'+esc(r.candidate||'')+'</div><div class="d23-s">'+esc([r.company,r.role].filter(Boolean).join(' · '))+'</div></div><button type="button" class="d23-x" data-d23="close" aria-label="Close">✕</button></div>'
+      + '<div class="d23-chips">'+[r.round,r.country,r.duration].filter(Boolean).map(function(x){ return '<span>'+esc(x)+'</span>'; }).join('')+(r.status?'<span class="st">'+esc(r.status.replace('_',' '))+'</span>':'')+'</div>';
+    h += '<div class="d23-sec"><span>Owner</span><b>'+esc(r.assignee||'Not assigned')+'</b></div>';
+    if(ad){
+      h += '<div class="d23-pick">'+rank.slice(0,5).map(function(p){ return '<button type="button" class="d23-p'+(p.name===r.assignee?' on':'')+(p.clash?' clash':'')+'" data-d23as="'+esc(p.name)+'"><b>'+esc(p.name)+'</b><small>'+(p.prior==='candidate'?'handled this candidate':p.prior==='client'?'handled this client':p.load+' call'+(p.load===1?'':'s'))+(p.clash?' · clash':'')+'</small></button>'; }).join('')+'<button type="button" class="d23-p more" data-d23="more"><b>More…</b><small>everyone</small></button></div>';
+      h += '<div class="d23-sec"><span>Status</span></div><div class="d23-st">'+STAT.map(function(s){ return '<button type="button" class="d23-sb'+(r.status===s[0]?' on':'')+'" data-d23st="'+s[0]+'">'+s[1]+'</button>'; }).join('')+(r.status?'<button type="button" class="d23-sb clr" data-d23st="">Clear status</button>':'')+'</div>';
+    }
+    h += '<div class="d23-sec"><span>Earlier calls</span></div><div class="d23-hist">'+history(r)+'</div>';
+    h += '<div class="d23-ft">'+(ad?'<button type="button" class="d23-b ghost" data-d23="edit">✎ Edit all fields</button><button type="button" class="d23-b ghost danger" data-d23="del">Delete</button>':'<button type="button" class="d23-b ghost" data-d23="edit">Open details</button>')+'</div>';
+    sh.querySelector('.d23-card').innerHTML = h;
+  }
+  window.d23Open = function(id){
+    if(!rowOf(id)) return;
+    close(); curId = id;
+    sh = document.createElement('div'); sh.id = 'd23'; sh.innerHTML = '<div class="d23-card"></div>';
+    document.body.appendChild(sh); document.body.classList.add('d23-open');
+    paint();
+  };
+  document.addEventListener('click', function(e){
+    if(!sh) return; var t = e.target; if(!t.closest) return;
+    if(t===sh){ close(); return; }
+    var b = t.closest('[data-d23]');
+    if(b){
+      var k = b.getAttribute('data-d23');
+      if(k==='close') close();
+      else if(k==='more'){ var id = curId; close(); if(window.d2OpenAssign) window.d2OpenAssign(id, b); }
+      else if(k==='edit'){ var id2 = curId; close(); if(window.d5OpenSide) window.d5OpenSide(id2); }
+      else if(k==='del'){ var r = rowOf(curId); if(!r) return; var id3 = curId; window.cdConfirm('Delete '+(r.candidate||'this call')+(r.company?' ('+r.company+')':'')+' from '+state.date+'?\nYou can undo right after.', {title:'Delete call', ok:'Delete', danger:true}).then(function(ok){ if(ok){ close(); try{ deleteCallRow(id3); }catch(x){} } }); }
+      return;
+    }
+    var as = t.closest('[data-d23as]'); if(as){ var nm = as.getAttribute('data-d23as'), id4 = curId; close(); if(window.d2AssignTo) window.d2AssignTo(id4, nm); return; }
+    var st = t.closest('[data-d23st]'); if(st){ var r2 = rowOf(curId); if(!r2) return; var v = st.getAttribute('data-d23st'); r2.status = v; if(!v) r2.statusFields = []; else if(!r2.statusFields) r2.statusFields = []; try{ markDirty(); }catch(x){} close(); render(); }
+  }, true);
+  document.addEventListener('keydown', function(e){ if(sh && e.key==='Escape'){ close(); } });
+})();
