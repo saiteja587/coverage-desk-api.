@@ -230,6 +230,11 @@ let state = {
   timeToCloseData: null,
   timeToCloseLoading: false,
   showDataHealth: false,
+  showDomains: false,
+  domRows: null,
+  domLoading: false,
+  domPeriod: 30,
+  domPick: '',
   dataHealthLoading: false,
   dataHealthGeneratedAt: null,
   showDailyDigest: false,
@@ -6656,6 +6661,7 @@ function closeAllPanels(){
   state.showCandidateProfile = false;
   state.showCompanyScorecard = false;
   state.showDataHealth = false;
+  state.showDomains = false;
   state.showDailyDigest = false;
   state.showEodWrapup = false;
   state.showMoreMenu = false;
@@ -6694,6 +6700,7 @@ function getActivePanelName(){
   if(state.showCandidateProfile) return 'candidateProfile';
   if(state.showCompanyScorecard) return 'companyScorecard';
   if(state.showDataHealth) return 'dataHealth';
+  if(state.showDomains) return 'domains';
   if(state.showDailyDigest) return 'dailyDigest';
   if(state.showEodWrapup) return 'eodWrapup';
   return null;
@@ -6737,6 +6744,7 @@ function renderActivePanel(name){
   if(name === 'candidateProfile') return renderCandidateProfilePanel();
   if(name === 'companyScorecard') return renderCompanyScorecardPanel();
   if(name === 'dataHealth') return renderDataHealthPanel();
+  if(name === 'domains') return renderDomainsPanel();
   if(name === 'dailyDigest') return renderDailyDigestPanel();
   if(name === 'eodWrapup') return renderEodWrapupPanel();
   return '';
@@ -6754,6 +6762,7 @@ function panelTitle(name){
     candidateProfile: state.candidateProfileName ? `Timeline — ${state.candidateProfileName}` : 'Candidate Timeline',
     companyScorecard: 'Company Scorecard',
     dataHealth: 'Data Health',
+    domains: 'Domains',
     dailyDigest: "Today's Briefing",
     eodWrapup: "End-of-Day Wrap-Up"
   };
@@ -7061,6 +7070,7 @@ function render(){
           ${state.showMoreMenu ? `<div class="more-menu-backdrop" data-close-menu="showMoreMenu"></div><div class="more-menu-dropdown">
             <div class="more-menu-section-label">Today</div>
             <button class="more-menu-item ${state.absentIds.length ? 'notif-alert' : ''}" id="toggleNotifications" title="Check for candidates seen on a previous date">👥 Returning candidates${state.absentIds.length ? ` <span class="notif-info-badge">${state.absentIds.length} absent</span>` : (state.notifications && state.notifications.length ? ` <span class="notif-info-badge">${state.notifications.length}</span>` : '')}</button>
+            <button class="more-menu-item" id="toggleDomains" title="Which domains (Data Analyst, Data Engineer, Software, Security…) your calls are in, with charts by client, team and country">📊 Domains</button>
             ${(()=>{ const c = dataHealthIssueCount(); return `<button class="more-menu-item" id="toggleDataHealth" title="One place for what tends to get missed day to day — unmatched closures, stale WOIs, stalled candidates, absences, conflicts">🩺 Data Health${c!==null ? ` <span class="notif-info-badge">${c}</span>` : ''}</button>`; })()}
             ${CURRENT_ROLE==='admin' ? `<button class="more-menu-item" id="toggleDbSettings" title="Connect a real MySQL database">${API_BASE_URL?'🗄️ DB Connected':'🗄️ Connect Database'}${!API_BASE_URL ? ' <span class="notif-info-badge">not connected</span>' : ''}</button>` : ''}
             <button class="more-menu-item" id="toggleDailyDigest" title="Today's headline numbers plus anything that needs a look, in one glance — the first thing to open each day">📋 Today's Briefing</button>
@@ -8049,6 +8059,7 @@ const QUICK_JUMP_COMMANDS = [
   { label: '🧪 Assessments', keywords: 'assessments assessment tests codility hackajob online test interview through assessment', action: ()=>{ openOnlyPanel('showAssessments'); if(!state.assessDate) state.assessDate = todayDateString(); if(!state.assessmentsLoaded) loadAssessments(); } },
   { label: '🎯 Expected Closures', keywords: 'expected closures expect follow up followup reminder flag', action: ()=>{ openOnlyPanel('showExpectedClosures'); if(!state.expectedClosuresLoaded) loadExpectedClosures(); } },
   { label: '👥 Returning candidates', keywords: 'notifications notif absent absences returning', action: ()=>{ openOnlyPanel('showNotifications'); } },
+  { label: '📊 Domains', keywords: 'domains domain data analyst data engineer roles chart which domain clients', action: ()=>{ const w = state.showDomains; openOnlyPanel('showDomains'); if(!w) loadDomains(); } },
   { label: '🩺 Data Health', keywords: 'data health triage unmatched stale', action: ()=>{
     const wasOpen = state.showDataHealth;
     openOnlyPanel('showDataHealth');
@@ -12917,6 +12928,8 @@ function attachHandlers(conflictIds){
       alert('Failed to save: ' + (e && e.message ? e.message : 'could not reach the server'));
     }
   };
+  const toggleDomainsBtn = document.getElementById('toggleDomains');
+  if(toggleDomainsBtn) toggleDomainsBtn.onclick = ()=>{ const w = state.showDomains; openOnlyPanel('showDomains'); if(!w) loadDomains(); render(); };
   const toggleCompanyScorecardBtn = document.getElementById('toggleCompanyScorecard');
   if(toggleCompanyScorecardBtn) toggleCompanyScorecardBtn.onclick = ()=>{ openOnlyPanel('showCompanyScorecard'); render(); };
   const runCompanyScorecardBtn = document.getElementById('runCompanyScorecardBtn');
@@ -19181,3 +19194,106 @@ function deskRoleFix(rows){
   // stored, so an account actually gets the permissions it was assigned.
   await startApp();
 })();
+
+/* ===== Domains (2026-11-02): which domain (Data Analyst, Data Engineer, Software…) each call belongs to ===== */
+const DOMAIN_RULES = [
+  ['Security',            /security|cyber|\bsoc\b|threat|infosec|penetration/],
+  ['Data Engineer',       /data\s*engineer|\betl\b|big\s*data|data\s*pipeline|databricks|snowflake|\bspark\b|data\s*platform|analytics\s*engineer|data\s*architect|data\s*warehouse/],
+  ['Data Scientist / ML / AI', /data\s*scien|machine\s*learning|\bml\b|\bai\b|\bnlp\b|deep\s*learning|\bllm\b|generative/],
+  ['BI / Reporting',      /\bbi\b|business intelligence|power\s*bi|tableau|reporting|dashboard/],
+  ['Data Analyst',        /data\s*analy|analytics|\bsql\b|insight|data\s*quality|data\s*governance/],
+  ['Cloud / DevOps',      /devops|cloud|\bsre\b|site reliability|\baws\b|azure|kubernetes|platform engineer|release engineer/],
+  ['QA / Testing',        /\bqa\b|test|sdet|quality assurance/],
+  ['Software Developer',  /developer|software|full.?stack|front.?end|back.?end|\bjava\b|python|\.net|programmer|mobile|\bios\b|android|web\s*dev|engineer(?!ing)/],
+  ['IT Support / Infra',  /support|desktop|help ?desk|service desk|endpoint|network|\bnoc\b|sysadmin|system admin|administrator|technician|infrastructure|\bit\b/],
+  ['Finance / Accounting',/account|financ|audit|payroll|\btax\b|billing|treasury|chargeback|pricing|credit|bookkeep/],
+  ['Engineering (non-IT)',/civil|mechanical|electrical|building|construction|structural|surveyor|quantity/],
+  ['Healthcare',          /nurse|clinical|health|medical|pharma|care\b|dental|therap/],
+  ['Education',           /teacher|lecturer|professor|tutor|school|university|academic|instructor/],
+  ['Business / Product / Project', /business (systems )?analyst|\bba\b|product|project|program|scrum|consultant|coordinator|manager|operations|admin/]
+];
+function deskDomain(role){
+  const t = String(role || '').toLowerCase().trim();
+  if(!t) return 'No role given';
+  for(const [name, re] of DOMAIN_RULES){ if(re.test(t)) return name; }
+  return 'Other / unclassified';
+}
+async function loadDomains(){
+  state.domLoading = true; render();
+  try{ state.domRows = (await fetchAllRowsAcrossDates(false)) || []; }
+  catch(e){ state.domRows = []; }
+  state.domLoading = false; render();
+}
+function domainStats(){
+  const rows = (state.domRows || []).filter(r => r && r.candidate && r._date);
+  const today = todayDateString();
+  const cut = state.domPeriod ? deskDateAdd(today, -state.domPeriod) : '';
+  const inRange = rows.filter(r => !cut || r._date >= cut);
+  const by = {};
+  inRange.forEach(r => {
+    const d = deskDomain(r.role);
+    const o = by[d] = by[d] || { name:d, calls:0, cands:new Set(), clients:{}, handlers:{}, countries:{}, roles:{}, adv:0, weeks:{} };
+    o.calls++; o.cands.add(normalizeNameKey(r.candidate));
+    const c = stripCompanyNoise ? stripCompanyNoise(r.company) : r.company; if(c) o.clients[c] = (o.clients[c]||0)+1;
+    const h = r.assignee || 'unassigned'; o.handlers[h] = (o.handlers[h]||0)+1;
+    const k = r.country || '—'; o.countries[k] = (o.countries[k]||0)+1;
+    const ro = (r.role||'').trim(); if(ro) o.roles[ro] = (o.roles[ro]||0)+1;
+    if(isAdvancedRound(r.round)) o.adv++;
+  });
+  // 8-week trend, always measured over the last 8 weeks regardless of the period picker
+  const w0 = deskDateAdd(today, -55);
+  rows.filter(r => r._date >= w0).forEach(r => {
+    const d = deskDomain(r.role); if(!by[d]) return;
+    const wk = Math.min(7, Math.max(0, Math.floor((new Date(r._date+'T00:00:00Z') - new Date(w0+'T00:00:00Z'))/604800000)));
+    by[d].weeks[wk] = (by[d].weeks[wk]||0)+1;
+  });
+  const list = Object.values(by).sort((a,b)=>b.calls-a.calls);
+  const clients = new Set(); inRange.forEach(r => { const c = stripCompanyNoise ? stripCompanyNoise(r.company) : r.company; if(c) clients.add(c); });
+  return { list, total: inRange.length, clients: clients.size, cut };
+}
+function renderDomainsPanel(){
+  if(state.domLoading || state.domRows === null){
+    return `<div class="hint">📊 Reading every saved day…</div>`;
+  }
+  const st = domainStats();
+  if(!st.total) return `<div class="hint">No calls in this period.</div>` + domPeriodButtons();
+  const esc = escapeHtml, max = st.list[0].calls;
+  const real = st.list.filter(d => !/^(No role given|Other \/ unclassified)$/.test(d.name));
+  const spark = o => { const ch = '▁▂▃▄▅▆▇█'; const v = [0,1,2,3,4,5,6,7].map(i=>o.weeks[i]||0); const m = Math.max(1,...v); return v.map(x=>ch[Math.min(7,Math.round(x/m*7))]).join(''); };
+  const top = (obj, n) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
+  const pick = st.list.find(d => d.name === state.domPick);
+  const list = (obj, n, total) => top(obj,n).map(([k,v]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="min-width:0;overflow-wrap:anywhere">${esc(k)}</span><b>${v} <span style="opacity:.55;font-weight:500">${Math.round(v/total*100)}%</span></b></div>`).join('');
+  return `
+    ${domPeriodButtons()}
+    <div class="hint" style="margin:8px 0 12px"><b>${real.length}</b> domain${real.length===1?'':'s'} in use · <b>${st.total}</b> calls · <b>${st.clients}</b> clients${st.cut?` · since ${esc(st.cut)}`:' · all saved days'}. Tap a bar for the breakdown.</div>
+    <div style="display:grid;gap:6px">
+      ${st.list.map(d => `
+        <button type="button" data-dom-pick="${esc(d.name)}" style="all:unset;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;padding:6px 8px;border-radius:10px;${d.name===state.domPick?'background:rgba(80,200,160,.12);outline:1px solid var(--teal,#3dd6c0)':''}">
+          <span style="font-weight:600;overflow-wrap:anywhere">${esc(d.name)}</span>
+          
+          <span style="white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right"><b>${d.calls}</b> <span style="opacity:.6">${Math.round(d.calls/st.total*100)}% · ${d.cands.size} ppl</span> <span title="Last 8 weeks, oldest → newest" style="letter-spacing:1px;color:var(--teal,#3dd6c0);margin-left:6px">${spark(d)}</span></span>
+          <span style="grid-column:1/-1;background:var(--surface-2,#222);border-radius:6px;height:14px;overflow:hidden"><span style="display:block;height:100%;width:${Math.max(2,Math.round(d.calls/max*100))}%;background:var(--teal,#3dd6c0);opacity:${/^(No role|Other)/.test(d.name)?.4:.9}"></span></span>
+        </button>`).join('')}
+    </div>
+    ${pick ? `
+    <div style="margin-top:16px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2,rgba(255,255,255,.03))">
+      <div style="font-weight:700;font-size:15px;margin-bottom:2px">${esc(pick.name)}</div>
+      <div class="hint" style="margin-bottom:10px">${pick.calls} calls · ${pick.cands.size} candidates · ${pick.adv} in 2nd round or later · ${Object.keys(pick.clients).length} clients</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
+        <div><div style="opacity:.65;font-size:12px;margin-bottom:4px">CLIENTS USING IT</div>${list(pick.clients,10,pick.calls)}</div>
+        <div><div style="opacity:.65;font-size:12px;margin-bottom:4px">WHO HANDLES IT</div>${list(pick.handlers,8,pick.calls)}</div>
+        <div><div style="opacity:.65;font-size:12px;margin-bottom:4px">COUNTRY</div>${list(pick.countries,6,pick.calls)}</div>
+        <div><div style="opacity:.65;font-size:12px;margin-bottom:4px">ROLE TITLES</div>${list(pick.roles,12,pick.calls)}</div>
+      </div>
+    </div>` : ''}
+    <div class="hint" style="margin-top:12px">Domains come from the role text on each call (e.g. “Data Engineer” → Data Engineer). Calls with no role show as “No role given”. Tap “Other / unclassified” to see role titles that need a rule.</div>`;
+}
+function domPeriodButtons(){
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap">${[[7,'7 days'],[30,'30 days'],[90,'90 days'],[0,'All time']].map(([n,l]) => `<button type="button" class="btn ${state.domPeriod===n?'primary':'ghost'}" data-dom-period="${n}">${l}</button>`).join('')}<button type="button" class="btn ghost" data-dom-refresh="1">↻ Refresh</button></div>`;
+}
+document.addEventListener('click', function(e){
+  const t = e.target && e.target.closest ? e.target : null; if(!t) return;
+  const p = t.closest('[data-dom-pick]'); if(p){ const n = p.getAttribute('data-dom-pick'); state.domPick = state.domPick === n ? '' : n; render(); return; }
+  const pr = t.closest('[data-dom-period]'); if(pr){ state.domPeriod = +pr.getAttribute('data-dom-period'); state.domPick = ''; render(); return; }
+  if(t.closest('[data-dom-refresh]')){ state.domRows = null; _allRowsAcrossDatesCache = null; loadDomains(); return; }
+});
