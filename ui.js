@@ -1137,7 +1137,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
   document.addEventListener('mouseover', function(e){
     var td = e.target.closest && e.target.closest('td[data-label="Candidate"]');
     if(!td){ if(hcEl && !e.target.closest('.d3-hc')) closeCard(); return; }
-    if(hcEl || window.matchMedia('(hover: none)').matches) return;
+    return; /* d20 popup is the single candidate hover popup now */
     var tr = td.closest('tr[data-id]'); if(!tr) return;
     clearTimeout(hoverT); hoverT = setTimeout(function(){ showCard(td, tr.dataset.id); }, 550);
   });
@@ -3877,8 +3877,13 @@ document.addEventListener('click', function(e){
     if(!occ.length){
       return h + '<div style="opacity:.75;font-size:12px">No earlier calls on file for this name.</div>';
     }
-    var shown = occ.slice(0,10);
-    h += '<div style="opacity:.7;font-size:11.5px;margin-bottom:6px">Last '+shown.length+(occ.length>shown.length?' of '+occ.length:'')+' call'+(shown.length===1?'':'s')+'</div>';
+    var shown = occ;
+    var sub = row ? ((row.company||'')+(row.role?' · '+row.role:'')) : '';
+    if(sub) h = h.replace('</div>','</div><div style="opacity:.7;font-size:11.5px;margin-bottom:2px">'+esc(sub)+'</div>');
+    var as=[], os=[]; try{ if(row){ as = assessmentsForCandidate(row.candidate,row.company)||[]; os = onsitesForCandidate(row.candidate,row.company)||[]; } }catch(e){}
+    if(as.length) h += '<div style="font-size:12px;margin:2px 0">🧪 '+esc(as.slice(0,3).map(function(a){ return a.date+(a.assessment?' ('+a.assessment+')':''); }).join(', '))+'</div>';
+    if(os.length) h += '<div style="font-size:12px;margin:2px 0">🏢 '+esc(os.slice(0,3).map(function(o){ return o.date+(o.location?' @ '+o.location:''); }).join(', '))+'</div>';
+    h += '<div style="opacity:.7;font-size:11.5px;margin:4px 0 6px">All '+shown.length+' call'+(shown.length===1?'':'s')+' · newest first</div><div class="d20-scroll" style="max-height:min(60vh,420px);overflow:auto;padding-right:4px">';
     h += '<div style="display:grid;grid-template-columns:auto 1fr auto auto;gap:3px 12px;font-size:12.5px;align-items:baseline">';
     shown.forEach(function(o){
       var isThis = row && o.date===state.date && String(o.time||'')===String(row.time||'') && String(o.round||'')===String(row.round||'');
@@ -3890,13 +3895,13 @@ document.addEventListener('click', function(e){
         + '<span style="white-space:nowrap;opacity:.85;'+st0+'">'+esc(o.round||'')+'</span>'
         + '<span style="white-space:nowrap;'+st0+'">'+who+'</span>';
     });
-    return h + '</div>';
+    return h + '</div></div>';
   }
   function show(el){
     var name = (el.value||'').trim(); if(!name || name.length<2) return;
     hide(); curEl = el;
     pop = document.createElement('div'); pop.id = 'd20Hist';
-    pop.style.cssText = 'position:fixed;z-index:100010;max-width:min(560px,94vw);min-width:300px;padding:12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);pointer-events:none;font-family:inherit';
+    pop.style.cssText = 'position:fixed;z-index:100010;max-width:min(560px,94vw);min-width:300px;padding:12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);pointer-events:auto;font-family:inherit';
     pop.innerHTML = build(name, el);
     document.body.appendChild(pop);
     var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
@@ -3913,9 +3918,10 @@ document.addEventListener('click', function(e){
   }, true);
   document.addEventListener('mouseout', function(e){
     var el = e.target && e.target.closest ? e.target.closest('input.cell-input[data-field="candidate"]') : null;
-    if(el){ var to = e.relatedTarget; if(!to || !el.contains(to)) hide(); }
+    if(el){ var to = e.relatedTarget; if(to && (el.contains(to) || (pop && pop.contains(to)))) return; clearTimeout(timer); setTimeout(function(){ if(pop && !pop.matches(':hover') && document.activeElement!==el && !el.matches(':hover')) hide(); }, 160); }
+    else if(pop && e.target.closest && e.target.closest('#d20Hist')){ var t2 = e.relatedTarget; if(!t2 || !(pop.contains(t2) || (curEl && curEl.contains(t2)))) setTimeout(function(){ if(pop && !pop.matches(':hover') && curEl && !curEl.matches(':hover')) hide(); }, 160); }
   }, true);
-  ['focusin','keydown','scroll','mousedown','touchstart'].forEach(function(ev){ document.addEventListener(ev, hide, true); });
+  ['focusin','keydown','scroll','mousedown','touchstart'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(pop && e.target && e.target.nodeType===1 && pop.contains(e.target)) return; if(pop && (ev==='scroll') && e.target===document) {} hide(); }, true); });
   window.addEventListener('blur', hide);
 })();
 
