@@ -1510,3 +1510,18 @@ body.d27-open{overflow:hidden}
 .d29-hb{margin-right:0}
 button.d27-row{width:100%;text-align:left;font:inherit;color:inherit}
 .d29-rl .d27-row{grid-template-columns:minmax(0,1fr) auto}
+
+/* ===== d30: round floating menu ===== */
+#d26Snd{display:none!important}
+#d30Orb{position:fixed;z-index:9000;width:56px;height:56px;border-radius:50%;border:1px solid color-mix(in srgb,var(--teal) 50%,var(--border));background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 6px 22px rgba(0,0,0,.4);padding:0;cursor:grab;touch-action:none;opacity:.8;display:grid;place-items:center;transition:left .28s cubic-bezier(.2,.9,.3,1.2),top .28s cubic-bezier(.2,.9,.3,1.2),opacity .2s,transform .2s}
+#d30Orb i{width:28px;height:28px;border-radius:50%;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--teal) 80%,#fff),color-mix(in srgb,var(--teal) 45%,var(--surface)));box-shadow:0 0 0 5px color-mix(in srgb,var(--teal) 18%,transparent);transition:transform .2s}
+#d30Orb:active{cursor:grabbing;transform:scale(.94)}
+#d30Orb.on{opacity:1;z-index:9102}#d30Orb.on i{transform:scale(.7)}
+#d30Wrap{position:fixed;inset:0;z-index:9100;pointer-events:none}
+#d30Wrap .d30-bg{position:absolute;inset:0;background:rgba(3,7,12,.5);backdrop-filter:blur(3px);opacity:0;transition:opacity .2s}
+#d30Wrap.on{pointer-events:auto}#d30Wrap.on .d30-bg{opacity:1}
+#d30Wrap .d30-i{position:absolute;left:0;top:0;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:0;cursor:pointer;opacity:0;transform:translate(0,0) scale(.3);transition:transform .32s cubic-bezier(.2,.9,.3,1.25),opacity .2s;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+#d30Wrap.on .d30-i{opacity:1;transform:translate(var(--x),var(--y)) scale(1)}
+#d30Wrap .d30-i .ic{font-size:20px;line-height:1}#d30Wrap .d30-i small{font-size:9px;color:var(--muted);line-height:1}
+#d30Wrap .d30-i:active{background:color-mix(in srgb,var(--teal) 25%,var(--surface))}
+body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-open #d30Orb{opacity:0;pointer-events:none}
