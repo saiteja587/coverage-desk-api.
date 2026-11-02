@@ -2985,9 +2985,10 @@ document.addEventListener('click', function(e){
   var LS = { get:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var fmtD = function(d){ var m = /(\d{4})-(\d\d)-(\d\d)/.exec(d||''); return m ? (+m[3])+' '+MON[+m[2]-1] : (d||''); };
-  var nkey = function(n){ try{ return normalizeNameKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } };
-  var ckey = function(n){ try{ return normalizeCompanyKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } };
-  var coName = function(c){ try{ return stripCompanyNoise(c)||c; }catch(e){ return c||''; } };
+  var memo = function(fn){ var m = Object.create(null), n = 0; return function(x){ var k = String(x==null?'':x), v = m[k]; if(v===undefined){ if(++n>30000){ m = Object.create(null); n = 0; } v = m[k] = fn(k); } return v; }; };
+  var nkey = memo(function(n){ try{ return normalizeNameKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } });
+  var ckey = memo(function(n){ try{ return normalizeCompanyKey(n); }catch(e){ return String(n||'').toLowerCase().trim(); } });
+  var coName = memo(function(c){ try{ return stripCompanyNoise(c)||c; }catch(e){ return c||''; } });
   var today = function(){ try{ return todayDateString(); }catch(e){ return ''; } };
   var low = function(s){ return String(s==null?'':s).toLowerCase(); };
   var el = null, q = '', chip = 'all', all = null, loading = false, openMore = {}, loadedAt = 0;
@@ -3085,6 +3086,19 @@ document.addEventListener('click', function(e){
     var counts = R ? {cand:R.cand.length, calls:R.calls.length, client:R.client.length, people:R.people.length, asm:R.asm.length, tools:R.tools.length} : {};
     var keepFocus = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('d12-q');
     var list = $('.d12-list', el), keep = list ? list.scrollTop : 0;
+    var inp0 = $('.d12-q', el);
+    if(inp0 && list){
+      /* Update only the results — the input itself is never replaced, so typing and the keyboard stay steady. */
+      if(inp0.value !== q) inp0.value = q;
+      var sb = $('.d12-sb', el), clr = $('.d12-clr', el);
+      if(q && !clr && sb){ var cb = document.createElement('button'); cb.type='button'; cb.className='d12-clr'; cb.setAttribute('data-d12a','erase'); cb.setAttribute('aria-label','Clear'); cb.textContent='✕'; sb.appendChild(cb); }
+      else if(!q && clr) clr.remove();
+      var cbar = $('.d12-chipbar', el);
+      if(cbar) cbar.innerHTML = CHIPS.map(function(c){ var n = counts[c[0]]; return '<button type="button" class="'+(chip===c[0]?'on':'')+'" data-d12c="'+c[0]+'">'+c[1]+(n?'<em>'+n+'</em>':'')+'</button>'; }).join('');
+      list.innerHTML = body; list.scrollTop = keep;
+      if(!q && document.activeElement !== inp0) inp0.focus();
+      return;
+    }
     el.innerHTML = '<div class="d12-sheet"><div class="d12-h"><div class="d12-sb"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input class="d12-q" type="search" inputmode="search" enterkeyhint="search" placeholder="Search anything…" value="'+esc(q)+'" autocomplete="off" autocapitalize="off" spellcheck="false">'+(q?'<button type="button" class="d12-clr" data-d12a="erase" aria-label="Clear">✕</button>':'')+'</div><button type="button" class="d12-cancel" data-d12a="close">Close</button></div>'
       +'<div class="d12-chipbar">'+CHIPS.map(function(c){ var n = counts[c[0]]; return '<button type="button" class="'+(chip===c[0]?'on':'')+'" data-d12c="'+c[0]+'">'+c[1]+(n?'<em>'+n+'</em>':'')+'</button>'; }).join('')+'</div>'
       +'<div class="d12-list">'+body+'</div></div>';
@@ -3127,7 +3141,7 @@ document.addEventListener('click', function(e){
     var r = t.closest('[data-d12r]'); if(r){ var p = r.dataset.d12r.split(':'), L = last && last[p[0]]; if(L && L[+p[1]]) act(L[+p[1]].act); }
   }, true);
   var timer = null;
-  document.addEventListener('input', function(e){ if(!el || !e.target.classList || !e.target.classList.contains('d12-q')) return; q = e.target.value; clearTimeout(timer); timer = setTimeout(paint, 90); });
+  document.addEventListener('input', function(e){ if(!el || !e.target.classList || !e.target.classList.contains('d12-q')) return; if(e.isComposing) return; q = e.target.value; clearTimeout(timer); timer = setTimeout(paint, (window.innerWidth<760 ? 160 : 100)); });
   document.addEventListener('keydown', function(e){
     if(!el) return;
     if(e.key==='Escape'){ closeS(); }
