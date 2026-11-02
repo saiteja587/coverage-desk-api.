@@ -424,7 +424,20 @@ let __pendingApiCalls = 0;
 function setNetworkBusy(delta){
   __pendingApiCalls = Math.max(0, __pendingApiCalls + delta);
   const bar = document.getElementById('globalBusyBar');
-  if(bar) bar.classList.toggle('active', __pendingApiCalls > 0);
+  if(!bar) return;
+  // Calm loading bar: appear only if work lasts >200ms, and linger 600ms after the last
+  // request so back-to-back calls don't make it flash on/off.
+  if(__pendingApiCalls > 0){
+    clearTimeout(setNetworkBusy._hide); setNetworkBusy._hide = null;
+    if(!bar.classList.contains('active') && !setNetworkBusy._show){
+      setNetworkBusy._show = setTimeout(() => { setNetworkBusy._show = null; if(__pendingApiCalls > 0) bar.classList.add('active'); }, 200);
+    }
+  } else {
+    clearTimeout(setNetworkBusy._show); setNetworkBusy._show = null;
+    if(bar.classList.contains('active') && !setNetworkBusy._hide){
+      setNetworkBusy._hide = setTimeout(() => { setNetworkBusy._hide = null; if(__pendingApiCalls === 0) bar.classList.remove('active'); }, 600);
+    }
+  }
 }
 async function apiCall(resource, opts){
   setNetworkBusy(1);
