@@ -921,13 +921,17 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
   }
   function buildSuggestions(){
     var people = peopleList().filter(function(p){ return !isAbsentP(p); });
-    var sim = rows().map(function(r){ return {id:r.id, time:r.time, duration:r.duration, assignee:r.assignee, woi:r.woi}; });
-    var un = rows().filter(function(r){ return !r.assignee && live(r) && bd(r.time)!==9999; }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
+    var tnS = null; try{ tnS = getTeamNames(); }catch(e){}
+    var ownerP = function(r){ try{ var o = window.cdOwnerOf ? window.cdOwnerOf(r) : null; return o ? o.name : ''; }catch(e){ return ''; } };
+    var sim = rows().map(function(r){ var op = ownerP(r); return {id:r.id, time:r.time, duration:r.duration, assignee:(op || (tnS && tnS.has(r.assignee) ? '' : r.assignee)), woi:r.woi}; });
+    var un = rows().filter(function(r){ var a = (r.assignee||'').trim(); return (!a || (tnS && tnS.has(a))) && !ownerP(r) && live(r) && bd(r.time)!==9999; }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
     var out = [];
     un.forEach(function(r){
       var adv = false; try{ adv = isAdvancedRound(r.round); }catch(e){}
       var pri = priorHandler(r), best=null;
+      var rowTeam = (r.assignee||'').trim(), teamOnly = !!(rowTeam && tnS && tnS.has(rowTeam));
       people.forEach(function(p){
+        if(teamOnly && p.team && p.team!==rowTeam && !(adv && p.advanced)) return;
         if(overlapsFor(p.name, r, sim).length) return;
         var load = sim.filter(function(x){ return x.assignee===p.name; }).length;
         var score = -load; var why = [];
@@ -953,6 +957,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     document.body.appendChild(sugEl); document.body.classList.add('d2-lock');
     sugEl._items = items;
   }
+  window.d3OpenSuggest = function(){ openSuggest(); };
   function closeSuggest(){ if(sugEl){ sugEl.remove(); sugEl=null; } if(!$('#d2Timeline,#d2Handover')) document.body.classList.remove('d2-lock'); }
   function applySuggest(){
     var items = sugEl._items, n=0;
@@ -4348,7 +4353,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.0', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.1', SEEN_KEY = 'cd.v2.seen';
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4359,6 +4364,14 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.1','2026-11-02','Automation',[
+      'Owners fill themselves from the portal after every sync/import (1st round, and 2nd round when the match is certain); doubtful ones wait in a Confirm list',
+      '✨ Fill the day — one button proposes an owner for every unowned call',
+      '🏖 Leave calendar — mark days off once; suggestions skip those people',
+      '⏰ Reminders — your own calls 30 and 10 minutes before they start',
+      'Smart nudges — repeat no-show candidates and long-waiting WOI calls in Needs attention',
+      '📋 Copy day summary — WhatsApp-ready wrap-up'
+    ]],
     ['V2.0','2026-11-02','Major release',[
       '⌘ Command Center — one screen for the whole day: coverage, hour-by-hour board, what needs attention, team load',
       'New phone home — Next-up card, one-tap suggested owner, My calls / Needs owner chips, call sheet with status and history',
@@ -4410,6 +4423,7 @@ window.cdOwnerOf = function(r){
     ['⌘','Command Center','The whole day on one screen: coverage, an hour-by-hour board, what needs attention right now, and how loaded each team is.'],
     ['📱','A new phone home','A Next-up card with one-tap suggested owners, My calls / Needs owner chips, and a call sheet for status, history and edits.'],
     ['🧭','Owners, everywhere','The portal handler or driving person now counts as the owner — in popups, cards and the Needs-owner list.'],
+    ['🤖','Automation','Owners fill from the portal by themselves, Fill the day proposes the rest, leave days are skipped, and your own calls remind you 30 and 10 minutes ahead.'],
     ['✨','Feels alive','Snap, combo flare, countdown pulse and a Board-clear celebration when every call is covered. Sound is optional.']
   ];
   function tour(){
@@ -4422,7 +4436,7 @@ window.cdOwnerOf = function(r){
     el.addEventListener('click', function(e){
       if(e.target.closest && e.target.closest('[data-d27n]')){ if(i<SLIDES.length-1){ i++; paint(); } else { closeEl(el); } }
     });
-    LS.s(SEEN_KEY, VERSION);
+    LS.s(SEEN_KEY, 'V2');
   }
 
   /* ---------- Command Center ---------- */
@@ -4455,6 +4469,13 @@ window.cdOwnerOf = function(r){
       + '<div class="d27-k'+(mins!==null&&mins<=15?' warn':'')+'"><b>'+(mins===null?'—':(mins<1?'now':mins<60?mins+'m':Math.floor(mins/60)+'h '+(mins%60)+'m'))+'</b><span>next call</span></div>'
       + '<div class="d27-k'+(cf?' warn':'')+'"><b>'+cf+'</b><span>conflicts</span></div>'
       + '<div class="d27-k'+(woi?' warn':'')+'"><b>'+woi+'</b><span>waiting invite</span></div></div>';
+    h += '<div class="d27-actions">'+(admin()?'<button type="button" class="d27-btn" data-d27fill>✨ Fill the day</button>':'')+'<button type="button" class="d27-btn ghost" data-d27leave>🏖 Leave</button><button type="button" class="d27-btn ghost" data-d27copy>📋 Copy day summary</button></div>';
+    var pend = window.d28Pending ? window.d28Pending() : [];
+    if(pend.length && admin()){
+      h += '<div class="d27-sec"><b>Confirm owners</b><span>'+pend.length+' from the portal</span></div><div class="d27-list">'
+        + pend.slice(0,8).map(function(x){ return '<div class="d27-row"><span class="t">'+esc(x.row.time||'')+'</span><span class="n"><b>'+esc(x.row.candidate)+'</b><small>'+esc(x.row.round||'')+' · '+esc(x.row.company||'')+'</small></span><button type="button" class="d27-btn sm" data-d27ok="'+esc(x.row.id)+'">✓ '+esc(String(x.handler).split(' ')[0])+'</button></div>'; }).join('')
+        + (pend.length>1?'<button type="button" class="d27-btn ghost" data-d27okall>Accept all '+pend.length+'</button>':'') + '</div>';
+    }
     /* hour board */
     h += '<div class="d27-sec"><b>Hour by hour</b><span>tap an hour</span></div><div class="d27-hours">'
       + hrs.map(function(k){ var o = H[k], tot = o.a+o.u; return '<button type="button" class="d27-hr'+(k===pickHour?' on':'')+(k===curH?' now':'')+'" data-d27h="'+k+'"><span class="bar"><i class="u" style="height:'+Math.round(o.u/mx*100)+'%"></i><i class="a" style="height:'+Math.round(o.a/mx*100)+'%"></i></span><b>'+tot+'</b><small>'+hourLabel(k*60)+'</small></button>'; }).join('') + '</div>';
@@ -4467,6 +4488,7 @@ window.cdOwnerOf = function(r){
     un.filter(function(r){ return bd(r.time)!==9999 && bd(r.time)-n<=90; }).slice(0,4).forEach(function(r){ var m = bd(r.time)-n; items.push(['🔴', r.candidate+' at '+r.time+' has no owner', m<=0?'starting now':'in '+m+' min', {open:r.id}]); });
     if(cf) items.push(['⚠️', cf+' conflict'+(cf===1?'':'s')+' to resolve','double-booked handlers or clients',{click:'[data-d3="conflicts"], #resolveConflictsBtn'}]);
     if(woi) items.push(['📨', woi+' call'+(woi===1?'':'s')+' waiting for invite','set the time when the invite arrives',{filter:'woi'}]);
+    try{ (window.d28Nudges?window.d28Nudges():[]).forEach(function(nu){ items.push([nu.ic, nu.t, nu.s, nu.woi?{filter:'woi'}:{open:nu.id}]); }); }catch(e){}
     h += '<div class="d27-sec"><b>Needs attention</b></div><div class="d27-att">'+(items.length? items.map(function(it,i){ return '<button type="button" class="d27-at" data-d27at="'+i+'"><span>'+it[0]+'</span><span><b>'+esc(it[1])+'</b><small>'+esc(it[2])+'</small></span><em>›</em></button>'; }).join('') : '<div class="d27-empty">✓ Nothing urgent right now.</div>')+'</div>';
     /* load */
     h += '<div class="d27-sec"><b>Team load</b><span>live calls</span></div><div class="d27-load">'+tl.map(function(k){ return '<div><span>'+esc(k)+'</span><i><u style="width:'+Math.round(team[k]/tmax*100)+'%" class="'+(k==='Unassigned'?'bad':'')+'"></u></i><b>'+team[k]+'</b></div>'; }).join('')+'</div>';
@@ -4487,6 +4509,11 @@ window.cdOwnerOf = function(r){
     var h = t.closest('[data-d27h]'); if(h){ pickHour = +h.getAttribute('data-d27h'); repaintCC(); return; }
     var as = t.closest('[data-d27as]'); if(as){ e.stopPropagation(); if(window.d2AssignTo) window.d2AssignTo(as.getAttribute('data-d27as'), as.getAttribute('data-d27n')); setTimeout(repaintCC, 120); return; }
     var op = t.closest('[data-d27open]'); if(op){ var id = op.getAttribute('data-d27open'); if(window.d23Open){ window.d23Open(id); } else if(window.d5OpenSide){ closeEl(ccEl); window.d5OpenSide(id); } return; }
+    if(t.closest('[data-d27fill]')){ closeEl(ccEl); if(window.d3OpenSuggest) window.d3OpenSuggest(); return; }
+    if(t.closest('[data-d27leave]')){ if(window.d28OpenLeave) window.d28OpenLeave(); return; }
+    if(t.closest('[data-d27copy]')){ var tx = window.d28Summary ? window.d28Summary() : ''; var btn = t.closest('[data-d27copy]'); var done = function(){ btn.textContent = '✓ Copied'; setTimeout(function(){ btn.textContent = '📋 Copy day summary'; }, 1800); }; try{ navigator.clipboard.writeText(tx).then(done, function(){ window.prompt('Copy this summary', tx); }); }catch(x){ window.prompt('Copy this summary', tx); } return; }
+    var ok = t.closest('[data-d27ok]'); if(ok){ window.d28Confirm([ok.getAttribute('data-d27ok')]).then(repaintCC); return; }
+    if(t.closest('[data-d27okall]')){ window.d28Confirm().then(repaintCC); return; }
     var at = t.closest('[data-d27at]');
     if(at){ var it = ccItems[+at.getAttribute('data-d27at')]; if(!it) return; var a = it[3];
       if(a.open){ if(window.d23Open) window.d23Open(a.open); }
@@ -4518,7 +4545,162 @@ window.cdOwnerOf = function(r){
     var o = window.render;
     window.render = function(){ var r = o.apply(this, arguments); try{ mount(); }catch(e){} clearTimeout(rt); rt = setTimeout(repaintCC, 80); return r; };
     mount(); splash();
-    if(!auto && LS.g(SEEN_KEY,'') !== VERSION) setTimeout(tour, 1700);
+    if(!auto && LS.g(SEEN_KEY,'') !== 'V2') setTimeout(tour, 1700);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+
+/* ===== d28: V2.1 automation — auto owners, fill the day, leave calendar, reminders, nudges, day summary ===== */
+;(function(){
+  if(window.__d28) return; window.__d28 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var role = function(){ try{ return CURRENT_ROLE; }catch(e){ return ''; } };
+  var canFill = function(){ return role()==='admin' || role()==='team_lead'; };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var toast = function(m,o){ try{ if(window.d2Toast) window.d2Toast(m,o||{ms:4500}); }catch(e){} };
+
+  /* ---------- 1. owners fill themselves ---------- */
+  var pending = [];                                      /* doubtful matches waiting for a tap */
+  function ownerPlan(){
+    var auto = [], conf = [];
+    if(!state.portalAssignments || !state.portalAssignments.length) return { auto:auto, conf:conf };
+    (state.rows||[]).forEach(function(r){
+      if(r.woi || !r.candidate || r.drivingPerson) return;
+      var m = null; try{ m = findPortalMatch(r); }catch(e){}
+      if(!m) return; var handler = (m.handler||m.assignee||'').trim(); if(!handler) return;
+      var adv = false; try{ adv = isAdvancedRound(r.round); }catch(e){}
+      if(!adv){ auto.push({row:r, handler:handler}); return; }
+      var sameDay = m.dateKey && m.dateKey===state.date, sameTime = m.time && m.time===r.time;
+      var cm = true; try{ var mc = m.client||m.company||''; cm = !mc || normalizeCompanyKey(mc)===normalizeCompanyKey(r.company||''); }catch(e){}
+      if(sameDay && sameTime && cm) auto.push({row:r, handler:handler}); else conf.push({row:r, handler:handler});
+    });
+    return { auto:auto, conf:conf };
+  }
+  var lastSig = '', busy = false;
+  async function autoOwners(){
+    if(busy || !canFill() || state.needsLogin || state.dateSwitching || state.saving) return;
+    var p = ownerPlan(); pending = p.conf;
+    var sig = state.date+'|'+(state.rows||[]).length+'|'+(state.portalAssignments?state.portalAssignments.length:0)+'|'+p.auto.length+'|'+p.conf.length;
+    if(sig===lastSig) return; lastSig = sig;
+    if(!p.auto.length) return;
+    busy = true;
+    try{
+      p.auto.forEach(function(x){ x.row.drivingPerson = x.handler; });
+      await saveDrivingPersons();
+      toast('📡 Filled '+p.auto.length+' owner'+(p.auto.length===1?'':'s')+' from the portal'+(p.conf.length?' · '+p.conf.length+' to confirm':''));
+      lastSig = ''; render();
+    }catch(e){ console.warn('auto owners', e); }
+    busy = false;
+  }
+  window.d28Confirm = async function(ids){
+    var list = pending.filter(function(x){ return !ids || ids.indexOf(String(x.row.id))>=0; });
+    if(!list.length) return 0;
+    list.forEach(function(x){ x.row.drivingPerson = x.handler; });
+    try{ await saveDrivingPersons(); }catch(e){}
+    pending = pending.filter(function(x){ return list.indexOf(x)<0; }); render(); return list.length;
+  };
+  window.d28Pending = function(){ return pending.slice(); };
+
+  /* ---------- 4. leave calendar ---------- */
+  function leave(){ try{ return JSON.parse(LS.g('cd.leave','[]'))||[]; }catch(e){ return []; } }
+  function saveLeave(L){ LS.s('cd.leave', JSON.stringify(L)); }
+  function applyLeave(){
+    if(role()!=='admin' || !state.date || state.needsLogin || state.dateSwitching) return;
+    var changed = false;
+    leave().forEach(function(l){
+      if(state.date>=l.from && state.date<=l.to && (state.absentIds||[]).indexOf(l.id)<0){ state.absentIds = (state.absentIds||[]).concat([l.id]); changed = true; }
+    });
+    if(changed){ try{ syncNotesFromAbsent(); markDirty(); }catch(e){} render(); }
+  }
+  function openLeave(){
+    var ppl = (state.roster||[]).filter(function(p){ return p && p.name && !(getTeamNames().has(p.name)); }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+    var today = state.date, L = leave().filter(function(l){ return l.to>=today; }).sort(function(a,b){ return a.from.localeCompare(b.from); });
+    var el = document.createElement('div'); el.id='d28Leave'; el.className='d27-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>TEAM</small><h2>Leave calendar</h2></div><button type="button" class="d27-x" data-d28x>✕</button></div><div class="d27-scroll">'
+      + '<div class="d28-form"><select id="d28P">'+ppl.map(function(p){ return '<option value="'+esc(p.id)+'" data-n="'+esc(p.name)+'">'+esc(p.name)+(p.team?' · '+esc(p.team):'')+'</option>'; }).join('')+'</select><label>From <input type="date" id="d28F" value="'+esc(today)+'"></label><label>To <input type="date" id="d28T" value="'+esc(today)+'"></label><button type="button" class="d27-btn" data-d28add>Add leave</button></div>'
+      + '<div class="d27-sec"><b>Upcoming</b><span>'+L.length+'</span></div>'
+      + (L.length? L.map(function(l,i){ return '<div class="d27-row" style="cursor:default"><span class="t">'+esc(l.from===l.to?l.from:l.from+' → '+l.to)+'</span><span class="n"><b>'+esc(l.name)+'</b></span><button type="button" class="d27-btn sm ghost" data-d28rm="'+i+'">Remove</button></div>'; }).join('') : '<div class="d27-empty">No leave planned.</div>')
+      + '<div class="d23-q" style="margin-top:10px">Days off are applied automatically when you open that day, and suggestions skip those people. Stored on this device; once a day is opened it is saved with the day.</div></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){
+      var t = e.target;
+      if(t===el || (t.closest && t.closest('[data-d28x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); return; }
+      var add = t.closest && t.closest('[data-d28add]');
+      if(add){ var sel = el.querySelector('#d28P'), f = el.querySelector('#d28F').value, to = el.querySelector('#d28T').value || f; if(!sel.value || !f) return; if(to<f) to = f;
+        var all = leave(); all.push({id:sel.value, name:sel.options[sel.selectedIndex].getAttribute('data-n'), from:f, to:to}); saveLeave(all); el.remove(); document.body.classList.remove('d27-open'); applyLeave(); openLeave(); return; }
+      var rm = t.closest && t.closest('[data-d28rm]');
+      if(rm){ var cur = leave().filter(function(l){ return l.to>=today; }).sort(function(a,b){ return a.from.localeCompare(b.from); }), victim = cur[+rm.getAttribute('data-d28rm')]; if(victim){ saveLeave(leave().filter(function(l){ return !(l.id===victim.id && l.from===victim.from && l.to===victim.to); })); }
+        el.remove(); document.body.classList.remove('d27-open'); openLeave(); }
+    });
+  }
+  window.d28OpenLeave = openLeave;
+
+  /* ---------- 3. reminders (this device, while the app is open) ---------- */
+  var fired = {};
+  function remind(){
+    if(state.needsLogin || !state.rows || state.date!==(function(){ try{ return todayDateString(); }catch(e){ return ''; } })()) return;
+    var my = ''; try{ my = getMyAssigneeName(); }catch(e){} if(!my) return;
+    var n = nowBd();
+    state.rows.forEach(function(r){
+      if(r.woi || r.status || !r.candidate) return;
+      var o = window.cdOwnerOf ? window.cdOwnerOf(r) : null, mine = false;
+      try{ mine = !!(o && namesEquivalent(o.name, my)); }catch(e){}
+      if(!mine) return; var m = bd(r.time); if(m===9999) return; var left = m - n;
+      [[30,'30'],[10,'10']].forEach(function(k){
+        var key = state.date+'|'+r.id+'|'+k[1];
+        if(left<=k[0] && left>k[0]-4 && !fired[key]){ fired[key]=1;
+          var msg = '⏰ '+r.candidate+' at '+r.time+' — in '+Math.max(1,Math.round(left))+' min'+(r.company?' · '+r.company:'');
+          toast(msg,{ms:9000});
+          try{ if(window.d26fx){ window.d26fx.warn(); window.d26fx.buzz([30,60,30]); } }catch(e){}
+          try{ if('Notification' in window && Notification.permission==='granted' && document.hidden) new Notification('Call in '+Math.max(1,Math.round(left))+' min', {body:r.candidate+' · '+r.time+(r.company?' · '+r.company:'')}); }catch(e){}
+        }
+      });
+    });
+  }
+  setInterval(function(){ try{ remind(); }catch(e){} }, 30000);
+  window.d28Remind = remind;
+
+  /* ---------- 5/6. nudges + day summary (used by the Command Center) ---------- */
+  window.d28Nudges = function(){
+    var out = [], rows = state.rows||[];
+    rows.forEach(function(r){
+      if(r.woi || r.status || !r.candidate) return;
+      var f = null; try{ f = findRepeatNoShowFlag(r); }catch(e){}
+      if(f && f.count>=2) out.push({ic:'📞', t:'Confirm with '+r.candidate+' before '+r.time, s:f.count+' earlier no-shows / reschedules', id:r.id});
+    });
+    try{
+      var hist = (typeof _allRowsAcrossDatesCache!=='undefined') ? _allRowsAcrossDatesCache : null;
+      if(hist && typeof deskWoiOpen==='function'){
+        var w = deskWoiOpen(hist, todayDateString(), normalizeNameKey).filter(function(x){ return x.age>=2; });
+        if(w.length) out.push({ic:'⏳', t:w.length+' WOI call'+(w.length===1?'':'s')+' waiting 2+ days', s:w.slice(0,3).map(function(x){ return x.candidate; }).join(', ')+(w.length>3?'…':''), woi:true});
+      }
+    }catch(e){}
+    return out.slice(0,5);
+  };
+  window.d28Summary = function(){
+    var rows = state.rows||[], tn = getTeamNames();
+    var live = rows.filter(function(r){ return !r.woi && !r.status && r.candidate; });
+    var own = function(r){ return window.cdOwnerOf ? window.cdOwnerOf(r) : null; };
+    var un = live.filter(function(r){ return !own(r); });
+    var st = {}; rows.forEach(function(r){ if(r.status) st[r.status] = (st[r.status]||0)+1; });
+    var team = {}; live.forEach(function(r){ var k = (r.assignee||'Unassigned'); team[k] = (team[k]||0)+1; });
+    var L = ['*Coverage Desk — '+state.date+'*', 'Calls: '+rows.length+' · live '+live.length+' · covered '+(live.length-un.length)+' ('+(live.length?Math.round((live.length-un.length)/live.length*100):100)+'%)'];
+    var ts = Object.keys(team).map(function(k){ return k+' '+team[k]; }); if(ts.length) L.push('By team: '+ts.join(' · '));
+    var ss = Object.keys(st).map(function(k){ return k.replace('_',' ')+' '+st[k]; }); if(ss.length) L.push('Status: '+ss.join(' · '));
+    var w = rows.filter(function(r){ return r.woi; }).length; if(w) L.push('Waiting for invite: '+w);
+    if(un.length){ L.push('', '*Still without an owner ('+un.length+')*'); un.slice(0,20).forEach(function(r){ L.push('• '+(r.time||'')+' '+r.candidate+(r.company?' — '+r.company:'')); }); }
+    return L.join('\n');
+  };
+
+  /* ---------- run ---------- */
+  var t = 0;
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,250); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); clearTimeout(t); t = setTimeout(function(){ try{ applyLeave(); autoOwners(); }catch(e){ console.warn('d28', e); } }, 400); return r; };
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
