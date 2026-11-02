@@ -4004,6 +4004,13 @@ document.addEventListener('click', function(e){
     var need = rows.filter(needs);
     var admin = true; try{ admin = (CURRENT_ROLE==='admin'); }catch(e){}
     var h = '<div class="d22">';
+    var my = ''; try{ my = getMyAssigneeName(); }catch(e){}
+    var mineN = my ? rows.filter(function(r){ try{ return namesEquivalent(r.assignee, my); }catch(e){ return r.assignee===my; } }).length : 0;
+    var mineOn = !!(my && state.assigneeFilter && (function(){ try{ return namesEquivalent(state.assigneeFilter, my); }catch(e){ return state.assigneeFilter===my; } })());
+    var needOn = state.filter==='unassigned';
+    h += '<div class="d22-chips"><button type="button" class="d22-ch'+(!mineOn&&!needOn?' on':'')+'" data-d22f="all">All</button>'
+      + '<button type="button" class="d22-ch'+(mineOn?' on':'')+'" data-d22f="mine">'+(my?'My calls <em>'+mineN+'</em>':'My calls…')+'</button>'
+      + '<button type="button" class="d22-ch warn'+(needOn?' on':'')+'" data-d22f="need">Needs owner <em>'+need.length+'</em></button></div>';
     if(next){
       var nn = needs(next), b = nn ? best(next) : null, mins = bd(next.time)-n;
       h += '<div class="d22-hero'+(nn?' un':'')+'" data-d22open="'+esc(next.id)+'">'
@@ -4034,7 +4041,17 @@ document.addEventListener('click', function(e){
     raf = 0;
     var old = document.getElementById('d22Host');
     if(!isPhone() || state.needsLogin || (typeof getActivePanelName==='function' && getActivePanelName())){ if(old) old.remove(); return; }
-    var wrap = document.getElementById('tableScrollMain'); if(!wrap){ if(old) old.remove(); return; }
+    var wrap = document.getElementById('tableScrollMain');
+    if(!wrap){
+      /* filtered list is empty (no table) — keep the chips so the filter can be switched off */
+      var sr = document.querySelector('.search-row');
+      if(!sr){ if(old) old.remove(); return; }
+      var html0 = ''; try{ html0 = build(); }catch(e){ html0 = ''; }
+      var host0 = old || document.createElement('div'); host0.id = 'd22Host';
+      if(host0.__h !== html0){ host0.innerHTML = html0; host0.__h = html0; }
+      if(host0.previousSibling !== sr) sr.parentNode.insertBefore(host0, sr.nextSibling);
+      return;
+    }
     var html = ''; try{ html = build(); }catch(e){ html = ''; }
     var host = old || document.createElement('div'); host.id = 'd22Host';
     if(host.__h !== html){ host.innerHTML = html; host.__h = html; }
@@ -4133,4 +4150,77 @@ document.addEventListener('click', function(e){
     var st = t.closest('[data-d23st]'); if(st){ var r2 = rowOf(curId); if(!r2) return; var v = st.getAttribute('data-d23st'); r2.status = v; if(!v) r2.statusFields = []; else if(!r2.statusFields) r2.statusFields = []; try{ markDirty(); }catch(x){} close(); render(); }
   }, true);
   document.addEventListener('keydown', function(e){ if(sh && e.key==='Escape'){ close(); } });
+})();
+
+
+/* ===== d24: phone — filter chips (All / My calls / Needs owner), "who are you" chooser, call-card tap → call sheet, in-app confirms ===== */
+;(function(){
+  if(window.__d24) return; window.__d24 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var phone = function(){ return (window.__d17vw || window.innerWidth) < 760; };
+
+  function chooseMe(){
+    var tn = null; try{ tn = getTeamNames(); }catch(e){}
+    var people = (state.roster||[]).filter(function(p){ return p && p.name && !(tn && tn.has(p.name)); }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+    var el = document.createElement('div'); el.id = 'd23';
+    el.innerHTML = '<div class="d23-card"><div class="d23-grab"></div><div class="d23-hd"><div><div class="d23-n">Which one is you?</div><div class="d23-s">“My calls” will show only your calls. You can change this later.</div></div><button type="button" class="d23-x" data-x>✕</button></div><div class="d23-st" style="margin-top:14px">'
+      + people.map(function(p){ return '<button type="button" class="d23-sb" data-me="'+esc(p.name)+'">'+esc(p.name)+'<small style="display:block;font-weight:500;color:var(--text-muted)">'+esc(p.team||'')+'</small></button>'; }).join('') + '</div></div>';
+    el.addEventListener('click', function(e){
+      var m = e.target.closest && e.target.closest('[data-me]');
+      if(m){ try{ setMyAssigneeName(m.getAttribute('data-me')); state.assigneeFilter = m.getAttribute('data-me'); state.filter = 'all'; }catch(x){} el.remove(); document.body.classList.remove('d23-open'); render(); return; }
+      if(e.target===el || (e.target.closest && e.target.closest('[data-x]'))){ el.remove(); document.body.classList.remove('d23-open'); }
+    });
+    document.body.appendChild(el); document.body.classList.add('d23-open');
+  }
+
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.closest) return;
+    var f = t.closest('[data-d22f]');
+    if(f){
+      e.preventDefault(); e.stopPropagation();
+      var k = f.getAttribute('data-d22f'), my = ''; try{ my = getMyAssigneeName(); }catch(x){}
+      if(k==='all'){ state.assigneeFilter = ''; state.filter = 'all'; render(); }
+      else if(k==='need'){ state.filter = state.filter==='unassigned' ? 'all' : 'unassigned'; state.assigneeFilter = ''; render(); }
+      else if(k==='mine'){
+        if(!my){ chooseMe(); return; }
+        var on = false; try{ on = !!(state.assigneeFilter && namesEquivalent(state.assigneeFilter, my)); }catch(x){}
+        state.assigneeFilter = on ? '' : my; state.filter = 'all'; render();
+      }
+      return;
+    }
+    /* tap on a call card (phone) → call sheet */
+    if(!phone()) return;
+    var sum = t.closest('td.m-sum');
+    if(sum && !t.closest('button,a,input,select,textarea,.m-collapse')){
+      var tr = sum.closest('tr[data-id]');
+      if(tr && !tr.classList.contains('m-open') && window.d23Open){ e.preventDefault(); e.stopPropagation(); window.d23Open(tr.getAttribute('data-id')); }
+    }
+  }, true);
+
+  /* ---- native confirm() → in-app sheet on phones ----
+     A click handler that asks "if(!confirm(msg)) return;" is probed once with confirm() answering "no" (so nothing happens),
+     the message is shown in the in-app card, and on OK the same click is replayed with confirm() answering "yes". */
+  var nativeConfirm = window.confirm.bind(window), probe = null, pre = false, replaying = false;
+  window.confirm = function(msg){
+    if(pre){ pre = false; return true; }
+    if(probe && !probe.msg){ probe.msg = String(msg==null?'':msg); return false; }
+    return nativeConfirm(msg);
+  };
+  document.addEventListener('click', function(e){
+    if(!phone() || replaying || !window.cdConfirm) return;
+    var t = e.target; if(!t || !t.closest) return;
+    if(t.closest('#d23, .d23-cf, [data-d22f]')) return;
+    var btn = t.closest('button,[role=button],.btn'); if(!btn) return;
+    probe = { msg:'' }; var p = probe;
+    setTimeout(function(){
+      probe = null;                                   /* same task only: later (async) confirms stay native */
+      if(!p.msg) return;
+      var danger = /delete|remove|clear|undo|can.t be undone/i.test(p.msg);
+      window.cdConfirm(p.msg, { title: danger ? 'Please confirm' : 'Confirm', ok: danger ? 'Yes, do it' : 'OK', danger: danger }).then(function(ok){
+        if(!ok) return;
+        replaying = true; pre = true;
+        try{ btn.click(); }finally{ setTimeout(function(){ pre = false; replaying = false; }, 0); }
+      });
+    }, 0);
+  }, true);
 })();
