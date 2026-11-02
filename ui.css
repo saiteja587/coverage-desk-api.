@@ -1350,3 +1350,37 @@ html.m-on .d4-layout{display:none!important}
   html.m-on .m-as i{width:24px;height:24px;font-size:11.5px}
   html.m-on .m-as.none{min-height:34px;font-weight:800}
 }
+
+
+/* ===== d26: game feel ===== */
+.d22-hero{transition:box-shadow .3s,border-color .3s}
+.d22-hero .d22-cd{position:absolute;left:16px;right:16px;top:0;height:3px;border-radius:0 0 9px 9px;background:transparent;overflow:hidden}
+.d22-hero .d22-cd i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--amber));border-radius:9px;transition:width 1s linear}
+.d22-hero.hot{animation:d26hot 2.4s ease-in-out infinite}
+.d22-hero.hot2{animation:d26hot 1.1s ease-in-out infinite;border-color:var(--coral)}
+@keyframes d26hot{0%,100%{box-shadow:0 12px 30px -16px color-mix(in srgb,var(--coral) 50%,transparent)}50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--coral) 22%,transparent),0 14px 34px -14px color-mix(in srgb,var(--coral) 70%,transparent)}}
+.d22-card.fresh{animation:d26pop .42s cubic-bezier(.2,1.2,.3,1) both}
+.d22-card.fresh:nth-child(2){animation-delay:.05s}.d22-card.fresh:nth-child(3){animation-delay:.1s}.d22-card.fresh:nth-child(4){animation-delay:.15s}
+@keyframes d26pop{from{opacity:0;transform:translateY(14px) scale(.92)}}
+.d22-b:active,.d22-ch:active,.d23-p:active,.d23-sb:active{transform:scale(.94);transition:transform .08s}
+.d26-burst{position:fixed;z-index:9900;width:0;height:0;pointer-events:none}
+.d26-ring{position:absolute;left:-22px;top:-22px;width:44px;height:44px;border-radius:50%;border:3px solid var(--teal);animation:d26ring .6s ease-out both}
+@keyframes d26ring{from{transform:scale(.3);opacity:1}to{transform:scale(2.4);opacity:0}}
+.d26-dot{position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:50%;background:var(--teal);animation:d26dot .6s cubic-bezier(.2,.8,.3,1) both}
+.d26-dot:nth-child(3n){background:var(--amber)}.d26-dot:nth-child(3n+1){background:var(--violet,#a78bfa)}
+@keyframes d26dot{from{transform:translate(0,0) scale(1)}to{transform:translate(var(--dx),var(--dy)) scale(0);opacity:0}}
+.d26-ck{position:absolute;left:-17px;top:-19px;width:34px;height:34px;border-radius:50%;background:var(--teal);color:#06201c;font:900 20px/34px var(--body);text-align:center;animation:d26ck .6s cubic-bezier(.2,1.4,.3,1) both}
+@keyframes d26ck{0%{transform:scale(0)}40%{transform:scale(1.15)}80%{opacity:1}100%{transform:scale(1);opacity:0}}
+.d26-flare{position:fixed;left:50%;top:22%;z-index:9890;transform:translateX(-50%);padding:6px 16px;border-radius:99px;background:linear-gradient(90deg,var(--amber),var(--coral));color:#1a0b05;font:900 15px var(--body);letter-spacing:.02em;opacity:0;pointer-events:none}
+.d26-flare.go{animation:d26fl 1.2s cubic-bezier(.2,1.2,.3,1) both}
+@keyframes d26fl{0%{opacity:0;transform:translate(-50%,10px) scale(.7) rotate(-4deg)}20%{opacity:1;transform:translate(-50%,0) scale(1.12) rotate(2deg)}75%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(-50%,-22px) scale(1)}}
+.d26-win{position:fixed;inset:0;z-index:9950;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 45%,color-mix(in srgb,var(--teal) 28%,transparent),rgba(3,7,12,.82) 70%);animation:d2fade .25s both;text-align:center}
+.d26-win.out{opacity:0;transition:opacity .4s}
+.d26-win div{display:grid;gap:6px;justify-items:center;animation:d26win .6s cubic-bezier(.2,1.3,.3,1) both}
+.d26-win span{width:84px;height:84px;border-radius:50%;background:var(--teal);color:#06201c;font:900 48px/84px var(--body);box-shadow:0 0 0 12px color-mix(in srgb,var(--teal) 25%,transparent),0 0 60px color-mix(in srgb,var(--teal) 60%,transparent)}
+.d26-win b{font:900 34px var(--display,var(--body));letter-spacing:.02em;margin-top:8px}
+.d26-win small{font-size:15px;color:var(--text-muted)}
+@keyframes d26win{from{transform:scale(.5);opacity:0}}
+#d26Snd{position:fixed;right:14px;bottom:134px;z-index:120;width:40px;height:40px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:17px;opacity:.7}
+@media (min-width:760px){#d26Snd{bottom:78px}}
+@media (prefers-reduced-motion:reduce){.d22-hero.hot,.d22-hero.hot2,.d22-card.fresh{animation:none}}
