@@ -4343,3 +4343,182 @@ window.cdOwnerOf = function(r){
   }, true);
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
+
+
+/* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
+;(function(){
+  if(window.__d27) return; window.__d27 = true;
+  var VERSION = 'V2.0', SEEN_KEY = 'cd.v2.seen';
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var hourLabel = function(m){ var h = Math.floor(((m+720)%1440)/60), ap = h>=12?'PM':'AM'; h = h%12||12; return h+' '+ap; };
+  var phone = function(){ return (window.__d17vw || window.innerWidth) < 760; };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+
+  var LOG = [
+    ['V2.0','2026-11-02','Major release',[
+      '⌘ Command Center — one screen for the whole day: coverage, hour-by-hour board, what needs attention, team load',
+      'New phone home — Next-up card, one-tap suggested owner, My calls / Needs owner chips, call sheet with status and history',
+      'Owners everywhere — portal handler / driving person now counts as the owner in popups, cards and “Needs owner”',
+      'One hover popup per candidate with team, owner and every earlier call',
+      'Domains chart — Data Analyst, Data Engineer, Software… by client, team and country',
+      'Calmer loading bar, smoother phone search, in-app confirmation cards',
+      'Game feel — assign snap, combo flare, countdown pulse, “Board clear” celebration, sound toggle',
+      'Version badge, changelog and this welcome tour'
+    ]],
+    ['V1.9','2026-11-01','Smarter matching',['Clients matched by company + country','Suggest owner by role (who handled the same role at that client)','Google Doc “Sheet” tab replica','Sync-failed and end-of-day push alerts','Filter by person shows team members with portal names merged']],
+    ['V1.8','2026-10-30','Mobile flow',['Phone redesign: full-screen panels, 44px tap targets, icon header row','Back gesture closes panels','UI audit and polish']],
+    ['V1.7','2026-10-28','Google Doc sync',['Hourly Google Doc inbox with review-and-add','Name match undo, client role badge, reschedule reply line']],
+    ['V1.6','2026-10-23','Search & reminders',['Search everything (Ctrl/Cmd-K, phone Search tab)','Smart reminders','Closure manual handler','Workspace and new tools']],
+    ['V1.5','2026-10-19','Pipeline tools',['Assessments and onsites','Check against group list','Desk checks','2nd-round pipeline, company-name matching']],
+    ['V1.0','2026-10-01','Foundations',['Expected closures, carry-forward fix, closures month navigation','Background push alerts, live feed and smart alerts','Ask Desk chat, Students Master auto-add']]
+  ];
+
+  /* ---------- sheet helper ---------- */
+  function sheet(id, html, cls){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov '+(cls||'');
+    el.innerHTML = html; document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d27x]'))) closeEl(el); });
+    return el;
+  }
+  function closeEl(el){ if(el && el.parentNode) el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ var all = document.querySelectorAll('.d27-ov'); if(all.length) closeEl(all[all.length-1]); } });
+
+  /* ---------- splash ---------- */
+  function splash(){
+    if(auto) return; try{ if(sessionStorage.getItem('cd.v2.splash')) return; sessionStorage.setItem('cd.v2.splash','1'); }catch(e){}
+    var s = document.createElement('div'); s.className = 'd27-splash';
+    s.innerHTML = '<div><div class="d27-logo"><i></i><b>CD</b></div><h1>Coverage <em>Desk</em></h1><span class="d27-vb">'+VERSION+'</span></div>';
+    document.body.appendChild(s);
+    setTimeout(function(){ s.classList.add('out'); setTimeout(function(){ s.remove(); }, 500); }, 1300);
+  }
+
+  /* ---------- changelog ---------- */
+  function openLog(){
+    var h = '<div class="d27-card"><div class="d27-hd"><div><small>COVERAGE DESK</small><h2>What’s new</h2></div><button type="button" class="d27-x" data-d27x>✕</button></div><div class="d27-scroll">'
+      + LOG.map(function(v,i){ return '<div class="d27-ver'+(i===0?' cur':'')+'"><div class="d27-vh"><b>'+esc(v[0])+'</b><span>'+esc(v[2])+'</span><em>'+esc(v[1])+'</em></div><ul>'+v[3].map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul></div>'; }).join('')
+      + '</div><div class="d27-ft"><button type="button" class="d27-btn ghost" data-d27tour>▶ Replay welcome tour</button><button type="button" class="d27-btn" data-d27x>Close</button></div></div>';
+    sheet('d27Log', h);
+  }
+
+  /* ---------- welcome tour ---------- */
+  var SLIDES = [
+    ['⌘','Command Center','The whole day on one screen: coverage, an hour-by-hour board, what needs attention right now, and how loaded each team is.'],
+    ['📱','A new phone home','A Next-up card with one-tap suggested owners, My calls / Needs owner chips, and a call sheet for status, history and edits.'],
+    ['🧭','Owners, everywhere','The portal handler or driving person now counts as the owner — in popups, cards and the Needs-owner list.'],
+    ['✨','Feels alive','Snap, combo flare, countdown pulse and a Board-clear celebration when every call is covered. Sound is optional.']
+  ];
+  function tour(){
+    var i = 0, el = null;
+    function paint(){
+      var s = SLIDES[i], last = i===SLIDES.length-1;
+      el.innerHTML = '<div class="d27-card tour"><div class="d27-tbadge">'+VERSION+'</div><div class="d27-ticon">'+s[0]+'</div><h2>'+esc(s[1])+'</h2><p>'+esc(s[2])+'</p><div class="d27-dots">'+SLIDES.map(function(_,k){ return '<i class="'+(k===i?'on':'')+'"></i>'; }).join('')+'</div><div class="d27-ft"><button type="button" class="d27-btn ghost" data-d27x>Skip</button><button type="button" class="d27-btn" data-d27n>'+(last?'Let’s go':'Next')+'</button></div></div>';
+    }
+    el = sheet('d27Tour', '', 'center'); paint();
+    el.addEventListener('click', function(e){
+      if(e.target.closest && e.target.closest('[data-d27n]')){ if(i<SLIDES.length-1){ i++; paint(); } else { closeEl(el); } }
+    });
+    LS.s(SEEN_KEY, VERSION);
+  }
+
+  /* ---------- Command Center ---------- */
+  function rank(r){ try{ return (window.d2Rank ? window.d2Rank(r) : []).filter(function(h){ return !h.isTeam && !h.absent; }); }catch(e){ return []; } }
+  var pickHour = null;
+  function cc(){
+    var rows = (state.rows||[]), live = rows.filter(function(r){ return !r.woi && !r.status && r.candidate; });
+    var own = function(r){ return window.cdOwnerOf ? window.cdOwnerOf(r) : ((r.assignee||'').trim() ? {name:r.assignee} : null); };
+    var tn = null; try{ tn = getTeamNames(); }catch(e){}
+    var needs = function(r){ var a = (r.assignee||'').trim(); return (!a || (tn && tn.has(a))) && !own(r); };
+    var un = live.filter(needs), cov = live.length ? Math.round((live.length-un.length)/live.length*100) : 100;
+    var n = nowBd(), timed = live.filter(function(r){ return bd(r.time)!==9999; }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
+    var next = timed.filter(function(r){ return bd(r.time)>=n-10; })[0];
+    var cf = 0; try{ cf = computeConflicts(rows).size; }catch(e){}
+    var woi = rows.filter(function(r){ return r.woi; }).length;
+    /* hours */
+    var H = {}; timed.forEach(function(r){ var h = Math.floor(bd(r.time)/60); (H[h] = H[h] || {a:0,u:0,rows:[]}); H[h].rows.push(r); if(needs(r)) H[h].u++; else H[h].a++; });
+    var hrs = Object.keys(H).map(Number).sort(function(a,b){ return a-b; }), mx = Math.max(1, Math.max.apply(null, hrs.map(function(h){ return H[h].a+H[h].u; }).concat([1])));
+    var curH = Math.floor(n/60); if(pickHour===null) pickHour = H[curH] ? curH : (hrs.filter(function(h){ return h>=curH; })[0] ?? hrs[0]);
+    /* team load */
+    var team = {}; live.forEach(function(r){ var k = (r.assignee||'').trim() || 'Unassigned'; team[k] = (team[k]||0)+1; });
+    var tl = Object.keys(team).sort(function(a,b){ return team[b]-team[a]; }), tmax = Math.max(1, team[tl[0]]||1);
+    var ppl = {}; live.forEach(function(r){ var o = own(r); if(o && o.name) ppl[o.name] = (ppl[o.name]||0)+1; });
+    var pl = Object.keys(ppl).sort(function(a,b){ return ppl[b]-ppl[a]; }).slice(0,8), pmax = Math.max(1, ppl[pl[0]]||1);
+    var mins = next ? bd(next.time)-n : null;
+    var h = '<div class="d27-cc"><div class="d27-cch"><div><small>'+esc(state.date)+' · COMMAND CENTER</small><h2>'+(cov===100?'Everything is covered':un.length+' call'+(un.length===1?'':'s')+' need an owner')+'</h2></div><button type="button" class="d27-x" data-d27x aria-label="Close">✕</button></div>'
+      + '<div class="d27-kpis">'
+      + '<div class="d27-k ring" style="--p:'+cov+'"><b>'+cov+'<small>%</small></b><span>coverage</span></div>'
+      + '<div class="d27-k'+(un.length?' bad':'')+'"><b>'+un.length+'</b><span>need owner</span></div>'
+      + '<div class="d27-k'+(mins!==null&&mins<=15?' warn':'')+'"><b>'+(mins===null?'—':(mins<1?'now':mins<60?mins+'m':Math.floor(mins/60)+'h '+(mins%60)+'m'))+'</b><span>next call</span></div>'
+      + '<div class="d27-k'+(cf?' warn':'')+'"><b>'+cf+'</b><span>conflicts</span></div>'
+      + '<div class="d27-k'+(woi?' warn':'')+'"><b>'+woi+'</b><span>waiting invite</span></div></div>';
+    /* hour board */
+    h += '<div class="d27-sec"><b>Hour by hour</b><span>tap an hour</span></div><div class="d27-hours">'
+      + hrs.map(function(k){ var o = H[k], tot = o.a+o.u; return '<button type="button" class="d27-hr'+(k===pickHour?' on':'')+(k===curH?' now':'')+'" data-d27h="'+k+'"><span class="bar"><i class="u" style="height:'+Math.round(o.u/mx*100)+'%"></i><i class="a" style="height:'+Math.round(o.a/mx*100)+'%"></i></span><b>'+tot+'</b><small>'+hourLabel(k*60)+'</small></button>'; }).join('') + '</div>';
+    var sel = (H[pickHour]||{rows:[]}).rows;
+    h += '<div class="d27-list">'+(sel.length? sel.map(function(r){ var o = own(r), b = !o ? rank(r)[0] : null;
+        return '<div class="d27-row'+(o?'':' un')+'" data-d27open="'+esc(r.id)+'"><span class="t">'+esc(r.time||'')+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company,r.role].filter(Boolean).join(' · '))+'</small></span>'
+          + (o ? '<span class="o">'+esc(o.name)+(o.src==='portal'?' 📡':o.src==='driving'?' 🚗':'')+'</span>' : (admin()&&b ? '<button type="button" class="d27-btn sm" data-d27as="'+esc(r.id)+'" data-d27n="'+esc(b.name)+'">→ '+esc(b.name.split(' ')[0])+'</button>' : '<span class="o warn">no owner</span>'))+'</div>'; }).join('') : '<div class="d27-empty">No calls in this hour.</div>')+'</div>';
+    /* attention */
+    var items = [];
+    un.filter(function(r){ return bd(r.time)!==9999 && bd(r.time)-n<=90; }).slice(0,4).forEach(function(r){ var m = bd(r.time)-n; items.push(['🔴', r.candidate+' at '+r.time+' has no owner', m<=0?'starting now':'in '+m+' min', {open:r.id}]); });
+    if(cf) items.push(['⚠️', cf+' conflict'+(cf===1?'':'s')+' to resolve','double-booked handlers or clients',{click:'[data-d3="conflicts"], #resolveConflictsBtn'}]);
+    if(woi) items.push(['📨', woi+' call'+(woi===1?'':'s')+' waiting for invite','set the time when the invite arrives',{filter:'woi'}]);
+    h += '<div class="d27-sec"><b>Needs attention</b></div><div class="d27-att">'+(items.length? items.map(function(it,i){ return '<button type="button" class="d27-at" data-d27at="'+i+'"><span>'+it[0]+'</span><span><b>'+esc(it[1])+'</b><small>'+esc(it[2])+'</small></span><em>›</em></button>'; }).join('') : '<div class="d27-empty">✓ Nothing urgent right now.</div>')+'</div>';
+    /* load */
+    h += '<div class="d27-sec"><b>Team load</b><span>live calls</span></div><div class="d27-load">'+tl.map(function(k){ return '<div><span>'+esc(k)+'</span><i><u style="width:'+Math.round(team[k]/tmax*100)+'%" class="'+(k==='Unassigned'?'bad':'')+'"></u></i><b>'+team[k]+'</b></div>'; }).join('')+'</div>';
+    if(pl.length) h += '<div class="d27-sec"><b>Owners</b><span>who has the most</span></div><div class="d27-load">'+pl.map(function(k){ return '<div><span>'+esc(k)+'</span><i><u style="width:'+Math.round(ppl[k]/pmax*100)+'%"></u></i><b>'+ppl[k]+'</b></div>'; }).join('')+'</div>';
+    h += '</div>';
+    return { html:h, items:items };
+  }
+  var ccEl = null, ccItems = [];
+  function openCC(){
+    pickHour = null;
+    var r = cc(); ccItems = r.items;
+    ccEl = sheet('d27CC', r.html, 'full');
+    if(!ccEl.__wired){ ccEl.__wired = true; ccEl.addEventListener('click', onCC); }
+  }
+  function repaintCC(){ if(!ccEl || !ccEl.isConnected) return; var r = cc(); ccItems = r.items; var sc = ccEl.scrollTop; ccEl.innerHTML = r.html; ccEl.scrollTop = sc; }
+  function onCC(e){
+    var t = e.target; if(!t.closest) return;
+    var h = t.closest('[data-d27h]'); if(h){ pickHour = +h.getAttribute('data-d27h'); repaintCC(); return; }
+    var as = t.closest('[data-d27as]'); if(as){ e.stopPropagation(); if(window.d2AssignTo) window.d2AssignTo(as.getAttribute('data-d27as'), as.getAttribute('data-d27n')); setTimeout(repaintCC, 120); return; }
+    var op = t.closest('[data-d27open]'); if(op){ var id = op.getAttribute('data-d27open'); if(window.d23Open){ window.d23Open(id); } else if(window.d5OpenSide){ closeEl(ccEl); window.d5OpenSide(id); } return; }
+    var at = t.closest('[data-d27at]');
+    if(at){ var it = ccItems[+at.getAttribute('data-d27at')]; if(!it) return; var a = it[3];
+      if(a.open){ if(window.d23Open) window.d23Open(a.open); }
+      else if(a.filter){ closeEl(ccEl); try{ state.filter = a.filter; render(); }catch(x){} }
+      else if(a.click){ closeEl(ccEl); var b = document.querySelector(a.click); if(b) b.click(); else { try{ state.filter = 'conflict'; render(); }catch(x){} } }
+    }
+  }
+
+  /* ---------- header badge + buttons ---------- */
+  function mount(){
+    var header = document.querySelector('#app .header'); if(!header) return;
+    var box = document.getElementById('d27Box');
+    if(!box){ box = document.createElement('div'); box.id = 'd27Box';
+      box.innerHTML = '<button type="button" class="d27-cmd" data-d27cmd>⌘ Command</button><button type="button" class="d27-ver-b" data-d27log title="What’s new">'+VERSION+'</button>'; }
+    var brand = header.querySelector('.pz-brand') || header.firstElementChild;
+    if(brand && box.parentNode !== header) header.insertBefore(box, brand.nextSibling);
+  }
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return;
+    if(t.closest('[data-d27cmd]')){ e.preventDefault(); e.stopPropagation(); openCC(); return; }
+    if(t.closest('[data-d27log]')){ e.preventDefault(); e.stopPropagation(); openLog(); return; }
+    if(t.closest('[data-d27tour]')){ var l = document.getElementById('d27Log'); if(l) closeEl(l); tour(); return; }
+  }, true);
+  window.d27OpenCommand = openCC; window.d27OpenLog = openLog; window.d27Tour = tour;
+
+  var rt = 0;
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,200); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); try{ mount(); }catch(e){} clearTimeout(rt); rt = setTimeout(repaintCC, 80); return r; };
+    mount(); splash();
+    if(!auto && LS.g(SEEN_KEY,'') !== VERSION) setTimeout(tour, 1700);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
