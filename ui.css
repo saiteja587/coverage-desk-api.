@@ -1242,3 +1242,14 @@ button,summary,select,label[for],[role="button"],.d4-chip,.d4-seg{touch-action:m
 /* role handler hint: who handled this kind of role at this client last */
 .mini-badge-rolehandler{color:var(--amber,#e5b045);border:1px solid color-mix(in srgb,var(--amber,#e5b045) 50%,var(--border));background:color-mix(in srgb,var(--amber,#e5b045) 10%,transparent);white-space:nowrap}
 .mini-badge.mini-badge-rolehandler{width:auto;height:auto;min-height:17px;padding:2px 7px;border-radius:99px;font-size:10px;margin:0 6px 3px 0}
+
+
+/* ===== calm loading state (2026-11-02): no blinking — a soft flowing bar + gentle skeleton ===== */
+.global-busy-bar{height:3px;opacity:0;transition:opacity .45s ease;
+  background:linear-gradient(90deg,transparent 0%,var(--teal) 25%,var(--sky,#6bb6ff) 50%,var(--teal) 75%,transparent 100%);
+  background-size:200% 100%;box-shadow:0 1px 14px color-mix(in srgb,var(--teal) 55%,transparent)}
+.global-busy-bar.active{opacity:.95;animation:cdFlow 2.6s linear infinite}
+@keyframes cdFlow{from{background-position:200% 0}to{background-position:-200% 0}}
+.skeleton-row,.skeleton-stat-card{animation-duration:2.2s;animation-timing-function:ease-in-out}
+.loading-block{opacity:.8}
+@media (prefers-reduced-motion:reduce){.global-busy-bar.active{animation:none}.skeleton-row,.skeleton-stat-card{animation:none}}
