@@ -3417,10 +3417,10 @@ function parseDetailedLine(line, defaultRound){
 
   // duration: explicit "Duration: X" first, else a paren that's purely a duration token
   let duration = '';
-  const durMatch = mainPart.match(/duration:?\s*-?\s*([0-9]+\s*(mins?|hrs?|hours?))/i);
-  if(durMatch) duration = durMatch[1];
+  const durMatch = mainPart.match(/duration:?\s*-?\s*((?:[0-9]+(?:\.[0-9]+)?\s*(?:hrs?|hours?|h)\b(?:\s*(?:and\s*|&\s*)?[0-9]+\s*(?:mins?|minutes?|m)\b)?|[0-9]+(?:\.[0-9]+)?\s*(?:mins?|minutes?)\b))/i);
+  if(durMatch) duration = durMatch[1].replace(/\s+/g,' ').trim();
   else {
-    const durParen = parens.find(p=>/^[0-9]+\s*(?:-\s*[0-9]+\s*)?(hrs?|hours?|mins?|minutes?)$/i.test(p));
+    const durParen = parens.find(p=>/^[0-9]+\s*(?:-\s*[0-9]+\s*)?(hrs?|hours?|mins?|minutes?)$/i.test(p) || /^(?:[0-9]+(?:\.[0-9]+)?\s*(?:hrs?|hours?|h)\b(?:\s*(?:and\s*|&\s*)?[0-9]+\s*(?:mins?|minutes?|m)\b)?|[0-9]+(?:\.[0-9]+)?\s*(?:mins?|minutes?)\b)$/i.test(p.trim()));
     if(durParen) duration = durParen.replace(/([0-9])\s*([a-z])/i,'$1 $2').replace(/\s*-\s*/,'-');
     else{
       // Neither an explicit "Duration:" label nor a standalone parenthetical
@@ -3429,8 +3429,8 @@ function parseDetailedLine(line, defaultRound){
       // both stricter patterns above have already failed, so this can
       // never override a more explicit duration stated elsewhere in the
       // same line.
-      const bareDurMatch = mainPart.match(/\b([0-9]+)\s*(mins?|minutes?|hrs?|hours?)\b/i);
-      if(bareDurMatch) duration = `${bareDurMatch[1]} ${bareDurMatch[2]}`;
+      const bareDurMatch = mainPart.match(/\b((?:[0-9]+(?:\.[0-9]+)?\s*(?:hrs?|hours?|h)\b(?:\s*(?:and\s*|&\s*)?[0-9]+\s*(?:mins?|minutes?|m)\b)?|[0-9]+(?:\.[0-9]+)?\s*(?:mins?|minutes?)\b))/i);
+      if(bareDurMatch) duration = bareDurMatch[1].replace(/\s+/g,' ').trim().replace(/([0-9])([a-z])/gi,'$1 $2');
     }
   }
 
@@ -4075,8 +4075,8 @@ function parseDurationMinutes(text){
   if(!text) return null;
   const t = text.toLowerCase();
   let total = 0, found = false;
-  const hrMatch = t.match(/([\d.]+)\s*(hr|hrs|hour|hours)/);
-  const minMatch = t.match(/([\d.]+)\s*(min|mins|minute|minutes)/);
+  const hrMatch = t.match(/([\d.]+)\s*(hr|hrs|hour|hours|h)\b/);
+  const minMatch = t.match(/([\d.]+)\s*(min|mins|minute|minutes|m)\b/);
   if(hrMatch){ total += parseFloat(hrMatch[1])*60; found = true; }
   if(minMatch){ total += parseFloat(minMatch[1]); found = true; }
   if(!found){
@@ -4689,6 +4689,29 @@ function computeClientTimeConflicts(rows){
   return conflictMap;
 }
 
+// Same CANDIDATE booked on two calls that overlap in time (e.g. a 9:00 PM
+// 1Hr 30 Mins interview and a second call at 9:30 PM). computeConflicts only
+// looked at one handler double-booked, so a candidate who can't be in two
+// places was never flagged. Calls already marked rescheduled/cancelled/no
+// response are ignored — they are no longer going ahead.
+function computeCandidateOverlaps(rows){
+  const dead = {rescheduled:1, cancelled:1, not_responded:1, no_invite:1};
+  const by = {};
+  (rows||[]).forEach(r=>{
+    if(!r || r.woi || !r.candidate || dead[r.status] || timeToMinutes(r.time) === 9999) return;
+    const k = normalizeNameKey(r.candidate); if(!k) return;
+    (by[k] = by[k] || []).push(r);
+  });
+  const out = [];
+  Object.values(by).forEach(calls=>{
+    for(let i=0;i<calls.length;i++) for(let j=i+1;j<calls.length;j++){
+      const a = calls[i], b = calls[j], as = timeToMinutes(a.time), bs = timeToMinutes(b.time);
+      const ae = as + (parseDurationMinutes(a.duration) || 30), be = bs + (parseDurationMinutes(b.duration) || 30);
+      if(as === bs || (as < be && bs < ae)) out.push({ a, b });
+    }
+  });
+  return out;
+}
 function computeConflicts(rows){
   const teamNames = getTeamNames();
   const byAssignee = {};
@@ -4723,6 +4746,11 @@ function computeConflicts(rows){
       }
     }
   });
+  computeCandidateOverlaps(rows).forEach(({a,b})=>{
+    const msg = (x,y)=>`${x.candidate} also has a call at ${y.time}${y.company?' ('+y.company+')':''} (${x.duration||'?'} vs ${y.duration||'?'}) \u2014 the candidate can\u2019t be on both.`;
+    if(!conflictMap.has(a.id)) conflictMap.set(a.id, msg(a,b));
+    if(!conflictMap.has(b.id)) conflictMap.set(b.id, msg(b,a));
+  });
   return conflictMap;
 }
 // Same double-booking detection as computeConflicts above, but returns the
@@ -4754,6 +4782,7 @@ function computeConflictPairs(rows){
       }
     }
   });
+  computeCandidateOverlaps(rows).forEach(({a,b})=>pairs.push({ assignee: a.candidate, a, b, kind:'candidate' }));
   return pairs;
 }
 
@@ -7855,24 +7884,24 @@ function renderConflictsPanel(){
       ? free.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')
       : `<option value="" disabled>No one free right now</option>`;
     return `<div class="conflict-pair-card" data-pair="${idx}">
-      <div class="conflict-pair-title">⚠ ${escapeHtml(pair.assignee)} is double-booked</div>
+      <div class="conflict-pair-title">⚠ ${pair.kind==='candidate' ? escapeHtml(pair.assignee)+' has two overlapping calls — change the time of one' : escapeHtml(pair.assignee)+' is double-booked'}</div>
       <div class="conflict-pair-row">
         <div class="conflict-pair-info">
           <b>${escapeHtml(pair.a.candidate||'Candidate')}</b> — ${escapeHtml(pair.a.time||'time n/a')}${pair.a.company?' · '+escapeHtml(pair.a.company):''}${pair.a.duration?' · '+escapeHtml(pair.a.duration):''}
         </div>
-        <select class="conflict-reassign" data-row-id="${pair.a.id}">
+        ${pair.kind==='candidate' ? '' : `<select class="conflict-reassign" data-row-id="${pair.a.id}">
           <option value="">Reassign to…</option>
           ${optsFor(freeForA)}
-        </select>
+        </select>`}
       </div>
       <div class="conflict-pair-row">
         <div class="conflict-pair-info">
           <b>${escapeHtml(pair.b.candidate||'Candidate')}</b> — ${escapeHtml(pair.b.time||'time n/a')}${pair.b.company?' · '+escapeHtml(pair.b.company):''}${pair.b.duration?' · '+escapeHtml(pair.b.duration):''}
         </div>
-        <select class="conflict-reassign" data-row-id="${pair.b.id}">
+        ${pair.kind==='candidate' ? '' : `<select class="conflict-reassign" data-row-id="${pair.b.id}">
           <option value="">Reassign to…</option>
           ${optsFor(freeForB)}
-        </select>
+        </select>`}
       </div>
     </div>`;
   }).join('');
