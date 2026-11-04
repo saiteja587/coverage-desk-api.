@@ -4098,6 +4098,9 @@ function parseDurationMinutes(text){
 // "can't attend" — a candidate-unavailable message with no literal
 // "reschedule" word; tracked as a reschedule.
 const RESCHED_UNAVAILABLE_RE = /\b(?:unable\s+to\s+attend|(?:can.?t|cannot|won.?t\s+be\s+able\s+to)\s+attend|not\s+(?:be\s+)?available\s+for\s+(?:the\s+|any\s+)?(?:interview|call)s?)/i;
+// "Network issue from candidate end … audio not audible … no transcript": the call could not be held
+// because of a connection/audio problem — tracked like a candidate-side reschedule.
+const TECH_ISSUE_RE = /(?:network|connectivity|connection|internet|audio|mic(?:rophone)?|video|sound)\s+(?:issue|problem|trouble)s?|\bnot\s+(?:even\s+)?audi?ble|\bno\s+(?:audio|sound|transcript)\b|(?:could\s*n.?t|can.?t|unable\s+to|not\s+able\s+to)\s+(?:hear|join|connect)/i;
 function looksLikeRescheduleLine(line){
   // Broadened to also catch "not responding"/"no response" messages (a
   // genuinely distinct status from reschedule/cancel), typo'd variants
@@ -4133,6 +4136,7 @@ function looksLikeRescheduleLine(line){
   const hasStatusWord = /\b(reschedul\w*|cancel\w*|(?:not|no)\s+(?:\w+\s+){0,2}respon\w*)\b/i.test(line)
     || /candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(line)
     || RESCHED_UNAVAILABLE_RE.test(line)
+    || TECH_ISSUE_RE.test(line)
     || hasNoInviteWord;
   return hasStatusWord;
 }
@@ -4172,6 +4176,11 @@ function parseRescheduleText(text){
         if(timeRe.test(prev.join(' ')) && !looksLikeRescheduleLine(prev.join(' '))) current = blocks.pop();
       }
       if(current.length){ current.push(line); continue; }
+    }
+    // A name-less explanation under a call line ("There was a network issue from candidate end sir …") belongs to that call
+    if(!timeRe.test(line) && !/[–—]/.test(line) && TECH_ISSUE_RE.test(line) && !current.length && blocks.length){
+      const prev = blocks[blocks.length-1];
+      if(!looksLikeRescheduleLine(prev.join(' '))) current = blocks.pop();
     }
     let isNewEntry = timeRe.test(line) && /[–\-]/.test(line);
     // A second self-contained status message pasted right after the first
@@ -4225,6 +4234,7 @@ function parseRescheduleText(text){
     let company = null;
     const companyMatch = full.match(/Interview\s*[–\-]\s*([^–\-]+?)\s*[–\-]/i);
     if(companyMatch) company = companyMatch[1].trim();
+    else { const cm2 = full.match(/Interview\s*[–\-]\s*([^–\-\n]+?)(?:\s{2,}|\s+(?:There|The|Sir|@)\b|$)/i); if(cm2) company = cm2[1].trim(); }
 
     // Same phrasing set as hasNoInviteWord in looksLikeRescheduleLine()
     // above — checked before cancel/reschedule so a message mentioning
@@ -4241,9 +4251,10 @@ function parseRescheduleText(text){
     else if(/cancel/i.test(full)) status = 'cancelled';
     else if(/reschedul/i.test(full)) status = 'rescheduled';
     else if(RESCHED_UNAVAILABLE_RE.test(full)) status = 'rescheduled';
+    else if(TECH_ISSUE_RE.test(full)) status = 'rescheduled';
 
     let side = null;
-    if(/candidate\s*side/i.test(full)) side = 'candidate side';
+    if(/candidate\s*(?:side|end)/i.test(full)) side = 'candidate side';
     else if(/interviewer\s*side/i.test(full)) side = 'interviewer side';
     else if(/client\s*side/i.test(full)) side = 'client side';
     else if(/recruiter\s*(?:'s)?\s*side/i.test(full)) side = 'recruiter side';
@@ -4252,7 +4263,8 @@ function parseRescheduleText(text){
     const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
     const becauseMatch = full.match(/\b(?:because|as|since)\s+((?:the\s+)?(?:position|role|job|vacancy|requirement|opening)\b[^.]*?|[^.]*?\b(?:filled|closed|on\s+hold|put\s+on\s+hold|withdrawn|no\s+longer\s+(?:required|needed|available))[^.]*?)(?:\s+sir)?\s*\.?\s*$/i);
     const toNew = full.match(/reschedul\w*\s+to\s+(\d{1,2}(?:[:.]\d{2})?\s*[AaPp][Mm]?(?:\s*IST)?(?:\s+(?:today|tomorrow))?)/i);
-    if(toNew && !reasonMatch && !becauseMatch) reason = 'Rescheduled to ' + toNew[1].trim().replace(/\s+/g,' ');
+    if(TECH_ISSUE_RE.test(full) && !/reschedul|cancel/i.test(full)) reason = 'Network/audio issue' + (/candidate\s*(?:side|end)/i.test(full) ? ' at the candidate’s end' : '') + ' — call could not be held' + (/no\s+transcript/i.test(full) ? ' (no transcript)' : '');
+    else if(toNew && !reasonMatch && !becauseMatch) reason = 'Rescheduled to ' + toNew[1].trim().replace(/\s+/g,' ');
     else if(reasonMatch) reason = reasonMatch[1].trim();
     else if(becauseMatch) reason = becauseMatch[1].trim().replace(/^./, c=>c.toUpperCase());
     else if(/candidate[\s\S]{0,40}?own\s+(?:end|behalf)/i.test(full)) reason = 'Candidate handling interview independently';
