@@ -200,6 +200,57 @@ async function authenticate(req, db) {
   return { ok: false };
 }
 
+
+// ---- TTOP read-only proxy (Supabase REST) -------------------------------------------------
+// Env: TTOP_SUPABASE_URL + TTOP_SUPABASE_KEY (SUPABASE_URL / SUPABASE_ANON_KEY also accepted).
+async function ttopRead(req, res) {
+  const base = String(process.env.TTOP_SUPABASE_URL || process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+  const key = String(process.env.TTOP_SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'TTOP is read-only here.' });
+  if (!base || !key) return res.status(503).json({ error: 'TTOP is not connected yet. Add TTOP_SUPABASE_URL and TTOP_SUPABASE_KEY in Vercel and redeploy.', code: 'not_configured' });
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(base)) return res.status(500).json({ error: 'TTOP_SUPABASE_URL should look like https://xxxx.supabase.co' });
+  // Refuse the powerful key outright: a service_role JWT carries role=service_role in its payload.
+  try {
+    const part = key.split('.')[1];
+    if (part) {
+      const pl = JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+      if (pl && pl.role === 'service_role') return res.status(500).json({ error: 'That key is a service_role key. Use the anon/read-only key instead.', code: 'bad_key' });
+    }
+  } catch (e) { /* not a JWT (new-style publishable key) is fine */ }
+  if (/^sb_secret_/i.test(key)) return res.status(500).json({ error: 'That key is a secret key. Use the anon/publishable key instead.', code: 'bad_key' });
+  const hdr = { apikey: key, Authorization: 'Bearer ' + key, Accept: 'application/json' };
+  const q = req.query || {};
+  const action = String(q.action || 'tables');
+  const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 15000);
+  try {
+    if (action === 'tables') {
+      const r = await fetch(base + '/rest/v1/', { headers: hdr, signal: ctl.signal });
+      const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
+      if (!r.ok || !j) return res.status(502).json({ error: 'TTOP said ' + r.status + (j && (j.message || j.hint) ? ': ' + (j.message || j.hint) : ''), status: r.status });
+      const defs = j.definitions || (j.components && j.components.schemas) || {};
+      const tables = Object.keys(defs).filter(n => /^[A-Za-z0-9_]+$/.test(n)).sort().map(n => ({ name: n, columns: Object.keys((defs[n] && defs[n].properties) || {}) }));
+      return res.status(200).json({ ok: true, tables });
+    }
+    if (action === 'rows') {
+      const table = String(q.table || '');
+      if (!/^[A-Za-z0-9_]+$/.test(table)) return res.status(400).json({ error: 'Bad table name.' });
+      const lim = Math.max(1, Math.min(1000, parseInt(q.limit, 10) || 300));
+      const off = Math.max(0, parseInt(q.offset, 10) || 0);
+      let url = base + '/rest/v1/' + encodeURIComponent(table) + '?select=*&limit=' + lim + '&offset=' + off;
+      const ord = String(q.order || '');
+      if (/^[A-Za-z0-9_]+$/.test(ord)) url += '&order=' + ord + '.' + (q.dir === 'asc' ? 'asc' : 'desc');
+      const r = await fetch(url, { headers: Object.assign({ Prefer: 'count=exact' }, hdr), signal: ctl.signal });
+      const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
+      if (!r.ok) return res.status(r.status === 404 ? 404 : 502).json({ error: (j && (j.message || j.hint)) || ('TTOP said ' + r.status), status: r.status });
+      const cr = String(r.headers.get('content-range') || ''); const total = parseInt(cr.split('/')[1], 10);
+      return res.status(200).json({ ok: true, table, rows: Array.isArray(j) ? j : [], total: isNaN(total) ? null : total, offset: off });
+    }
+    return res.status(400).json({ error: 'Unknown action.' });
+  } catch (e) {
+    return res.status(502).json({ error: e && e.name === 'AbortError' ? 'TTOP took too long to answer.' : 'Could not reach TTOP: ' + (e && e.message) });
+  } finally { clearTimeout(to); }
+}
+
 module.exports = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -251,6 +302,13 @@ module.exports = async (req, res) => {
     const auth = await authenticate(req, db);
     if (auth.rateLimited) return res.status(429).json({ error: `Too many failed login attempts. Please wait ${RATE_LIMIT_WINDOW_MINUTES} minutes and try again.` });
     if (!auth.ok) return res.status(401).json({ error: 'Unauthorized' });
+
+    // TTOP (read-only mirror of the other team's portal). Reads their Supabase through the REST API with an
+    // anon/read-only key kept in env vars. GET only; the key never reaches the browser; table names are checked
+    // against what the key can actually see, so this can't be pointed anywhere else.
+    if (resource === 'ttop') {
+      return await ttopRead(req, res);
+    }
 
     // Read-only users can GET anything. Writes (POST) normally require the
     // admin role — with ONE deliberate exception: the driving_person
