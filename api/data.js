@@ -218,7 +218,8 @@ async function ttopRead(req, res) {
     }
   } catch (e) { /* not a JWT (new-style publishable key) is fine */ }
   if (/^sb_secret_/i.test(key)) return res.status(500).json({ error: 'That key is a secret key. Use the anon/publishable key instead.', code: 'bad_key' });
-  const hdr = { apikey: key, Authorization: 'Bearer ' + key, Accept: 'application/json' };
+  const hdr = { apikey: key, Accept: 'application/json' };
+  if (/^eyJ/.test(key)) hdr.Authorization = 'Bearer ' + key; // new sb_publishable_ keys are not JWTs and must not be sent as Bearer
   const q = req.query || {};
   const action = String(q.action || 'tables');
   const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 15000);
@@ -226,7 +227,12 @@ async function ttopRead(req, res) {
     if (action === 'tables') {
       const r = await fetch(base + '/rest/v1/', { headers: hdr, signal: ctl.signal });
       const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
-      if (!r.ok || !j) return res.status(502).json({ error: 'TTOP said ' + r.status + (j && (j.message || j.hint) ? ': ' + (j.message || j.hint) : ''), status: r.status });
+      if (!r.ok || !j) {
+        const envT = String(process.env.TTOP_TABLES || '').split(',').map(x => x.trim()).filter(x => /^[A-Za-z0-9_]+$/.test(x));
+        if (envT.length) return res.status(200).json({ ok: true, tables: envT.map(n => ({ name: n, columns: [] })), note: 'from TTOP_TABLES' });
+        return res.status(502).json({ error: 'TTOP said ' + r.status + (j && (j.message || j.hint) ? ': ' + (j.message || j.hint) : ''), status: r.status, listing: true });
+      }
+      if (false) return res.status(502).json({ error: 'TTOP said ' + r.status + (j && (j.message || j.hint) ? ': ' + (j.message || j.hint) : ''), status: r.status });
       const defs = j.definitions || (j.components && j.components.schemas) || {};
       const tables = Object.keys(defs).filter(n => /^[A-Za-z0-9_]+$/.test(n)).sort().map(n => ({ name: n, columns: Object.keys((defs[n] && defs[n].properties) || {}) }));
       return res.status(200).json({ ok: true, tables });
