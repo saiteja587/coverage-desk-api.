@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.8', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V2.9', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -5036,7 +5036,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal']];
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
@@ -6553,4 +6553,115 @@ window.cdOwnerOf = function(r){
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', hook); else hook();
   window.d37Open = function(bar){ open(bar, 'tap'); };
+})();
+
+/* ===== d38: V2.9 — TTOP page (read-only view of the other team's portal data) ===== */
+(function(){
+  if(window.__d38) return; window.__d38 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LK = 'cd.ttop.table';
+  var S = { tables:null, table:'', rows:[], total:null, q:'', err:'', busy:false, sel:null, cols:[] };
+  var el = null;
+  var isPhone = function(){ return (window.__d17vw||innerWidth) < 760; };
+  function LS(k,v){ try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k,v); }catch(e){} return null; }
+  function fmt(v, long){
+    if(v==null || v==='') return '<span class="d38-nil">—</span>';
+    if(typeof v==='object') v = JSON.stringify(v);
+    v = String(v);
+    if(/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(v)){ var d = new Date(v); if(!isNaN(d)) v = d.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true}); }
+    if(!long && v.length>70) v = v.slice(0,70)+'…';
+    return esc(v);
+  }
+  function visibleCols(){
+    var seen = {}; S.rows.slice(0,50).forEach(function(r){ Object.keys(r).forEach(function(k){ if(r[k]!=null && r[k]!=='') seen[k]=1; }); });
+    var all = S.cols.length ? S.cols : Object.keys(S.rows[0]||{});
+    var c = all.filter(function(k){ return seen[k]; });
+    return c.length ? c : all;
+  }
+  function filtered(){
+    var q = S.q.trim().toLowerCase(); if(!q) return S.rows;
+    return S.rows.filter(function(r){ for(var k in r){ var v = r[k]; if(v==null) continue; if((typeof v==='object'?JSON.stringify(v):String(v)).toLowerCase().indexOf(q)>=0) return true; } return false; });
+  }
+  function title(r){
+    var pref = ['candidate_name','candidate','name','title','company','company_name','email','id'];
+    for(var i=0;i<pref.length;i++) if(r[pref[i]]) return String(r[pref[i]]);
+    var k = Object.keys(r)[0]; return k ? String(r[k]) : '';
+  }
+  function paint(){
+    if(!el) return;
+    var b = el.querySelector('.d38-body'); if(!b) return;
+    var h = '';
+    if(S.err){
+      h = '<div class="d27-empty">'+esc(S.err)+'</div><button type="button" class="d27-btn" data-d38="retry">Try again</button>';
+      if(/not connected|not_configured/i.test(S.err)) h = '<div class="d27-empty">TTOP is not connected yet.</div><p class="d29-p">Add <b>TTOP_SUPABASE_URL</b> and <b>TTOP_SUPABASE_KEY</b> in Vercel → Settings → Environment Variables, then redeploy.</p>';
+      b.innerHTML = h; return;
+    }
+    if(!S.tables){ b.innerHTML = '<div class="d27-empty">Loading TTOP…</div>'; return; }
+    if(!S.tables.length){ b.innerHTML = '<div class="d27-empty">Connected, but this key can’t see any tables.</div><p class="d29-p">The TTOP owner needs to allow read-only access (a view or a read policy) for the tables you should see.</p>'; return; }
+    var opts = S.tables.map(function(t){ return '<option value="'+esc(t.name)+'"'+(t.name===S.table?' selected':'')+'>'+esc(t.name)+'</option>'; }).join('');
+    h += '<div class="d38-bar"><select data-d38s>'+opts+'</select><input type="search" data-d38q placeholder="Search this table…" value="'+esc(S.q)+'" autocomplete="off"><button type="button" class="d27-btn" data-d38="reload">↻</button></div>';
+    var L = filtered();
+    h += '<div class="d38-meta">'+(S.busy?'Loading… ':'')+L.length+(S.q?' matching of ':' of ')+S.rows.length+' loaded'+(S.total!=null?' · '+S.total+' in TTOP':'')+' · read-only</div>';
+    if(!L.length && !S.busy){
+      h += '<div class="d27-empty">'+(S.rows.length?'Nothing matches.':'No rows visible. If you expected data, the owner’s access rules may be hiding this table from a read-only key.')+'</div>';
+    } else if(isPhone()){
+      h += '<div class="d27-list">'+L.slice(0,300).map(function(r,i){
+        var ks = visibleCols().filter(function(k){ return String(r[k]||'')!==title(r); }).slice(0,3);
+        return '<button type="button" class="d27-row" data-d38r="'+S.rows.indexOf(r)+'"><span class="n"><b>'+fmt(title(r))+'</b><small>'+ks.map(function(k){ return esc(k)+': '+fmt(r[k]); }).join(' · ')+'</small></span><span class="o">›</span></button>';
+      }).join('')+'</div>';
+    } else {
+      var cols = visibleCols();
+      h += '<div class="d38-tw"><table class="d38-t"><thead><tr>'+cols.map(function(c){ return '<th>'+esc(c)+'</th>'; }).join('')+'</tr></thead><tbody>'
+        + L.slice(0,500).map(function(r){ return '<tr data-d38r="'+S.rows.indexOf(r)+'">'+cols.map(function(c){ return '<td>'+fmt(r[c])+'</td>'; }).join('')+'</tr>'; }).join('')+'</tbody></table></div>';
+    }
+    if(S.total!=null && S.rows.length < S.total) h += '<button type="button" class="d27-btn d38-more" data-d38="more">Load more</button>';
+    b.innerHTML = h;
+  }
+  function detail(i){
+    var r = S.rows[i]; if(!r) return;
+    var b = el.querySelector('.d38-body');
+    b.innerHTML = '<button type="button" class="d27-btn" data-d38="back">‹ Back</button><div class="d38-kv">'
+      + Object.keys(r).map(function(k){ return '<div><small>'+esc(k)+'</small><div>'+fmt(r[k],true)+'</div></div>'; }).join('')+'</div>';
+    S.sel = i;
+  }
+  function load(more){
+    if(!S.table) return;
+    S.busy = true; if(!more){ S.rows = []; S.total = null; } paint();
+    var off = more ? S.rows.length : 0;
+    window.apiCall('ttop',{qs:'action=rows&table='+encodeURIComponent(S.table)+'&limit=300&offset='+off}).then(function(j){
+      S.busy = false; S.err = '';
+      S.rows = more ? S.rows.concat(j.rows||[]) : (j.rows||[]); S.total = j.total;
+      var t = S.tables.filter(function(x){ return x.name===S.table; })[0]; S.cols = t ? t.columns : [];
+      paint();
+    }).catch(function(e){ S.busy = false; S.err = String((e&&e.message)||e).replace(/^ttop:\s*/,''); paint(); });
+  }
+  function boot(){
+    S.err = ''; S.tables = null; paint();
+    window.apiCall('ttop',{qs:'action=tables'}).then(function(j){
+      S.tables = j.tables||[];
+      var last = LS(LK);
+      S.table = (S.tables.some(function(t){ return t.name===last; }) ? last : (S.tables[0]&&S.tables[0].name)) || '';
+      paint(); if(S.table) load(false);
+    }).catch(function(e){ S.err = String((e&&e.message)||e).replace(/^ttop:\s*/,''); paint(); });
+  }
+  function close(){ if(el&&el.parentNode) el.remove(); el = null; if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  function open(){
+    var old = document.getElementById('d38T'); if(old) old.remove();
+    el = document.createElement('div'); el.id = 'd38T'; el.className = 'd27-ov d38-ov';
+    el.innerHTML = '<div class="d27-card d38-card"><div class="d27-hd"><div><small>READ-ONLY</small><h2>TTOP data</h2></div><button type="button" class="d27-x" data-d38x aria-label="Close">✕</button></div><div class="d29-body d38-body"></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){
+      var t = e.target;
+      if(t===el || (t.closest && t.closest('[data-d38x]'))) return close();
+      var a = t.closest && t.closest('[data-d38]'); if(a){ var k = a.getAttribute('data-d38'); if(k==='retry') boot(); else if(k==='reload') load(false); else if(k==='more') load(true); else if(k==='back') paint(); return; }
+      var r = t.closest && t.closest('[data-d38r]'); if(r) detail(+r.getAttribute('data-d38r'));
+    });
+    el.addEventListener('change', function(e){ if(e.target.hasAttribute('data-d38s')){ S.table = e.target.value; LS(LK,S.table); S.q = ''; load(false); } });
+    el.addEventListener('input', function(e){ if(e.target.hasAttribute('data-d38q')){ S.q = e.target.value; var pos = e.target.selectionStart; paint(); var i = el.querySelector('[data-d38q]'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(x){} } } });
+    boot();
+    return true;
+  }
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='ttop') return open(); return typeof prev==='function' ? prev(k) : false; };
+  window.d38Open = open;
 })();
