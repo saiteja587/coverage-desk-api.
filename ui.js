@@ -3921,6 +3921,7 @@ document.addEventListener('click', function(e){
     });
     return h + '</div></div>';
   }
+  window.d20Html = function(name, rowId){ return build(name, {closest:function(){ return {getAttribute:function(){ return rowId; }}; }}); };
   function show(el){
     var name = (el.value||'').trim(); if(!name || name.length<2) return;
     hide(); curEl = el;
@@ -4353,7 +4354,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.3', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.4', SEEN_KEY = 'cd.v2.seen';
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4364,6 +4365,12 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.4','2026-11-04','Hover everywhere',[
+      'Hover (desktop) or long-press / Info chips (phone) on a client name shows every earlier call at that client',
+      'Hover the handler → their whole day and next free slot; a team → members, who is free; the time → other time zones; the country → local clock, business hours, holidays',
+      'Hover the role → who handled it before; the round → the candidate’s journey; the duration → usual length check; a status badge → the reason; the ⚠ → both clashing calls with a fix; the stat cards → the names behind each number',
+      '📌 Pin any popup to keep it open while you compare (up to 3)'
+    ]],
     ['V2.3','2026-11-02','Round menu',[
       '⚪ Floating round menu (like iOS AssistiveTouch): drag it anywhere, tap it and the shortcuts fan out in a circle — Command, Tools, Search, Quick add, Alerts, Sound, Top',
       'Sound button moved into the round menu so it no longer covers the alerts bell'
@@ -5204,6 +5211,7 @@ window.cdOwnerOf = function(r){
     });
     return h + '</div></div>';
   }
+  window.d31Html = function(name, rowId, loading){ return build(name, {closest:function(){ return {getAttribute:function(){ return rowId; }}; }}, !!loading); };
   function show(el){
     var name = (el.value||'').trim(); if(name.length<2) return;
     hide(); curEl = el; var my = ++seq;
@@ -5233,4 +5241,323 @@ window.cdOwnerOf = function(r){
   }, true);
   ['focusin','keydown','mousedown','touchstart','scroll'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(pop && e.target && e.target.nodeType===1 && pop.contains(e.target)) return; hide(); }, true); });
   window.addEventListener('blur', hide);
+})();
+
+/* ===== d32: V2.4 hover/long-press info popups — handler day, time zones, role history, conflict preview, status reason, round journey, duration check, country clock, team, stat cards + pinning ===== */
+;(function(){
+  if(window.__d32) return; window.__d32 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var pad = function(n){ return (n<10?'0':'')+n; };
+  var fmtT = function(b){ var c=(b+720)%1440, h=Math.floor(c/60), m=c%60; return (h%12||12)+':'+pad(m)+' '+(h>=12?'PM':'AM'); };
+  var dur = function(r){ var d = null; try{ d = parseDurationMinutes(r.duration); }catch(e){} return d>0 ? d : 30; };
+  var nk = function(c){ try{ return normalizeNameKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var ck = function(c){ try{ return normalizeCompanyKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z0-9]/g,''); } };
+  var sameCo = function(a,b){ try{ return ck(a)===ck(b) || fuzzyCompanyKeyMatch(a,b); }catch(e){ return ck(a)===ck(b); } };
+  var rows = function(){ return state.rows||[]; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0] || null; };
+  var ownOf = function(r){ try{ return window.cdOwnerOf ? window.cdOwnerOf(r) : null; }catch(e){ return null; } };
+  var ownerName = function(r){ var o = ownOf(r); return o && o.name ? o.name : (r.assignee||''); };
+  var isTeam = function(n){ try{ return getTeamNames().has(n); }catch(e){ return false; } };
+  var hist = function(){ try{ return (typeof _allRowsAcrossDatesCache!=='undefined') ? _allRowsAcrossDatesCache : null; }catch(e){ return null; } };
+  var short = function(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'}); }catch(e){ return d||''; } };
+  var ST = {rescheduled:['🔁','Rescheduled'], cancelled:['✕','Cancelled'], not_responded:['☎','No response'], no_invite:['📨','No invite']};
+  var phone = function(){ return (window.__d17vw || window.innerWidth) < 760; };
+  var cap = function(h, sub){ return '<div style="font-weight:700;font-size:13px">'+h+'</div>'+(sub?'<div style="opacity:.7;font-size:11.5px;margin:2px 0 6px">'+sub+'</div>':''); };
+  var line = function(a, b, c, bg){ return '<div style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:3px 12px;font-size:12.5px;align-items:baseline;padding:2px 4px;'+(bg?'background:rgba(80,200,160,.14);border-radius:6px;':'')+'"><span style="white-space:nowrap;opacity:.85">'+a+'</span><span style="min-width:0;overflow-wrap:anywhere">'+b+'</span><span style="white-space:nowrap;opacity:.85">'+(c||'')+'</span></div>'; };
+  var rng = function(r){ return bd(r.time)===9999 ? esc(r.time||'?') : esc(r.time)+'–'+fmtT(bd(r.time)+dur(r)); };
+  var scroll = function(h){ return '<div style="max-height:min(52vh,360px);overflow:auto;padding-right:4px">'+h+'</div>'; };
+  var note = function(t, warn){ return '<div style="margin:6px 0 2px;padding:7px 10px;border-radius:9px;font-size:12px;line-height:1.45;'+(warn?'border:1px solid rgba(245,185,66,.6);background:rgba(245,185,66,.13)':'border:1px solid var(--border,#333);background:rgba(255,255,255,.04)')+'">'+t+'</div>'; };
+
+  /* ---------- people ---------- */
+  function leaveHas(name){ try{ var L = JSON.parse(localStorage.getItem('cd.leave')||'[]'); return L.some(function(l){ return l.name===name && l.from<=state.date && l.to>=state.date; }); }catch(e){ return false; } }
+  function absent(name){ var p = (state.roster||[]).filter(function(x){ return x.name===name; })[0]; return !!(p && (state.absentIds||[]).indexOf(p.id)>=0) || leaveHas(name); }
+  function liveRows(){ return rows().filter(function(r){ return !r.woi && !r.status && r.candidate; }); }
+  function callsOf(name){ return liveRows().filter(function(r){ return ownerName(r)===name; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }); }
+  function freeAfter(calls, from, d){
+    for(var s = Math.ceil(from/30)*30; s < 1440; s += 30){ if(!calls.some(function(x){ var b = bd(x.time); return b!==9999 && s < b+dur(x) && b < s+d; })) return s; }
+    return null;
+  }
+  function handlerHtml(name){
+    if(!name) return cap('Not assigned yet','Pick someone to see their day.');
+    if(isTeam(name)) return teamHtml(name);
+    var L = callsOf(name), n = nowBd(), left = L.filter(function(r){ return bd(r.time)+dur(r)>=n; }).length;
+    var h = cap(esc(name)+(absent(name)?' · 🏖 off today':''), L.length+' call'+(L.length===1?'':'s')+' today · '+left+' left');
+    var heads = []; try{ heads = (window.d29Heads?window.d29Heads():[]).filter(function(x){ return x.who===name; }); }catch(e){}
+    if(heads.length) h += note('🔥 '+esc(heads[0].s), true);
+    h += L.length ? scroll(L.map(function(r){ var b = bd(r.time), now = n>=b && n<b+dur(r); return line(rng(r), '<b>'+esc(r.candidate)+'</b> · '+esc(r.company||''), esc(r.round||''), now); }).join('')) : '<div style="opacity:.75;font-size:12px">No live calls.</div>';
+    var nf = freeAfter(L, n, 45); h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Next free (45 min)</span> <b>'+(nf===null?'none today':fmtT(nf))+'</b></div>';
+    return h;
+  }
+  function teamHtml(name){
+    var ppl = (state.roster||[]).filter(function(p){ return p.team===name; }), n = nowBd();
+    var tl = liveRows().filter(function(r){ return (r.assignee||'')===name && !ownOf(r); }).length;
+    var h = cap(esc(name), ppl.length+' member'+(ppl.length===1?'':'s')+(tl?' · '+tl+' call'+(tl===1?'':'s')+' still without a person':''));
+    h += ppl.length ? scroll(ppl.map(function(p){
+      var L = callsOf(p.name), busy = L.some(function(r){ var b = bd(r.time); return n>=b && n<b+dur(r); }), off = absent(p.name);
+      return line('<b>'+esc(p.name)+'</b>', off ? '🏖 off today' : (busy ? '📞 on a call now' : '🟢 free now'), L.length+' call'+(L.length===1?'':'s'));
+    }).join('')) : '<div style="opacity:.75;font-size:12px">No members on the roster.</div>';
+    return h;
+  }
+
+  /* ---------- time zones ---------- */
+  var ZONES = [['US Eastern','America/New_York'],['US Central','America/Chicago'],['US Pacific','America/Los_Angeles'],['London','Europe/London'],['Ireland','Europe/Dublin'],['Germany','Europe/Berlin'],['Canada (Toronto)','America/Toronto'],['India','Asia/Kolkata']];
+  var CZ = {USA:['US Eastern','America/New_York'], UK:['London','Europe/London'], Ireland:['Ireland','Europe/Dublin'], Canada:['Canada (Toronto)','America/Toronto'], Germany:['Germany','Europe/Berlin']};
+  function utcOf(row){
+    var m = timeToMinutes(row.time); if(m===9999) return null; var p = state.date.split('-').map(Number);
+    return Date.UTC(p[0], p[1]-1, p[2] + (bd(row.time)>=720 ? 1 : 0)) + (m-330)*60000;
+  }
+  function inZone(ms, tz){
+    try{
+      var f = new Intl.DateTimeFormat('en-GB',{timeZone:tz, weekday:'short', day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short'}), P = {};
+      f.formatToParts(new Date(ms)).forEach(function(x){ P[x.type] = x.value; });
+      var g = new Intl.DateTimeFormat('en-US',{timeZone:tz, year:'numeric', month:'numeric', day:'numeric', hour:'numeric', hour12:false, weekday:'short'}), Q = {};
+      g.formatToParts(new Date(ms)).forEach(function(x){ Q[x.type] = x.value; });
+      return {txt:P.hour+':'+P.minute+' '+(P.dayPeriod||'').toUpperCase(), day:P.weekday+' '+P.day+' '+P.month, abbr:P.timeZoneName, hour:(+Q.hour)%24, y:+Q.year, m:+Q.month, d:+Q.day, dow:Q.weekday};
+    }catch(e){ return null; }
+  }
+  function timeHtml(row){
+    var ms = utcOf(row); if(!ms) return cap('No time set','Add a time to see it in other zones.');
+    var b = bd(row.time), n = nowBd(), mine = CZ[row.country||'USA'] ? CZ[row.country||'USA'][1] : '';
+    var sub = row.date===undefined && state.date===(typeof todayDateString==='function'?todayDateString():'') ? (b>=n ? 'starts in '+(b-n<60? (b-n)+' min' : Math.floor((b-n)/60)+'h '+((b-n)%60)+'m') : 'started '+(n-b)+' min ago') : state.date;
+    var h = cap('🕒 '+esc(row.time)+' IST', sub);
+    h += ZONES.map(function(z){ var v = inZone(ms, z[1]); if(!v) return ''; return line(esc(z[0]), '<b>'+esc(v.txt)+'</b>', esc(v.day), z[1]===mine); }).join('');
+    var near = liveRows().filter(function(r){ return r!==row && Math.abs(bd(r.time)-b)<=30; });
+    h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Around this time</span> <b>'+near.length+'</b> other call'+(near.length===1?'':'s')+(near.length? ' · '+esc(near.slice(0,4).map(function(r){ return ownerName(r)||'unassigned'; }).join(', ')):'')+'</div>';
+    return h;
+  }
+
+  /* ---------- country: local clock, business hours, holidays ---------- */
+  function nth(y, m, dow, k){ var d = new Date(Date.UTC(y,m-1,1)), off = (dow - d.getUTCDay() + 7)%7; return 1 + off + 7*(k-1); }
+  function lastDow(y, m, dow){ var last = new Date(Date.UTC(y,m,0)).getUTCDate(), d = new Date(Date.UTC(y,m-1,last)); return last - ((d.getUTCDay()-dow+7)%7); }
+  function holiday(c, y, m, d){
+    var H = [];
+    if(m===1 && d===1) H.push('New Year’s Day');
+    if(m===12 && d===25) H.push('Christmas Day');
+    if(c==='USA'){ if(m===7&&d===4) H.push('Independence Day'); if(m===6&&d===19) H.push('Juneteenth'); if(m===11&&d===11) H.push('Veterans Day'); if(m===11&&d===nth(y,11,4,4)) H.push('Thanksgiving'); if(m===9&&d===nth(y,9,1,1)) H.push('Labor Day'); if(m===5&&d===lastDow(y,5,1)) H.push('Memorial Day'); if(m===1&&d===nth(y,1,1,3)) H.push('MLK Day'); if(m===2&&d===nth(y,2,1,3)) H.push('Presidents’ Day'); if(m===10&&d===nth(y,10,1,2)) H.push('Columbus Day'); }
+    if(c==='Canada'){ if(m===7&&d===1) H.push('Canada Day'); if(m===9&&d===nth(y,9,1,1)) H.push('Labour Day'); if(m===10&&d===nth(y,10,1,2)) H.push('Thanksgiving (CA)'); if(m===12&&d===26) H.push('Boxing Day'); }
+    if(c==='UK'||c==='Ireland'){ if(m===12&&d===26) H.push('Boxing Day / St Stephen’s Day'); if(m===5&&d===nth(y,5,1,1)) H.push('Early May bank holiday'); if(m===5&&d===lastDow(y,5,1)&&c==='UK') H.push('Spring bank holiday'); if(m===8&&d===lastDow(y,8,1)&&c==='UK') H.push('Summer bank holiday'); if(c==='Ireland'&&m===3&&d===17) H.push('St Patrick’s Day'); }
+    if(c==='Germany'){ if(m===5&&d===1) H.push('Labour Day'); if(m===10&&d===3) H.push('German Unity Day'); if(m===12&&d===26) H.push('2nd Christmas Day'); }
+    return H.join(', ');
+  }
+  function countryHtml(row){
+    var c = row.country||'USA', z = CZ[c]; if(!z) return cap(esc(c), 'No clock for this value.');
+    var ms = utcOf(row); if(!ms) return cap(esc(c), 'Add a time to check business hours.');
+    var v = inZone(ms, z[1]); if(!v) return cap(esc(c));
+    var out = v.hour < 8 || v.hour >= 19, wk = (v.dow==='Sat'||v.dow==='Sun'), hol = holiday(c, v.y, v.m, v.d);
+    var h = cap(esc(c)+' · '+esc(z[0]), 'Call is at '+esc(v.txt)+' local · '+esc(v.day));
+    if(hol) h += note('🎌 Public holiday there: '+esc(hol), true);
+    if(wk) h += note('📅 It is a weekend there.', true);
+    h += out ? note('🌙 Outside normal business hours (8 AM–7 PM local).', true) : note('✅ Within business hours (8 AM–7 PM local).');
+    h += '<div style="opacity:.55;font-size:11px;margin-top:4px">Major fixed public holidays only — Easter and regional days are not included.</div>';
+    return h;
+  }
+
+  /* ---------- history-based ---------- */
+  function past(){ var H = hist(); return H ? H.filter(function(r){ return r && r.candidate && !r.woi; }) : null; }
+  function isThis(r, row){ return r._date===state.date && r.candidate===row.candidate && (r.time||'')===(row.time||'') && (r.round||'')===(row.round||''); }
+  function roleHtml(row, H){
+    var role = (row.role||'').trim(); if(!role) return cap('No role on this call', 'Add a role to compare with earlier calls.');
+    if(!H) return cap(esc(role), 'Loading history…');
+    var al = function(a,b){ try{ return rolesAlike(a,b); }catch(e){ return (a||'').toLowerCase()===(b||'').toLowerCase(); } };
+    var M = H.filter(function(r){ return !isThis(r,row) && al(r.role, role); });
+    var here = M.filter(function(r){ return sameCo(r.company, row.company); }).sort(function(a,b){ return (b._date||'').localeCompare(a._date||''); });
+    var else_ = {}; M.filter(function(r){ return !sameCo(r.company, row.company); }).forEach(function(r){ var k = ck(r.company); (else_[k] = else_[k] || {n:0, name:r.company, last:''}).n++; });
+    var h = cap(esc(role), here.length+' earlier at '+esc(row.company||'this client')+' · '+Object.keys(else_).length+' other client'+(Object.keys(else_).length===1?'':'s'));
+    var own_ = {}; here.forEach(function(r){ var o = (r.drivingPerson||r.assignee||'').trim(); if(o && !isTeam(o)) own_[o] = (own_[o]||0)+1; });
+    var top = Object.keys(own_).sort(function(a,b){ return own_[b]-own_[a]; })[0];
+    if(top) h += note('🎯 Most handled here by <b>'+esc(top)+'</b> ('+own_[top]+')');
+    h += here.length ? scroll(here.slice(0,15).map(function(r){ var st = ST[r.status]; return line(esc(short(r._date)), '<b>'+esc(r.candidate)+'</b>'+(st?' '+st[0]:''), esc((r.drivingPerson||r.assignee||'—'))); }).join('')) : '<div style="opacity:.75;font-size:12px">Nobody else has had this role at this client yet — may be a new opening.</div>';
+    var eo = Object.keys(else_).map(function(k){ return else_[k]; }).sort(function(a,b){ return b.n-a.n; }).slice(0,5);
+    if(eo.length) h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Same role elsewhere</span> '+eo.map(function(o){ return esc(o.name)+' ×'+o.n; }).join(' · ')+'</div>';
+    return h;
+  }
+  function roundHtml(row, H){
+    if(!H) return cap(esc(row.round||'Round'), 'Loading history…');
+    var J = H.filter(function(r){ return nk(r.candidate)===nk(row.candidate) && sameCo(r.company, row.company); }).sort(function(a,b){ return (a._date||'').localeCompare(b._date||'') || String(a.time).localeCompare(String(b.time)); });
+    var h = cap(esc(row.candidate)+' at '+esc(row.company||'this client'), J.length+' call'+(J.length===1?'':'s')+' in total');
+    if(J.length<=1) return h + '<div style="opacity:.75;font-size:12px">First call at this client.</div>';
+    h += scroll(J.map(function(r){ var st = ST[r.status]; return line(esc(short(r._date)), '<b>'+esc(r.round||'—')+'</b>'+(st?' '+st[0]+' '+st[1]:''), esc(r.drivingPerson||r.assignee||'—'), isThis(r,row)); }).join(''));
+    var dead = J.filter(function(r){ return r.status; }).length; if(dead) h += note('⚠ '+dead+' of these did not go ahead as planned.', true);
+    return h;
+  }
+  function median(a){ a = a.slice().sort(function(x,y){ return x-y; }); return a.length ? a[Math.floor(a.length/2)] : null; }
+  function durHtml(row, H){
+    var me = null; try{ me = parseDurationMinutes(row.duration); }catch(e){}
+    var h = cap('⏱ '+(row.duration?esc(row.duration):'No duration'), me ? me+' minutes' : '');
+    if(!H) return h + '<div style="opacity:.75;font-size:12px">Loading history…</div>';
+    var adv = false; try{ adv = isAdvancedRound(row.round); }catch(e){}
+    var P = H.filter(function(r){ var d = null; try{ d = parseDurationMinutes(r.duration); }catch(e){} var a = false; try{ a = isAdvancedRound(r.round); }catch(e){} return d && a===adv && !isThis(r,row); });
+    var here = P.filter(function(r){ return sameCo(r.company, row.company); }).map(function(r){ return parseDurationMinutes(r.duration); });
+    var all = P.map(function(r){ return parseDurationMinutes(r.duration); });
+    var mh = median(here), ma = median(all);
+    h += '<div style="font-size:12.5px;line-height:1.7">'+(mh?'At '+esc(row.company||'this client')+': typically <b>'+mh+' min</b> <span style="opacity:.7">('+here.length+' calls)</span><br>':'')+(ma?'All '+(adv?'2nd round+':'1st round')+' calls: typically <b>'+ma+' min</b> <span style="opacity:.7">('+all.length+' calls)</span>':'')+'</div>';
+    var ref = mh || ma;
+    if(me && ref){ if(me >= ref*1.5 || me >= ref+30) h += note('⚠ Much longer than usual — double-check the duration and the handler’s next call.', true); else if(me <= ref*0.5) h += note('Shorter than usual.'); else h += note('✅ In line with the usual length.'); }
+    else if(!me) h += note('No duration on this call — conflict checks assume 30 min.', true);
+    return h;
+  }
+  function statusHtml(row){
+    var st = ST[row.status]; if(!st) return cap('No status');
+    var F = (row.statusFields||[]).filter(function(f){ return (f.value||'').trim(); });
+    var h = cap(st[0]+' '+esc(st[1]), esc(row.candidate)+' · '+esc(row.time||''));
+    h += F.length ? F.map(function(f){ return line('<span style="opacity:.7">'+esc(f.label)+'</span>', esc(f.value), ''); }).join('') : '<div style="opacity:.75;font-size:12px">No reason was entered.</div>';
+    var other = rows().filter(function(r){ return r!==row && !r.woi && nk(r.candidate)===nk(row.candidate); });
+    if(other.length) h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Same candidate today</span> '+other.map(function(r){ return esc(r.time||'?')+' '+esc(r.company||'')+(r.status?' ('+esc(r.status.replace('_',' '))+')':''); }).join(' · ')+'</div>';
+    return h;
+  }
+  function conflictHtml(row){
+    var P = []; try{ P = computeConflictPairs(rows()).filter(function(p){ return p.a.id===row.id || p.b.id===row.id; }); }catch(e){}
+    if(!P.length) return cap('No conflict', 'This call is clear.');
+    var h = cap('⚠ Conflict on '+esc(row.candidate), P.length+' clash'+(P.length===1?'':'es'));
+    P.forEach(function(p){
+      var o = p.a.id===row.id ? p.b : p.a, cand = p.kind==='candidate';
+      h += note(cand ? '<b>'+esc(p.assignee)+'</b> is booked on two calls at once.' : '<b>'+esc(p.assignee)+'</b> is double-booked.', true);
+      [row, o].forEach(function(r, i){ h += line(rng(r), '<b>'+esc(r.candidate)+'</b> · '+esc(r.company||''), esc(r.duration||''), i===0); });
+      if(cand){ var oc = rows().filter(function(x){ return x!==row && !x.woi && !x.status && ownerName(x)===ownerName(row); }), nf = freeAfter(oc, Math.max(nowBd(), bd(o.time)+dur(o)), dur(row)); h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Move one to</span> <b>'+(nf===null?'—':fmtT(nf))+'</b> <span style="opacity:.7">(next time the owner is free)</span></div>'; }
+      else { var free = []; try{ free = findFreePeopleAtTime(row.time, isAdvancedRound(row.round)); }catch(e){} h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Free at '+esc(row.time)+'</span> '+(free.length? '<b>'+esc(free.slice(0,6).join(', '))+'</b>' : '<b>nobody</b>')+'</div>'; }
+    });
+    return h;
+  }
+  function candHtml(row){ return window.d20Html ? window.d20Html(row.candidate, row.id) : ''; }
+  function clientHtml(row){ return window.d31Html ? window.d31Html(row.company, row.id, !hist()) : ''; }
+
+  /* ---------- stat cards ---------- */
+  function statHtml(kind){
+    var R = rows(), L = [];
+    if(kind==='unassigned'){ L = R.filter(function(r){ return !r.woi && r.candidate && !(r.assignee||'').trim(); }).sort(function(a,b){ return bd(a.time)-bd(b.time); }); return cap('Unassigned', L.length+' call'+(L.length===1?'':'s')) + (L.length? scroll(L.slice(0,25).map(function(r){ return line(esc(r.time||'?'), '<b>'+esc(r.candidate)+'</b> · '+esc(r.company||''), esc(r.round||'')); }).join('')) : '<div style="opacity:.75;font-size:12px">✓ Everything has a team.</div>'); }
+    if(kind==='woi'){ L = R.filter(function(r){ return r.woi && r.candidate; }); return cap('Waiting for invite', L.length+' call'+(L.length===1?'':'s')) + (L.length? scroll(L.slice(0,25).map(function(r){ return line('⏳', '<b>'+esc(r.candidate)+'</b> · '+esc(r.company||''), esc(r.assignee||'')); }).join('')) : '<div style="opacity:.75;font-size:12px">None waiting.</div>'); }
+    if(kind==='conflict'){ var P = []; try{ P = computeConflictPairs(R); }catch(e){} return cap('Conflicts', P.length+' clash'+(P.length===1?'':'es')) + (P.length? scroll(P.slice(0,15).map(function(p){ return note('<b>'+esc(p.assignee)+'</b>'+(p.kind==='candidate'?' (candidate)':'')+'<br>'+esc(p.a.time||'?')+' '+esc(p.a.candidate)+' ↔ '+esc(p.b.time||'?')+' '+esc(p.b.candidate), true); }).join('')) : '<div style="opacity:.75;font-size:12px">✓ No conflicts.</div>'); }
+    var by = {}; R.filter(function(r){ return !r.woi && r.candidate; }).forEach(function(r){ var k = kind==='assigned' ? (ownerName(r)||'') : (r.assignee||'Unassigned'); if(kind==='assigned' && !k) return; by[k] = (by[k]||0)+1; });
+    var ks = Object.keys(by).sort(function(a,b){ return by[b]-by[a]; }), st = {}; R.forEach(function(r){ if(r.status) st[r.status] = (st[r.status]||0)+1; });
+    var h = cap(kind==='assigned' ? 'Assigned — by owner' : 'Total calls — by team', ks.length+' '+(kind==='assigned'?'people':'groups'));
+    h += scroll(ks.map(function(k){ return line(esc(k), '<div style="height:6px;border-radius:3px;background:var(--teal,#2dd4bf);width:'+Math.round(by[k]/by[ks[0]]*100)+'%;opacity:.7"></div>', '<b>'+by[k]+'</b>'); }).join(''));
+    if(kind==='all' && Object.keys(st).length) h += '<div style="margin-top:6px;font-size:12px"><span style="opacity:.7">Status</span> '+Object.keys(st).map(function(k){ return esc(ST[k]?ST[k][1]:k)+' '+st[k]; }).join(' · ')+'</div>';
+    return h;
+  }
+
+  /* ---------- registry ---------- */
+  var NEEDS_HIST = {role:1, round:1, dur:1};
+  function content(kind, row, el, H){
+    switch(kind){
+      case 'handler': return handlerHtml(el && el.value !== undefined ? (el.value||'') : (row?ownerName(row):''));
+      case 'team': return teamHtml(el.getAttribute('data-team'));
+      case 'time': return row ? timeHtml(row) : '';
+      case 'country': return row ? countryHtml(row) : '';
+      case 'role': return row ? roleHtml(row, H) : '';
+      case 'round': return row ? roundHtml(row, H) : '';
+      case 'dur': return row ? durHtml(row, H) : '';
+      case 'status': return row ? statusHtml(row) : '';
+      case 'conflict': return row ? conflictHtml(row) : '';
+      case 'cand': return row ? candHtml(row) : '';
+      case 'client': return row ? clientHtml(row) : '';
+      case 'owner': return row ? handlerHtml(ownerName(row)) : '';
+      case 'stat': return statHtml(el.getAttribute('data-d32stat'));
+    }
+    return '';
+  }
+  var TARGETS = [
+    ['select.cell-input[data-field="assignee"]','handler'], ['.team-load-cell[data-team]','team'], ['input.cell-input[data-field="time"]','time'],
+    ['select.cell-input[data-field="country"]','country'], ['input.cell-input[data-field="role"]','role'], ['input.cell-input[data-field="round"]','round'],
+    ['input.cell-input[data-field="duration"]','dur'], ['td .prior-badge','status'], ['td.time .flag-icon','conflict'], ['.summary .cell','stat']
+  ];
+  function statKind(el){ if(el.classList.contains('assigned')) return 'assigned'; return el.getAttribute('data-f') || 'all'; }
+  function find(e){
+    var t = e.target; if(!t || !t.closest) return null;
+    for(var i=0;i<TARGETS.length;i++){ var el = t.closest(TARGETS[i][0]); if(el){
+      if(TARGETS[i][1]==='stat') el.setAttribute('data-d32stat', statKind(el));
+      if(TARGETS[i][1]==='status'){ var trr = el.closest('tr'); var rr = trr && rowById(trr.getAttribute('data-id')); if(!rr || !rr.status) return null; }
+      if(TARGETS[i][1]==='conflict' && !el.textContent.trim().match(/⚠/)) return null;
+      return {el:el, kind:TARGETS[i][1]}; } }
+    return null;
+  }
+  function rowOfEl(el){ var tr = el.closest && el.closest('tr'); return tr ? rowById(tr.getAttribute('data-id')) : null; }
+
+  /* ---------- desktop popup ---------- */
+  var pop = null, timer = null, cur = null, seq = 0;
+  var canHover = function(){ try{ return window.matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){ return true; } };
+  function hide(){ clearTimeout(timer); timer = null; cur = null; seq++; if(pop){ pop.remove(); pop = null; } }
+  function place(el){
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth-pw-8))+'px';
+    var top = r.bottom+6; if(top+ph > innerHeight-8) top = Math.max(8, r.top-ph-6); pop.style.top = top+'px';
+  }
+  function paintInto(box, hit, row, H){ box.innerHTML = content(hit.kind, row, hit.el, H) || ''; }
+  function show(hit){
+    hide(); cur = hit.el; var my = ++seq, row = rowOfEl(hit.el);
+    pop = document.createElement('div'); pop.id = 'd32Pop';
+    pop.style.cssText = 'position:fixed;z-index:100010;max-width:min(560px,94vw);min-width:300px;padding:12px 34px 12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);pointer-events:auto;font-family:inherit';
+    var H = NEEDS_HIST[hit.kind] ? past() : null;
+    pop.innerHTML = content(hit.kind, row, hit.el, H) || ''; if(!pop.innerHTML){ pop = null; return; }
+    document.body.appendChild(pop); place(hit.el);
+    if(NEEDS_HIST[hit.kind] && !H && typeof fetchAllRowsAcrossDates==='function') fetchAllRowsAcrossDates().then(function(){ if(my===seq && pop){ paintInto(pop, hit, row, past()); place(hit.el); } }).catch(function(){});
+  }
+  document.addEventListener('mouseover', function(e){
+    if(!canHover()) return; var hit = find(e); if(!hit) return;
+    if(hit.el===cur && pop) return; clearTimeout(timer); timer = setTimeout(function(){ try{ show(hit); }catch(x){ console.warn('d32', x); } }, 380);
+  }, true);
+  document.addEventListener('mouseout', function(e){
+    var hit = find(e);
+    if(hit){ var to = e.relatedTarget; if(to && (hit.el.contains(to) || (pop && pop.contains(to)))) return; clearTimeout(timer); setTimeout(function(){ if(pop && !pop.matches(':hover') && !hit.el.matches(':hover') && document.activeElement!==hit.el) hide(); }, 160); }
+    else if(pop && e.target.closest && e.target.closest('#d32Pop')){ var t2 = e.relatedTarget; if(!t2 || !(pop.contains(t2) || (cur && cur.contains(t2)))) setTimeout(function(){ if(pop && !pop.matches(':hover') && cur && !cur.matches(':hover')) hide(); }, 160); }
+  }, true);
+  ['focusin','keydown','mousedown','touchstart','scroll'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(pop && e.target && e.target.nodeType===1 && pop.contains(e.target)) return; hide(); }, true); });
+
+  /* ---------- pin any popup ---------- */
+  var PINNABLE = '#d20Hist, #d31Cl, #d32Pop';
+  function pinsBox(){ var b = document.getElementById('d32Pins'); if(!b){ b = document.createElement('div'); b.id = 'd32Pins'; document.body.appendChild(b); } return b; }
+  function addPinBtn(){
+    document.querySelectorAll(PINNABLE).forEach(function(p){ if(!p.querySelector('[data-d32pin]')){ var b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-d32pin',''); b.title = 'Pin this so it stays open'; b.textContent = '📌'; p.insertBefore(b, p.firstChild); } });
+  }
+  try{ new MutationObserver(function(){ addPinBtn(); }).observe(document.body, {childList:true}); }catch(e){}
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return;
+    var pb = t.closest('[data-d32pin]');
+    if(pb){ e.preventDefault(); e.stopPropagation(); var src = pb.closest(PINNABLE); if(!src) return; var box = pinsBox();
+      while(box.children.length>=3) box.removeChild(box.firstChild);
+      var c = document.createElement('div'); c.className = 'd32-pin'; var inner = src.cloneNode(true); inner.removeAttribute('id'); inner.removeAttribute('style'); inner.className = 'd32-pin-in';
+      var pbtn = inner.querySelector('[data-d32pin]'); if(pbtn) pbtn.remove();
+      c.appendChild(inner); var x = document.createElement('button'); x.type = 'button'; x.className = 'd32-pin-x'; x.setAttribute('data-d32unpin',''); x.textContent = '✕'; c.insertBefore(x, c.firstChild); box.appendChild(c); src.remove(); hide(); return; }
+    var up = t.closest('[data-d32unpin]'); if(up){ var card = up.closest('.d32-pin'); if(card) card.remove(); }
+  }, true);
+
+  /* ---------- phone: long-press a name on a card + info chips in the call sheet ---------- */
+  function sheet(html, onReload){
+    var old = document.getElementById('d32Sheet'); if(old) old.remove();
+    var el = document.createElement('div'); el.id = 'd32Sheet'; el.className = 'd27-ov d32-sheet';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div></div><button type="button" class="d27-x" data-d32x aria-label="Close">✕</button></div><div class="d29-body d32-body"></div></div>';
+    el.querySelector('.d32-body').innerHTML = html; document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d32x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
+    return el;
+  }
+  function openInfo(kind, row){
+    if(!row) return;
+    var H = NEEDS_HIST[kind] ? past() : null, el = sheet(content(kind, row, null, H) || '<div style="opacity:.75">Nothing to show.</div>');
+    if((NEEDS_HIST[kind] || kind==='client') && !hist() && typeof fetchAllRowsAcrossDates==='function') fetchAllRowsAcrossDates().then(function(){ if(el.isConnected) el.querySelector('.d32-body').innerHTML = content(kind, row, null, past()); }).catch(function(){});
+  }
+  window.d32OpenInfo = function(kind, id){ openInfo(kind, rowById(id)); };
+  var lp = null, lpFired = 0;
+  document.addEventListener('touchstart', function(e){
+    var t = e.target; if(!t.closest) return; var n = t.closest('.d22-cn, .d22-cs'); if(!n) return;
+    var card = n.closest('[data-d22open]'); if(!card) return; var kind = n.classList.contains('d22-cn') ? 'cand' : 'client', id = card.getAttribute('data-d22open'), x0 = e.touches[0].clientX, y0 = e.touches[0].clientY;
+    clearTimeout(lp); lp = setTimeout(function(){ lpFired = Date.now(); try{ if(navigator.vibrate) navigator.vibrate(12); }catch(x){} openInfo(kind, rowById(id)); }, 480);
+    var cancel = function(ev){ if(ev.type==='touchmove'){ var q = ev.touches[0]; if(Math.hypot(q.clientX-x0, q.clientY-y0) < 10) return; } clearTimeout(lp); n.removeEventListener('touchmove', cancel); n.removeEventListener('touchend', cancel); n.removeEventListener('touchcancel', cancel); };
+    n.addEventListener('touchmove', cancel, {passive:true}); n.addEventListener('touchend', cancel); n.addEventListener('touchcancel', cancel);
+  }, {passive:true, capture:true});
+  ['click','pointerup','touchend'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(Date.now()-lpFired < 700 && e.target.closest && e.target.closest('.d22-cn, .d22-cs, [data-d22open]')){ e.stopPropagation(); e.preventDefault(); } }, true); });
+  document.addEventListener('contextmenu', function(e){ if(e.target.closest && e.target.closest('.d22-cn, .d22-cs')) e.preventDefault(); }, true);
+
+  var curId = null, o23 = window.d23Open; if(o23) window.d23Open = function(id){ curId = id; return o23.apply(this, arguments); };
+  var CH = [['cand','👤','Candidate'],['client','🏢','Client'],['owner','🙋','Owner’s day'],['time','🕒','Time zones'],['country','🌍','Country'],['role','🎯','Role'],['round','🪜','Rounds'],['dur','⏱','Duration'],['status','ℹ️','Status'],['conflict','⚠','Conflict']];
+  function injectChips(){
+    var c = document.querySelector('#d23 .d23-card'); if(!c || !curId) return; var r = rowById(curId); if(!r || r.woi) return;
+    var ex = c.querySelector('.d32-info'); if(ex && ex.getAttribute('data-for')===String(r.id)) return; if(ex) ex.remove();
+    var list = CH.filter(function(x){ return (x[0]!=='status' || r.status) && (x[0]!=='conflict' || (function(){ try{ return computeConflicts(rows()).has(r.id); }catch(e){ return false; } })()); });
+    var box = document.createElement('div'); box.className = 'd32-info'; box.setAttribute('data-for', r.id);
+    box.innerHTML = '<div class="d32-it">Info</div><div class="d32-chips">'+list.map(function(x){ return '<button type="button" data-d32i="'+x[0]+'">'+x[1]+' '+x[2]+'</button>'; }).join('')+'</div>';
+    var a = c.querySelector('.d23-sec'); if(a) c.insertBefore(box, a); else c.appendChild(box);
+  }
+  var it = 0; try{ new MutationObserver(function(){ clearTimeout(it); it = setTimeout(injectChips, 80); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+  document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d32i]'); if(b){ e.preventDefault(); e.stopPropagation(); openInfo(b.getAttribute('data-d32i'), rowById(curId)); } }, true);
 })();
