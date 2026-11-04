@@ -6536,7 +6536,7 @@ window.cdOwnerOf = function(r){
     if(pop && !t.closest('#d37Pop') && !t.closest('.d2-pop')) close();
   }, true);
   document.addEventListener('keydown', function(e){ if(e.key==='Escape' && pop) close(); });
-  window.addEventListener('scroll', function(){ if(cur && cur.mode==='hover') close(); }, true);
+  window.addEventListener('scroll', function(e){ if(e.target && e.target.nodeType===1 && e.target.closest && e.target.closest('#d37Pop')) return; if(cur && cur.mode==='hover') close(); }, true);
 
   /* keep the list honest when something else changes the calls (assigning from the picker, etc.) */
   function hook(){
