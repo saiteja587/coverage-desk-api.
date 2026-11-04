@@ -1566,3 +1566,8 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 .d34-big b{font-size:34px;line-height:1.1;color:var(--teal)}.d34-big span{font-size:13px;color:var(--muted)}
 .d29-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px;font-size:12px}
 .d29-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+
+/* sheets must scroll inside the screen, never run under the taskbar */
+.d27-card{max-height:calc(100vh - 90px);max-height:calc(100dvh - 90px);min-height:0}
+.d27-card>.d29-body,.d27-card>.d27-body,.d27-card>.d34-body{overflow-y:auto;overflow-x:hidden;flex:1 1 auto;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+@media(min-width:760px){.d27-ov{align-items:center;padding:20px 20px 70px}.d27-card{border-radius:24px}}
