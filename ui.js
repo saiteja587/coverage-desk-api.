@@ -5240,6 +5240,7 @@ window.cdOwnerOf = function(r){
     });
     return h + '</div></div>';
   }
+  window.d31Collect = collect;
   window.d31Html = function(name, rowId, loading){ return build(name, {closest:function(){ return {getAttribute:function(){ return rowId; }}; }}, !!loading); };
   function show(el){
     var name = (el.value||'').trim(); if(name.length<2) return;
@@ -5450,7 +5451,26 @@ window.cdOwnerOf = function(r){
     return h;
   }
   function candHtml(row){ return window.d20Html ? window.d20Html(row.candidate, row.id) : ''; }
-  function clientHtml(row){ return window.d31Html ? window.d31Html(row.company, row.id, !hist()) : ''; }
+  function clientHtml(row){
+    if(!window.d31Collect) return window.d31Html ? window.d31Html(row.company, row.id, !hist()) : '';
+    var name = row.company || '', L = [], people = {}, bad = 0;
+    try{ L = window.d31Collect(row, name) || []; }catch(e){}
+    L.forEach(function(o){ people[(o.candidate||'').trim().toLowerCase()] = 1; if(o.status) bad++; });
+    var h = '<div class="d36-hd"><b>'+esc(name)+'</b><small>Client history</small></div>';
+    var rule = ''; try{ rule = window.d29RuleFor ? window.d29RuleFor(name) : ''; }catch(e){}
+    if(rule) h += '<div class="d36-rule"><b>📌 Client rule</b><span>'+esc(rule)+'</span></div>';
+    if(!L.length) return h + '<div class="d27-empty">'+(!hist() ? 'Loading earlier calls…' : 'No calls on file for this client.')+'</div>';
+    var pc = Object.keys(people).length;
+    h += '<div class="d36-sum"><span><b>'+L.length+'</b> call'+(L.length===1?'':'s')+'</span><span><b>'+pc+'</b> candidate'+(pc===1?'':'s')+'</span>'+(bad?'<span class="bad"><b>'+bad+'</b> not completed</span>':'')+'</div>';
+    var me = (row.candidate||'').trim().toLowerCase();
+    h += '<div class="d36-list">'+L.slice(0,60).map(function(o){
+      var mine = me && (o.candidate||'').trim().toLowerCase()===me, st = o.status && ST[o.status] ? ST[o.status] : null;
+      return '<div class="d36-it'+(mine?' me':'')+'"><div class="d36-l1"><b>'+esc(o.candidate)+'</b>'+(st?'<em>'+st[0]+' '+esc(st[1])+'</em>':'')+'</div>'
+        + '<div class="d36-l2">'+esc(short(o.date))+(o.date===state.date?' · today':'')+(o.round?' · '+esc(o.round):'')+(o.role?' · '+esc(o.role):'')+'</div>'
+        + '<div class="d36-l3">'+(o.owner?'👤 '+esc(o.owner):'<span style="opacity:.5">no owner</span>')+'</div></div>';
+    }).join('')+(L.length>60?'<div class="d27-empty">Showing the latest 60 of '+L.length+'.</div>':'')+'</div>';
+    return h;
+  }
 
   /* ---------- stat cards ---------- */
   function statHtml(kind){
@@ -5569,6 +5589,7 @@ window.cdOwnerOf = function(r){
   var lp = null, lpFired = 0;
   document.addEventListener('touchstart', function(e){
     var t = e.target; if(!t.closest) return; var n = t.closest('.d22-cn, .d22-cs'); if(!n) return;
+    try{ var q0 = e.touches[0]; if(icHit(t, q0.clientX)) return; }catch(x){}
     var card = n.closest('[data-d22open]'); if(!card) return; var kind = n.classList.contains('d22-cn') ? 'cand' : 'client', id = card.getAttribute('data-d22open'), x0 = e.touches[0].clientX, y0 = e.touches[0].clientY;
     clearTimeout(lp); lp = setTimeout(function(){ lpFired = Date.now(); try{ if(navigator.vibrate) navigator.vibrate(12); }catch(x){} openInfo(kind, rowById(id)); }, 480);
     var cancel = function(ev){ if(ev.type==='touchmove'){ var q = ev.touches[0]; if(Math.hypot(q.clientX-x0, q.clientY-y0) < 10) return; } clearTimeout(lp); n.removeEventListener('touchmove', cancel); n.removeEventListener('touchend', cancel); n.removeEventListener('touchcancel', cancel); };
@@ -5588,7 +5609,7 @@ window.cdOwnerOf = function(r){
     return { kind: (n.classList.contains('d22-cn') || n.classList.contains('m-l1')) ? 'cand' : 'client', id: card ? card.getAttribute('data-d22open') : tr.getAttribute('data-id') };
   }
   function icOpen(h){ lpFired = Date.now(); clearTimeout(lp); openInfo(h.kind, rowById(h.id)); }
-  document.addEventListener('touchstart', function(e){ var q = e.touches && e.touches[0]; ihit = q ? icHit(e.target, q.clientX) : null; if(ihit) ihit.t0 = Date.now(); }, {capture:true, passive:true});
+  document.addEventListener('touchstart', function(e){ var q = e.touches && e.touches[0]; ihit = q ? icHit(e.target, q.clientX) : null; if(ihit){ ihit.t0 = Date.now(); lpFired = ihit.t0; clearTimeout(lp); } }, {capture:true, passive:true});
   document.addEventListener('touchend', function(e){
     if(!ihit) return; var h = ihit; ihit = null; if(Date.now() - h.t0 > 500) return;
     e.preventDefault(); e.stopPropagation(); icOpen(h);
