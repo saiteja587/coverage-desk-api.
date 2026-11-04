@@ -4354,7 +4354,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.4', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.5', SEEN_KEY = 'cd.v2.seen';
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4365,6 +4365,12 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.5','2026-11-04','Desk assistant',[
+      '✅ Check before adding — pasting a list now warns about overlaps, duplicates, no-time lines and out-of-hours calls before anything is added',
+      '⏰ Next-call card (10 min before your call) with client rule, handover note and last outcome; 🚩 reliability flag on candidates with repeat no-shows',
+      '↔ Reschedule cascade warning; 🕘 “Since you left” summary; 📜 change log with Undo and Restore',
+      '💬 Reply builder, 🌙 end-of-day wrap, 🗂 carry-forward review, ✉️ email cleaner, 🏷 client scorecard, ⚖️ workload and fatigue, 📝 handover notes, 💾 backup and restore'
+    ]],
     ['V2.4','2026-11-04','Hover everywhere',[
       'Hover (desktop) or long-press / Info chips (phone) on a client name shows every earlier call at that client',
       'Hover the handler → their whole day and next free slot; a team → members, who is free; the time → other time zones; the country → local clock, business hours, holidays',
@@ -4505,7 +4511,7 @@ window.cdOwnerOf = function(r){
     un.filter(function(r){ return bd(r.time)!==9999 && bd(r.time)-n<=90; }).slice(0,4).forEach(function(r){ var m = bd(r.time)-n; items.push(['🔴', r.candidate+' at '+r.time+' has no owner', m<=0?'starting now':'in '+m+' min', {open:r.id}]); });
     if(cf) items.push(['⚠️', cf+' conflict'+(cf===1?'':'s')+' to resolve','double-booked handlers or clients',{click:'[data-d3="conflicts"], #resolveConflictsBtn'}]);
     if(woi) items.push(['📨', woi+' call'+(woi===1?'':'s')+' waiting for invite','set the time when the invite arrives',{filter:'woi'}]);
-    try{ (window.d28Nudges?window.d28Nudges():[]).forEach(function(nu){ items.push([nu.ic, nu.t, nu.s, nu.woi?{filter:'woi'}:{open:nu.id}]); }); }catch(e){}
+    try{ (window.d28Nudges?window.d28Nudges():[]).forEach(function(nu){ items.push([nu.ic, nu.t, nu.s, nu.woi?{filter:'woi'}:(nu.tool?{tool:nu.tool}:{open:nu.id})]); }); }catch(e){}
     h += '<div class="d27-sec"><b>Needs attention</b></div><div class="d27-att">'+(items.length? items.map(function(it,i){ return '<button type="button" class="d27-at" data-d27at="'+i+'"><span>'+it[0]+'</span><span><b>'+esc(it[1])+'</b><small>'+esc(it[2])+'</small></span><em>›</em></button>'; }).join('') : '<div class="d27-empty">✓ Nothing urgent right now.</div>')+'</div>';
     /* load */
     h += '<div class="d27-sec"><b>Team load</b><span>live calls</span></div><div class="d27-load">'+tl.map(function(k){ return '<div><span>'+esc(k)+'</span><i><u style="width:'+Math.round(team[k]/tmax*100)+'%" class="'+(k==='Unassigned'?'bad':'')+'"></u></i><b>'+team[k]+'</b></div>'; }).join('')+'</div>';
@@ -4533,7 +4539,8 @@ window.cdOwnerOf = function(r){
     if(t.closest('[data-d27okall]')){ window.d28Confirm().then(repaintCC); return; }
     var at = t.closest('[data-d27at]');
     if(at){ var it = ccItems[+at.getAttribute('data-d27at')]; if(!it) return; var a = it[3];
-      if(a.open){ if(window.d23Open) window.d23Open(a.open); }
+      if(a.tool){ closeEl(ccEl); if(window.d29OpenTool) window.d29OpenTool(a.tool); }
+      else if(a.open){ if(window.d23Open) window.d23Open(a.open); }
       else if(a.filter){ closeEl(ccEl); try{ state.filter = a.filter; render(); }catch(x){} }
       else if(a.click){ closeEl(ccEl); var b = document.querySelector(a.click); if(b) b.click(); else { try{ state.filter = 'conflict'; render(); }catch(x){} } }
     }
@@ -4999,11 +5006,12 @@ window.cdOwnerOf = function(r){
   }catch(e){} })();
 
   window.d29RuleFor = function(c){ return RULES[ck(c)] || ''; };
+  window.d29Slots = function(r,k){ return slotsFor(r,k); }; window.d29Fmt = fmtT; window.d29ChaseMsg = chaseMsg;
   /* ---------- hub ---------- */
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back']];
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
@@ -5012,7 +5020,7 @@ window.cdOwnerOf = function(r){
     tool = k; if(hub){ closeOv(hub); hub = null; }
     if(k==='paste'){ try{ openOnlyPanel('showRescheduleImport'); render(); }catch(e){ state.showRescheduleImport = true; render(); } return; }
     var M = { chase:['Chase list','CONFIRMATIONS',chaseHtml], resched:['Reschedule helper','NEXT FREE SLOT',reschedHtml], rules:['Client rules','PER CLIENT',rulesHtml], insights:['Insights','HISTORY',null], week:['Weekly report','REPORT',null], quick:['Quick add','NEW CALL',qaHtml], handler:['Handler link','SHARE',handlerHtml] }[k];
-    if(!M) return;
+    if(!M){ try{ if(window.d33Open) window.d33Open(k); }catch(e){ console.warn('d33', e); } return; }
     if(k==='resched' && !rsId) rsPick = null;
     var el = ov('d29T', M[0], M[1], M[2] ? M[2]() : '<div class="d27-empty">Loading…</div>'); el.__k = k;
     if(k==='insights') insightsHtml().then(function(h){ if(el.isConnected) setBody(el, h); });
@@ -5560,4 +5568,434 @@ window.cdOwnerOf = function(r){
   }
   var it = 0; try{ new MutationObserver(function(){ clearTimeout(it); it = setTimeout(injectChips, 80); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
   document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d32i]'); if(b){ e.preventDefault(); e.stopPropagation(); openInfo(b.getAttribute('data-d32i'), rowById(curId)); } }, true);
+})();
+
+/* ===== d33: V2.5 desk assistant — pre-import check, next-call card, reschedule cascade, reliability flags, handover notes, reply builder, wrap, carry-forward, email cleaner, client scorecard, workload, change log + undo, backup ===== */
+;(function(){
+  if(window.__d33) return; window.__d33 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var J = function(k,d){ try{ var v = JSON.parse(LS.g(k,'')); return v==null?d:v; }catch(e){ return d; } };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var pad = function(n){ return (n<10?'0':'')+n; };
+  var fmtT = function(b){ var c=(b+720)%1440, h=Math.floor(c/60), m=c%60; return (h%12||12)+':'+pad(m)+' '+(h>=12?'PM':'AM'); };
+  var dur = function(r){ var d = null; try{ d = parseDurationMinutes(r.duration); }catch(e){} return d>0 ? d : 30; };
+  var nk = function(c){ try{ return normalizeNameKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var ck = function(c){ try{ return normalizeCompanyKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z0-9]/g,''); } };
+  var sameCo = function(a,b){ try{ return ck(a)===ck(b) || fuzzyCompanyKeyMatch(a,b); }catch(e){ return ck(a)===ck(b); } };
+  var rows = function(){ return state.rows||[]; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0] || null; };
+  var ownOf = function(r){ try{ return window.cdOwnerOf ? window.cdOwnerOf(r) : null; }catch(e){ return null; } };
+  var ownerName = function(r){ var o = ownOf(r); return o && o.name ? o.name : (r.assignee||''); };
+  var isTeam = function(n){ try{ return getTeamNames().has(n); }catch(e){ return false; } };
+  var live = function(){ return rows().filter(function(r){ return !r.woi && !r.status && r.candidate; }); };
+  var hist = function(){ try{ return (typeof _allRowsAcrossDatesCache!=='undefined') ? _allRowsAcrossDatesCache : null; }catch(e){ return null; } };
+  var short = function(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'}); }catch(e){ return d||''; } };
+  var first = function(n){ return String(n||'').trim().split(/\s+/)[0]||''; };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var todayStr = function(){ try{ return todayDateString(); }catch(e){ return state.date; } };
+  var ST = {rescheduled:['🔁','Rescheduled'], cancelled:['✕','Cancelled'], not_responded:['☎','No response'], no_invite:['📨','No invite']};
+  var loading = function(){ return !!(state.needsLogin || state.dateSwitching || state.loading || state.saving); };
+  var copy = function(tx, btn){ var lb = btn && btn.textContent; var done = function(){ if(btn){ btn.textContent = '✓ Copied'; setTimeout(function(){ btn.textContent = lb; }, 1600); } }; try{ navigator.clipboard.writeText(tx).then(done, function(){ window.prompt('Copy this', tx); }); }catch(e){ window.prompt('Copy this', tx); } };
+  var toast = function(m){ try{ if(window.d2Toast) window.d2Toast(m,{ms:4000}); }catch(e){} };
+  function ensureHist(cb){ if(hist()) return cb(hist()); if(typeof fetchAllRowsAcrossDates!=='function') return cb(null); fetchAllRowsAcrossDates().then(function(h){ cb(h||hist()); }).catch(function(){ cb(null); }); }
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d33-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d33x aria-label="Close">✕</button></div><div class="d29-body d33-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d33x]'))) closeOv(el); });
+    return el;
+  }
+  function closeOv(el){ if(el && el.parentNode) el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  function body(el, html){ var b = el.querySelector('.d33-body'); if(b){ var sc = el.scrollTop; b.innerHTML = html; el.scrollTop = sc; } }
+  var sum = function(items){ return '<div class="d29-sum">'+items.map(function(i){ return '<span class="'+(i[2]||'')+'"><b>'+i[0]+'</b> '+i[1]+'</span>'; }).join('')+'</div>'; };
+  var row3 = function(a,b,c){ return '<div class="d27-row" style="cursor:default"><span class="t">'+a+'</span><span class="n">'+b+'</span><span class="o">'+(c||'')+'</span></div>'; };
+  var banner = function(id, html, ms){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd33-bar'; el.innerHTML = html; document.body.appendChild(el);
+    el.addEventListener('click', function(e){ if(e.target.closest('[data-d33bx]')) el.remove(); });
+    if(ms) setTimeout(function(){ if(el.isConnected) el.remove(); }, ms);
+    return el;
+  };
+
+  /* ================= handover notes (per-date note entry) ================= */
+  var hid = function(){ return state.date+'-handover-ids'; };
+  function getHO(){ var e = (state.notes||[]).filter(function(n){ return n && n.id===hid(); })[0]; try{ return e ? (JSON.parse(e.text)||{}) : {}; }catch(x){ return {}; } }
+  function setHO(rid, text){
+    var m = getHO(); if(text && text.trim()) m[rid] = text.trim(); else delete m[rid];
+    state.notes = state.notes || []; var i = state.notes.findIndex(function(n){ return n && n.id===hid(); });
+    if(Object.keys(m).length){ var tx = JSON.stringify(m); if(i>=0) state.notes[i].text = tx; else state.notes.push({id:hid(), text:tx}); } else if(i>=0) state.notes.splice(i,1);
+    try{ markDirty(); }catch(e){}
+  }
+
+  /* ================= reliability flags ================= */
+  var REL = null, relAt = 0;
+  function badStatus(r){ if(r.status==='not_responded' || r.status==='no_invite') return true; if(r.status==='rescheduled' || r.status==='cancelled'){ try{ return /candidate/i.test(JSON.stringify(r.statusFields||[])); }catch(e){ return false; } } return false; }
+  function buildRel(){
+    var H = hist(); if(!H) return; var m = {};
+    H.forEach(function(r){ if(!r || !r.candidate || r.woi || !r._date || r._date>=state.date) return; var k = nk(r.candidate); if(!k) return; var o = m[k] || (m[k] = {n:0, bad:0, last:''}); o.n++; if(badStatus(r)){ o.bad++; o.last = (o.last && o.last>r._date) ? o.last : r._date; } });
+    REL = m; relAt = Date.now();
+  }
+  function decorate(){
+    if(!REL) return;
+    var put = function(host, name){ var o = REL[nk(name)]; if(!o || o.bad<2) return; if(host.querySelector('.d33-rel')) return; var s = document.createElement('span'); s.className = 'd33-rel'; s.title = o.bad+' of '+o.n+' earlier calls were a no-show / candidate-side reschedule (last '+o.last+')'; s.textContent = '🚩'+o.bad; host.insertBefore(s, host.firstChild); };
+    document.querySelectorAll('#tableScrollMain tbody tr[data-id]').forEach(function(tr){ var td = tr.querySelector('td[data-label="Candidate"]'), inp = td && td.querySelector('input[data-field="candidate"]'); if(td && inp) put(td, inp.value); });
+    document.querySelectorAll('.d22-card .d22-cn').forEach(function(n){ put(n, n.textContent.replace(/^🚩\d+/, '')); });
+  }
+  window.d33Build = function(){ buildRel(); decorate(); };
+  window.d33Rel = function(name){ return REL ? REL[nk(name)] || null : null; };
+
+  /* ================= change log, since-you-left, cascade ================= */
+  var FIELDS = ['time','status','assignee','drivingPerson','company','round','duration','candidate','role','country','woi'];
+  var prevMap = null, prevDate = null, prevCopy = null;
+  var FL = {time:'Time', status:'Status', assignee:'Team', drivingPerson:'Owner', company:'Client', round:'Round', duration:'Duration', candidate:'Candidate', role:'Role', country:'Country', woi:'Waiting for invite'};
+  function snap(){ var m = {}, cp = {}; rows().forEach(function(r){ var o = {}; FIELDS.forEach(function(f){ o[f] = r[f]==null ? '' : String(r[f]); }); m[r.id] = o; cp[r.id] = JSON.stringify(r); }); return {m:m, cp:cp}; }
+  function audit(){ return J('cd.audit', []); }
+  function pushAudit(list){ if(!list.length) return; var a = list.concat(audit()).slice(0, 300); LS.s('cd.audit', JSON.stringify(a)); }
+  function diffNow(){
+    if(loading()) { prevMap = null; return; }
+    var cur = snap();
+    if(!prevMap || prevDate!==state.date){ prevMap = cur.m; prevCopy = cur.cp; prevDate = state.date; return; }
+    var ids = Object.keys(cur.m), old = Object.keys(prevMap), common = ids.filter(function(i){ return prevMap[i]; });
+    if(old.length && common.length < old.length*0.5){ prevMap = cur.m; prevCopy = cur.cp; return; }
+    var L = [], t = Date.now(), timeChanged = [];
+    common.forEach(function(id){ FIELDS.forEach(function(f){ if(prevMap[id][f]!==cur.m[id][f]){ var r = rowById(id); L.push({k:'chg', t:t, d:state.date, id:id, c:r?r.candidate:'', f:f, a:prevMap[id][f], b:cur.m[id][f]}); if(f==='time') timeChanged.push(id); } }); });
+    ids.filter(function(i){ return !prevMap[i]; }).forEach(function(id){ var r = rowById(id); if(r && r.candidate) L.push({k:'add', t:t, d:state.date, id:id, c:r.candidate}); });
+    if(common.length >= old.length*0.5) old.filter(function(i){ return !cur.m[i]; }).forEach(function(id){ var p = null; try{ p = JSON.parse(prevCopy[id]); }catch(e){} if(p && p.candidate) L.push({k:'del', t:t, d:state.date, id:id, c:p.candidate, row:p}); });
+    prevMap = cur.m; prevCopy = cur.cp;
+    pushAudit(L);
+    timeChanged.forEach(cascade);
+  }
+  function cascade(id){
+    var r = rowById(id); if(!r || r.woi || r.status) return; var msg = [];
+    try{ computeCandidateOverlaps(rows()).forEach(function(p){ if(p.a.id===id || p.b.id===id) msg.push(r.candidate+' now overlaps another call of theirs'); }); }catch(e){}
+    try{ computeConflictPairs(rows()).forEach(function(p){ if(p.kind!=='candidate' && (p.a.id===id || p.b.id===id)) msg.push((p.assignee||'The handler')+' is now double-booked'); }); }catch(e){}
+    if(!msg.length) return;
+    banner('d33Casc', '<span>⚠ Moving <b>'+esc(r.candidate)+'</b> to '+esc(r.time)+' created a clash: '+esc(msg[0])+'.</span><button type="button" data-d33fix="'+esc(id)+'">Fix</button><button type="button" data-d33bx>✕</button>', 20000);
+  }
+  var tdiff = 0;
+  function afterRender(){ clearTimeout(tdiff); tdiff = setTimeout(function(){ try{ diffNow(); decorate(); saveSeen(); }catch(e){ console.warn('d33', e); } }, 600); }
+
+  /* since you left */
+  function sigOf(r){ return FIELDS.map(function(f){ return r[f]==null?'':String(r[f]); }).join('|'); }
+  var seenChecked = false, lastSave = 0, leftDiff = null;
+  function saveSeen(force){
+    if(loading() || !rows().length) return; if(!force && Date.now()-lastSave < 15000) return; lastSave = Date.now();
+    var m = {}; rows().forEach(function(r){ m[r.id] = {s:sigOf(r), c:r.candidate||'', t:r.time||'', co:r.company||''}; });
+    LS.s('cd.seen.'+state.date, JSON.stringify({ts:Date.now(), m:m}));
+  }
+  function checkLeft(){
+    if(seenChecked || loading() || !rows().length) return; seenChecked = true;
+    var o = J('cd.seen.'+state.date, null); if(!o || !o.m || Date.now()-o.ts < 30*60000) return;
+    var add = [], chg = [], del = [];
+    rows().forEach(function(r){ var p = o.m[r.id]; if(!p){ if(r.candidate) add.push(r); } else if(p.s!==sigOf(r)) chg.push({r:r, p:p}); });
+    Object.keys(o.m).forEach(function(id){ if(!rowById(id) && o.m[id].c) del.push(o.m[id]); });
+    if(!add.length && !chg.length && !del.length) return;
+    leftDiff = {ts:o.ts, add:add, chg:chg, del:del};
+    var ago = Math.round((Date.now()-o.ts)/60000), agoTxt = ago<90 ? ago+' min' : Math.round(ago/60)+' h';
+    banner('d33Left', '<span>🕘 Since you were here ('+agoTxt+' ago): <b>'+add.length+'</b> new · <b>'+chg.length+'</b> changed · <b>'+del.length+'</b> removed</span><button type="button" data-d33t="changes">Review</button><button type="button" data-d33bx>✕</button>', 25000);
+  }
+
+  /* ================= next-call card ================= */
+  var shown = {};
+  function nextCard(){
+    if(document.hidden || loading()) return; var me = ''; try{ me = getMyAssigneeName(); }catch(e){} if(!me) return;
+    var n = nowBd();
+    var r = live().filter(function(x){ return ownerName(x)===me && bd(x.time)!==9999 && bd(x.time)-n<=10 && bd(x.time)-n>=-2 && !shown[state.date+x.id]; }).sort(function(a,b){ return bd(a.time)-bd(b.time); })[0];
+    if(!r) return; shown[state.date+r.id] = 1;
+    var rule = ''; try{ rule = window.d29RuleFor ? window.d29RuleFor(r.company) : ''; }catch(e){}
+    var ho = getHO()[r.id] || '', rel = window.d33Rel(r.candidate);
+    var last = ''; var H = hist(); if(H){ var p = H.filter(function(x){ return x && x._date && x._date<state.date && nk(x.candidate)===nk(r.candidate) && sameCo(x.company, r.company); }).sort(function(a,b){ return b._date.localeCompare(a._date); })[0]; if(p) last = short(p._date)+' · '+(p.round||'')+(p.status&&ST[p.status]?' · '+ST[p.status][1]:''); }
+    var m = bd(r.time)-n;
+    banner('d33Next', '<div class="d33-nx"><div><small>'+(m<=0?'STARTING NOW':'IN '+m+' MIN')+'</small><b>'+esc(r.candidate)+'</b><span>'+esc([r.time,r.company,r.round].filter(Boolean).join(' · '))+'</span>'
+      + (rule?'<em>📌 '+esc(rule)+'</em>':'')+(ho?'<em>📝 '+esc(ho)+'</em>':'')+(last?'<em>Last time: '+esc(last)+'</em>':'')+(rel&&rel.bad>=2?'<em>🚩 '+rel.bad+' earlier no-shows / reschedules</em>':'')
+      + '</div><div class="d33-nxb"><button type="button" data-d33chase="'+esc(r.id)+'">📋 Chase msg</button><button type="button" data-d33open="'+esc(r.id)+'">Open</button><button type="button" data-d33bx>✕</button></div></div>', 120000);
+    try{ if(window.d26fx) window.d26fx.buzz(18); }catch(e){}
+  }
+
+  /* ================= call-card injection: handover note + reply ================= */
+  var curId = null, o23 = window.d23Open; if(o23) window.d23Open = function(id){ curId = id; return o23.apply(this, arguments); };
+  function rowForSide(side){ var nm = ((side.querySelector('.d5-ht b')||{}).textContent||'').trim(); if(!nm) return null; var tm = (side.querySelector('[data-f="time"]')||{}).value; var c = rows().filter(function(r){ return (r.candidate||'').trim()===nm; }); return (tm && c.filter(function(r){ return r.time===tm; })[0]) || c[0] || null; }
+  function hoBox(r){ var rel = window.d33Rel(r.candidate); return '<div class="d33-ho" data-for="'+esc(r.id)+'">'+(rel&&rel.bad>=2?'<div class="d33-relnote">🚩 '+rel.bad+' of '+rel.n+' earlier calls were no-shows / candidate reschedules — confirm early.</div>':'')+'<label>📝 Handover note<textarea data-d33ho="'+esc(r.id)+'" rows="2" placeholder="e.g. prefers Teams · send resume first">'+esc(getHO()[r.id]||'')+'</textarea></label><div class="d29-qa"><button type="button" data-d33rp="'+esc(r.id)+'">💬 Reply builder</button></div></div>'; }
+  function inject(){
+    var c = document.querySelector('#d23 .d23-card');
+    if(c && curId){ var r = rowById(curId); var ex = c.querySelector('.d33-ho'); if(r && !r.woi && (!ex || ex.getAttribute('data-for')!==String(r.id))){ if(ex) ex.remove(); var a = c.querySelector('.d23-sec'); var tmp = document.createElement('div'); tmp.innerHTML = hoBox(r); if(a) c.insertBefore(tmp.firstChild, a); else c.appendChild(tmp.firstChild); } }
+    var side = document.querySelector('#d5Side .d5-body');
+    if(side){ var r2 = rowForSide(document.getElementById('d5Side')); var ex2 = side.querySelector('.d33-ho'); if(r2 && !r2.woi && (!ex2 || ex2.getAttribute('data-for')!==String(r2.id))){ if(ex2) ex2.remove(); side.insertAdjacentHTML('afterbegin', hoBox(r2)); } }
+  }
+  var inj = 0; try{ new MutationObserver(function(){ clearTimeout(inj); inj = setTimeout(inject, 90); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+  document.addEventListener('change', function(e){ var t = e.target.closest && e.target.closest('[data-d33ho]'); if(t) setHO(t.getAttribute('data-d33ho'), t.value); }, true);
+  document.addEventListener('focusout', function(e){ var t = e.target.closest && e.target.closest('[data-d33ho]'); if(t) setHO(t.getAttribute('data-d33ho'), t.value); }, true);
+
+  /* ================= reply builder ================= */
+  function tpl(r){
+    var d = state.date, sl = []; try{ sl = window.d29Slots(r, 2).slots.map(fmtT); }catch(e){}
+    var who = first(r.candidate), co = r.company||'the client', rl = r.role?' ('+r.role+')':'', rd = r.round||'';
+    return [
+      ['✅ Confirmed','Hi, confirming '+r.candidate+'’s '+rd+' interview with '+co+rl+' on '+d+' at '+(r.time||'the scheduled time')+' IST. Please share the meeting link if it has not been sent yet.'],
+      ['🔁 Reschedule','Hi, '+r.candidate+' is unable to attend the '+(r.time||'')+' IST slot for '+co+rl+'. Could we move it to '+(sl.length? sl.join(' or ')+' IST today' : 'another time')+'? Please let us know what works.'],
+      ['☎ No-show','Hi, '+r.candidate+' did not join the '+(r.time||'')+' IST '+rd+' interview with '+co+' despite reminders. Please advise whether we should reschedule.'],
+      ['✕ Cancelled','Hi, the '+(r.time||'')+' IST interview for '+r.candidate+' with '+co+' stands cancelled. Apologies for the inconvenience.'],
+      ['📨 Need invite','Hi, we have not received the calendar invite for '+r.candidate+'’s '+rd+' interview with '+co+rl+'. Could you please share it?'],
+      ['⏰ Running late','Hi, '+r.candidate+' will join a few minutes late for the '+(r.time||'')+' IST interview with '+co+'. Thank you for your patience.'],
+      ['👤 To candidate','Hi '+who+', a quick reminder: your '+rd+' interview with '+co+rl+' is today at '+(r.time||'the scheduled time')+' IST. Please reply to confirm you will be available.']
+    ];
+  }
+  var rpId = null, rpIdx = 0;
+  function replyHtml(){
+    var r = rowById(rpId);
+    if(!r){ var L = live().sort(function(a,b){ return bd(a.time)-bd(b.time); }); return '<p class="d29-p">Pick the call.</p><div class="d27-list">'+(L.length? L.map(function(x){ return '<button type="button" class="d27-row" data-d33rpick="'+esc(x.id)+'"><span class="t">'+esc(x.time||'')+'</span><span class="n"><b>'+esc(x.candidate)+'</b><small>'+esc([x.company,x.round].filter(Boolean).join(' · '))+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">No live calls.</div>')+'</div>'; }
+    var T = tpl(r);
+    return '<div class="d29-rsh"><b>'+esc(r.candidate)+'</b><small>'+esc([r.time,r.company,r.round].filter(Boolean).join(' · '))+'</small></div><div class="d29-seg wrap">'+T.map(function(t,i){ return '<button type="button" class="'+(i===rpIdx?'on':'')+'" data-d33rpt="'+i+'">'+esc(t[0])+'</button>'; }).join('')+'</div><textarea class="d29-ta" id="d33rpm" rows="6">'+esc(T[rpIdx][1])+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d33rpcopy>📋 Copy message</button><button type="button" class="d27-btn ghost" data-d33rpback>‹ Other call</button></div>';
+  }
+
+  /* ================= end-of-day wrap ================= */
+  function wrapHtml(){
+    var tx = ''; try{ tx = deskEodText(state.date, rows(), getTeamNames(), {}); }catch(e){ tx = (window.d28Summary?window.d28Summary():''); }
+    var woi = rows().filter(function(r){ return r.woi && r.candidate; });
+    if(woi.length) tx += '\n\n⏳ Still waiting for invite ('+woi.length+'):\n'+woi.slice(0,15).map(function(r){ return '• '+r.candidate+(r.company?' — '+r.company:''); }).join('\n');
+    return '<p class="d29-p">Edit anything you like, then copy it to WhatsApp.</p><textarea class="d29-ta" id="d33wr" rows="14">'+esc(tx)+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d33wrcopy>📋 Copy wrap-up</button><button type="button" class="d27-btn ghost" data-d33t="carry">🗂 Carry-forward</button></div>';
+  }
+
+  /* ================= carry-forward ================= */
+  var carry = null;
+  function dismissed(){ return J('cd.carry.x', {}); }
+  function carryKey(r){ return nk(r.candidate)+'|'+ck(r.company); }
+  async function loadCarry(){
+    var prev = ''; try{ prev = deskDateAdd(state.date, -1); }catch(e){ return []; }
+    var data = null; try{ data = await apiCall('calls', {qs:'date='+prev}); }catch(e){ return null; }
+    var dx = dismissed(), have = {}; rows().forEach(function(r){ have[carryKey(r)] = 1; });
+    var out = (data && data.rows || []).filter(function(r){ return r.candidate && !r.woi && (r.status==='rescheduled'||r.status==='not_responded'||r.status==='no_invite') && !have[carryKey(r)] && !dx[prev+'|'+carryKey(r)]; });
+    return out.map(function(r){ r._prev = prev; return r; });
+  }
+  function carryHtml(L){
+    if(L===null) return '<div class="d27-empty">Could not load yesterday’s calls.</div>';
+    if(!L.length) return '<div class="d27-empty">✓ Nothing from yesterday is waiting.</div>';
+    return '<p class="d29-p">Yesterday’s calls that were rescheduled or got no response and are not on today’s list yet.</p><div class="d27-list">'+L.map(function(r,i){ var st = ST[r.status]; return '<div class="d29-cr"><div class="d29-crt"><span class="t">'+esc(r.time||'')+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company,r.round,st?st[1]:''].filter(Boolean).join(' · '))+'</small></span></div><div class="d29-seg"><button type="button" data-d33cmove="'+i+'">➡ Move to today (WOI)</button><button type="button" data-d33cskip="'+i+'">Dismiss</button></div></div>'; }).join('')+'</div>';
+  }
+
+  /* ================= paste an email ================= */
+  var emailTxt = '';
+  function cleanEmail(t){
+    var L = String(t).replace(/\r/g,'').split('\n'), out = [];
+    for(var i=0;i<L.length;i++){ var l = L[i].trim();
+      if(/^(-- ?|_{5,}|-{5,})$/.test(l) || /^(regards|thanks|thank you|best|sent from my)/i.test(l)) break;
+      if(!l || /^>/.test(l) || /^(from|to|cc|bcc|sent|date|subject|reply-to):/i.test(l) || /^on .{5,120} wrote:?$/i.test(l)) continue;
+      out.push(l.replace(/^[•*\-]\s+/, '')); }
+    return out;
+  }
+  function emailHtml(){
+    var lines = cleanEmail(emailTxt), ok = [], bad = [];
+    lines.forEach(function(l){ var p = []; try{ p = parseImportText(l, state.date, '1st'); }catch(e){} var good = (p||[]).some(function(r){ return r.candidate && r.company && (r.woi || timeToMinutes(r.time)!==9999); }); if(good) ok.push(l); else { var hdr = null; try{ hdr = parseDateSectionHeader(l, state.date); }catch(e){} if(hdr) ok.push(l); else if(/\d{1,2}([:.]\d{2})?\s*(am|pm)/i.test(l)) bad.push(l); } });
+    emailTxt && (window.__d33mail = ok.join('\n'));
+    return '<p class="d29-p">Paste the whole email (forwarded or not). Quotes, headers and signatures are removed; only lines the importer can read are kept.</p><textarea class="d29-ta" id="d33em" rows="7" placeholder="Paste the email here">'+esc(emailTxt)+'</textarea><div class="d27-actions"><button type="button" class="d27-btn" data-d33emread>Read it</button></div>'
+      + (emailTxt ? sum([[ok.length,'calls readable'],[bad.length,'need a look',bad.length?'bad':'']]) + (ok.length? '<div class="d27-sec"><b>Will import</b></div><div class="d27-list">'+ok.slice(0,12).map(function(l){ return '<div class="d27-row" style="cursor:default"><span class="n"><small style="white-space:normal">'+esc(l)+'</small></span></div>'; }).join('')+'</div><div class="d27-actions"><button type="button" class="d27-btn" data-d33emgo>📥 Send to Import</button></div>' : '') + (bad.length? '<div class="d27-sec"><b>Could not read — check these</b></div><div class="d27-list">'+bad.map(function(l){ return '<div class="d27-row" style="cursor:default"><span class="n"><small style="white-space:normal">⚠ '+esc(l)+'</small></span></div>'; }).join('')+'</div>' : '') : '');
+  }
+
+  /* ================= client scorecard ================= */
+  var scoreCo = null, scoreQ = '';
+  function median(a){ a = a.slice().sort(function(x,y){ return x-y; }); return a.length ? a[Math.floor(a.length/2)] : null; }
+  function scoreHtml(H){
+    if(!H) return '<div class="d27-empty">Loading history…</div>';
+    var rowsH = H.filter(function(r){ return r && r.candidate && !r.woi && r.company; });
+    if(!scoreCo){
+      var by = {}; rowsH.forEach(function(r){ var k = ck(r.company); (by[k] = by[k] || {name:r.company, n:0}).n++; });
+      var ks = Object.keys(by).filter(function(k){ return !scoreQ || by[k].name.toLowerCase().indexOf(scoreQ.toLowerCase())>=0; }).sort(function(a,b){ return by[b].n-by[a].n; }).slice(0,30);
+      return '<input class="d29-ta" id="d33sq" style="min-height:42px" placeholder="Search a client" value="'+esc(scoreQ)+'"><div class="d27-list">'+ks.map(function(k){ return '<button type="button" class="d27-row" data-d33sc="'+esc(by[k].name)+'"><span class="n"><b>'+esc(by[k].name)+'</b></span><span class="o">'+by[k].n+' calls ›</span></button>'; }).join('')+'</div>';
+    }
+    var R = rowsH.filter(function(r){ return sameCo(r.company, scoreCo); }), n = R.length, rs = R.filter(function(r){ return r.status==='rescheduled'; }).length, cx = R.filter(function(r){ return r.status==='cancelled'; }).length, nr = R.filter(function(r){ return r.status==='not_responded'||r.status==='no_invite'; }).length;
+    var pc = function(a){ return n ? Math.round(a/n*100)+'%' : '0%'; }, ppl = {}; R.forEach(function(r){ ppl[nk(r.candidate)] = 1; });
+    var ds = R.map(function(r){ var d = null; try{ d = parseDurationMinutes(r.duration); }catch(e){} return d; }).filter(Boolean), md = median(ds);
+    var hrs = {}; R.forEach(function(r){ var b = bd(r.time); if(b!==9999){ var h = Math.floor(b/60); hrs[h] = (hrs[h]||0)+1; } });
+    var bh = Object.keys(hrs).sort(function(a,b){ return hrs[b]-hrs[a]; })[0];
+    var hand = {}; R.forEach(function(r){ var o = (r.drivingPerson||r.assignee||'').trim(); if(!o || isTeam(o)) return; var h = hand[o] || (hand[o] = {n:0, bad:0}); h.n++; if(r.status) h.bad++; });
+    var best = Object.keys(hand).filter(function(k){ return hand[k].n>=3; }).sort(function(a,b){ return hand[a].bad/hand[a].n - hand[b].bad/hand[b].n || hand[b].n-hand[a].n; })[0];
+    var rule = ''; try{ rule = window.d29RuleFor ? window.d29RuleFor(scoreCo) : ''; }catch(e){}
+    var rec = R.slice().sort(function(a,b){ return (b._date||'').localeCompare(a._date||''); }).slice(0,8);
+    return '<div class="d27-actions"><button type="button" class="d27-btn ghost" data-d33sback>‹ All clients</button></div><h3 style="margin:4px 0 8px">'+esc(scoreCo)+'</h3>'+(rule?'<div class="d29-rule" style="margin-bottom:10px"><b>📌 Client rule</b><span>'+esc(rule)+'</span></div>':'')
+      + sum([[n,'calls'],[Object.keys(ppl).length,'candidates'],[pc(rs),'rescheduled',rs/n>=.2?'bad':''],[pc(cx),'cancelled',cx/n>=.2?'bad':''],[pc(nr),'no response',nr/n>=.2?'bad':'']])
+      + '<div class="d29-p">'+(md?'Usual length <b>'+md+' min</b> · ':'')+(bh!==undefined?'busiest hour <b>'+fmtT(bh*60)+'</b> IST · ':'')+(best?'best handler <b>'+esc(best)+'</b> ('+hand[best].n+' calls, '+Math.round(hand[best].bad/hand[best].n*100)+'% issues)':'no handler with 3+ calls yet')+'</div>'
+      + '<div class="d27-sec"><b>Latest calls</b></div><div class="d27-list">'+rec.map(function(r){ var st = ST[r.status]; return row3(esc(short(r._date)), '<b>'+esc(r.candidate)+'</b><small>'+esc([r.round,r.role].filter(Boolean).join(' · '))+'</small>', (st?st[0]+' ':'')+esc(r.drivingPerson||r.assignee||'')); }).join('')+'</div>';
+  }
+
+  /* ================= workload ================= */
+  var wlStart = null;
+  function points(r){ var p = 1, a = false; try{ a = isAdvancedRound(r.round); }catch(e){} if(a) p += 1; if(dur(r)>=60) p += .5; var b = bd(r.time); if(b!==9999 && b>=480 && b<1080) p += .5; return p; }
+  function workHtml(H){
+    var out = '';
+    var chains = [], by = {}; live().forEach(function(r){ var o = ownerName(r); if(!o || isTeam(o) || bd(r.time)===9999) return; (by[o] = by[o]||[]).push(r); });
+    Object.keys(by).forEach(function(nm){ var L = by[nm].sort(function(a,b){ return bd(a.time)-bd(b.time); }), s = null, e = null;
+      L.forEach(function(r){ var b = bd(r.time), en = b+dur(r); if(s===null){ s = b; e = en; } else if(b-e<=15){ e = Math.max(e,en); } else { if(e-s>=180) chains.push([nm,s,e]); s = b; e = en; } }); if(s!==null && e-s>=180) chains.push([nm,s,e]); });
+    out += '<div class="d27-sec"><b>Fatigue today</b><span>3h+ back-to-back</span></div><div class="d27-list">'+(chains.length? chains.map(function(c){ return row3('🥵','<b>'+esc(c[0])+'</b><small>'+fmtT(c[1])+' → '+fmtT(c[2])+' without a real break</small>',''); }).join('') : '<div class="d27-empty">✓ Nobody is on a 3h+ run.</div>')+'</div>';
+    if(!H) return out + '<div class="d27-empty">Loading the week…</div>';
+    if(!wlStart) wlStart = deskMonday(todayStr());
+    var end = deskDateAdd(wlStart, 6), W = H.filter(function(r){ return r && r.candidate && !r.woi && r._date && r._date>=wlStart && r._date<=end; }), pp = {};
+    W.forEach(function(r){ var o = (r.drivingPerson||r.assignee||'').trim(); if(!o || isTeam(o)) return; var x = pp[o] || (pp[o] = {n:0, pts:0, adv:0, lng:0}); x.n++; x.pts += points(r); try{ if(isAdvancedRound(r.round)) x.adv++; }catch(e){} if(dur(r)>=60) x.lng++; });
+    var ks = Object.keys(pp).sort(function(a,b){ return pp[b].pts-pp[a].pts; }), avg = ks.length ? ks.reduce(function(t,k){ return t+pp[k].pts; },0)/ks.length : 0, mx = ks.length ? pp[ks[0]].pts : 1;
+    out += '<div class="d29-wk"><button type="button" class="d27-btn sm ghost" data-d33wl="-1">‹</button><b>Week '+esc(wlStart)+' → '+esc(end)+'</b><button type="button" class="d27-btn sm ghost" data-d33wl="1">›</button></div><p class="d29-p">Points: 1 per call, +1 for 2nd round+, +0.5 for 60 min+, +0.5 for late-night (8 PM–6 AM IST).</p><div class="d27-load">';
+    out += ks.length? ks.map(function(k){ var x = pp[k], hi = avg && x.pts>=avg*1.4; return '<div><span>'+esc(k)+(hi?' 🔥':'')+'</span><i><u style="width:'+Math.round(x.pts/mx*100)+'%" class="'+(hi?'bad':'')+'"></u></i><b>'+x.pts+'</b></div>'; }).join('') : '<div class="d27-empty">No calls this week.</div>';
+    return out + '</div>'+(ks.length?'<p class="d29-p">Average '+avg.toFixed(1)+' points. 🔥 = 40% or more above average.</p>':'');
+  }
+
+  /* ================= changes & undo ================= */
+  var chTab = 'left';
+  function changesHtml(){
+    var tabs = '<div class="d29-seg"><button type="button" class="'+(chTab==='left'?'on':'')+'" data-d33ctab="left">Since you left</button><button type="button" class="'+(chTab==='log'?'on':'')+'" data-d33ctab="log">Recent changes</button></div>';
+    if(chTab==='left'){
+      if(!leftDiff) return tabs+'<div class="d27-empty">Nothing new since you last had the app open (or you were away under 30 min).</div>';
+      var d = leftDiff, h = tabs + sum([[d.add.length,'new'],[d.chg.length,'changed'],[d.del.length,'removed']]);
+      h += '<div class="d27-list">' + d.add.map(function(r){ return row3('🆕','<b>'+esc(r.candidate)+'</b><small>'+esc([r.time,r.company].filter(Boolean).join(' · '))+'</small>',''); }).join('')
+        + d.chg.map(function(x){ var ch = FIELDS.filter(function(f){ return String(x.r[f]==null?'':x.r[f])!==undefined; }); return row3('✏️','<b>'+esc(x.r.candidate)+'</b><small>'+esc([x.r.time,x.r.status?(ST[x.r.status]?ST[x.r.status][1]:x.r.status):'',ownerName(x.r)].filter(Boolean).join(' · '))+'</small>',''); }).join('')
+        + d.del.map(function(p){ return row3('🗑','<b>'+esc(p.c)+'</b><small>'+esc([p.t,p.co].filter(Boolean).join(' · '))+'</small>','removed'); }).join('') + '</div>';
+      return h;
+    }
+    var A = audit().filter(function(a){ return a.d===state.date; }).slice(0, 40);
+    return tabs+'<p class="d29-p">Edits made in this browser on '+esc(state.date)+'. Undo puts the old value back.</p><div class="d27-list">'+(A.length? A.map(function(a,i){
+      var when = new Date(a.t).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}), label, can = false, btn = '';
+      if(a.k==='chg'){ label = '<b>'+esc(a.c)+'</b><small>'+esc(FL[a.f]||a.f)+': '+esc(a.a||'—')+' → '+esc(a.b||'—')+'</small>'; var r = rowById(a.id); can = !!r && String(r[a.f]==null?'':r[a.f])===a.b; btn = can ? '<button type="button" class="d27-btn sm" data-d33undo="'+i+'">↶ Undo</button>' : ''; }
+      else if(a.k==='add'){ label = '<b>'+esc(a.c)+'</b><small>call added</small>'; }
+      else { label = '<b>'+esc(a.c)+'</b><small>call removed</small>'; var back = !rowById(a.id) && a.row; btn = back ? '<button type="button" class="d27-btn sm" data-d33undo="'+i+'">↶ Restore</button>' : ''; }
+      return '<div class="d27-row" style="cursor:default"><span class="t">'+when+'</span><span class="n">'+label+'</span><span class="o">'+btn+'</span></div>';
+    }).join('') : '<div class="d27-empty">No edits recorded yet in this browser.</div>')+'</div>';
+  }
+  function undo(i){
+    var A = audit().filter(function(a){ return a.d===state.date; }).slice(0,40), a = A[i]; if(!a) return;
+    if(a.k==='chg'){ var r = rowById(a.id); if(!r) return; if(a.f==='woi') r.woi = a.a==='true'; else r[a.f] = a.a; }
+    else if(a.k==='del' && a.row && !rowById(a.id)){ rows().push(a.row); }
+    try{ markDirty(); render(); }catch(e){} toast('Undone');
+  }
+
+  /* ================= backup & restore ================= */
+  var snaps = null;
+  function backupHtml(){
+    var h = '<p class="d29-p">The app already keeps an automatic snapshot before every import. You can also download everything, or roll today back.</p><div class="d27-actions"><button type="button" class="d27-btn" data-d33bk="dl">⬇ Download full backup</button><label class="d27-btn ghost" style="cursor:pointer">⬆ Restore from file<input type="file" accept="application/json,.json" data-d33bk="file" hidden></label></div>';
+    h += '<div class="d27-sec"><b>Snapshots of '+esc(state.date)+'</b><span>'+(snaps?snaps.length:'…')+'</span></div><div class="d27-list">';
+    h += snaps===null ? '<div class="d27-empty">Loading…</div>' : snaps.length ? snaps.slice(0,15).map(function(b){ return '<div class="d27-row" style="cursor:default"><span class="n"><b>'+esc(new Date(b.created_at).toLocaleString([], {day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}))+'</b><small>'+esc(b.reason||'')+'</small></span><button type="button" class="d27-btn sm" data-d33snap="'+esc(b.id)+'">Restore</button></div>'; }).join('') : '<div class="d27-empty">No snapshots for this day.</div>';
+    return h + '</div>';
+  }
+
+  /* ================= hub dispatcher ================= */
+  var cur = null;
+  function open(k){
+    var M = {
+      reply:['Reply builder','MESSAGES', replyHtml], wrap:['End-of-day wrap','SUMMARY', wrapHtml], carry:['Carry-forward','YESTERDAY', function(){ return '<div class="d27-empty">Loading…</div>'; }],
+      email:['Paste an email','CLEAN & READ', emailHtml], score:['Client scorecard','CLIENT', function(){ return scoreHtml(hist()); }], fair:['Workload','FAIRNESS', function(){ return workHtml(hist()); }],
+      changes:['Changes & undo','HISTORY', changesHtml], backup:['Backup & restore','SAFETY', backupHtml]
+    }[k];
+    if(!M) return false; cur = k;
+    if(k==='reply' && !rpId) rpIdx = 0;
+    var el = ov('d33T', M[0], M[1], M[2]()); el.__k = k;
+    el.addEventListener('click', onTool);
+    if(k==='carry') loadCarry().then(function(L){ carry = L; if(el.isConnected) body(el, carryHtml(L)); });
+    if(k==='score' || k==='fair') ensureHist(function(H){ if(el.isConnected) body(el, k==='score'? scoreHtml(H) : workHtml(H)); });
+    if(k==='backup'){ snaps = null; if(typeof loadBackupsList==='function') loadBackupsList(state.date).then(function(L){ snaps = L; if(el.isConnected) body(el, backupHtml()); }); }
+    return true;
+  }
+  window.d33Open = open;
+  function repaint(el){ var k = el.__k; var fn = {reply:replyHtml, wrap:wrapHtml, email:emailHtml, changes:changesHtml, backup:backupHtml, score:function(){ return scoreHtml(hist()); }, fair:function(){ return workHtml(hist()); }, carry:function(){ return carryHtml(carry); }}[k]; if(fn) body(el, fn()); }
+  async function onTool(e){
+    var el = e.currentTarget, t = e.target; if(!t.closest) return; var b;
+    if((b = t.closest('[data-d33rpick]'))){ rpId = b.getAttribute('data-d33rpick'); rpIdx = 0; repaint(el); return; }
+    if((b = t.closest('[data-d33rpt]'))){ rpIdx = +b.getAttribute('data-d33rpt'); repaint(el); return; }
+    if((b = t.closest('[data-d33rpcopy]'))){ copy((document.getElementById('d33rpm')||{}).value||'', b); return; }
+    if(t.closest('[data-d33rpback]')){ rpId = null; repaint(el); return; }
+    if((b = t.closest('[data-d33wrcopy]'))){ copy((document.getElementById('d33wr')||{}).value||'', b); LS.s('cd.wrap.'+state.date, '1'); return; }
+    if((b = t.closest('[data-d33t]'))){ open(b.getAttribute('data-d33t')); return; }
+    if((b = t.closest('[data-d33cmove]'))){ var r = carry && carry[+b.getAttribute('data-d33cmove')]; if(!r) return; var c = JSON.parse(JSON.stringify(r)); delete c._prev; delete c._date; c.id = uid(); c.status = ''; c.statusFields = []; c.woi = true; c.time = ''; c.drivingPerson = ''; rows().push(c); try{ markDirty(); render(); }catch(x){} carry = carry.filter(function(x){ return x!==r; }); toast('Moved '+r.candidate+' to today (waiting for invite)'); repaint(el); return; }
+    if((b = t.closest('[data-d33cskip]'))){ var r2 = carry && carry[+b.getAttribute('data-d33cskip')]; if(!r2) return; var dx = dismissed(); dx[r2._prev+'|'+carryKey(r2)] = 1; LS.s('cd.carry.x', JSON.stringify(dx)); carry = carry.filter(function(x){ return x!==r2; }); repaint(el); return; }
+    if(t.closest('[data-d33emread]')){ emailTxt = (document.getElementById('d33em')||{}).value||''; repaint(el); return; }
+    if(t.closest('[data-d33emgo]')){ var txt = window.__d33mail||''; if(!txt) return; closeOv(el); try{ closeAllPanels(); state.showImport = true; state.showRescheduleImport = false; render(); }catch(x){} var tries = 0; (function put(){ var ta = document.getElementById('importText'); if(ta){ ta.value = txt; ta.dispatchEvent(new Event('input',{bubbles:true})); } else if(tries++<20) setTimeout(put,150); })(); return; }
+    if((b = t.closest('[data-d33sc]'))){ scoreCo = b.getAttribute('data-d33sc'); repaint(el); return; }
+    if(t.closest('[data-d33sback]')){ scoreCo = null; repaint(el); return; }
+    if((b = t.closest('[data-d33wl]'))){ wlStart = deskDateAdd(wlStart, 7*(+b.getAttribute('data-d33wl'))); repaint(el); return; }
+    if((b = t.closest('[data-d33ctab]'))){ chTab = b.getAttribute('data-d33ctab'); repaint(el); return; }
+    if((b = t.closest('[data-d33undo]'))){ undo(+b.getAttribute('data-d33undo')); setTimeout(function(){ prevMap = null; diffNow(); repaint(el); }, 200); return; }
+    if((b = t.closest('[data-d33snap]'))){
+      var id = b.getAttribute('data-d33snap'), bk = (snaps||[]).filter(function(x){ return String(x.id)===String(id); })[0], lb = bk ? new Date(bk.created_at).toLocaleString() : 'this snapshot';
+      var go = window.cdConfirm ? await window.cdConfirm('Restore '+state.date+' from '+lb+'? Today’s current calls are backed up first, so this can be undone.', {title:'Restore snapshot'}) : confirm('Restore from '+lb+'?'); if(!go) return;
+      try{ await createBackup('pre-restore', state.date, state.rows); var rs = await restoreBackup(id); state.rows = rs.rows; markDirty(); render(); await saveAllChanges(); toast('Restored '+rs.rows.length+' calls'); closeOv(el); }catch(x){ toast('Restore failed: '+x.message); }
+      return; }
+    if((b = t.closest('[data-d33bk]')) && b.getAttribute('data-d33bk')==='dl'){ try{ downloadFullBackup(); }catch(x){} return; }
+  }
+  document.addEventListener('change', async function(e){
+    var f = e.target.closest && e.target.closest('input[data-d33bk="file"]'); if(!f || !f.files || !f.files[0]) return;
+    var el = document.getElementById('d33T'); var file = f.files[0]; f.value = '';
+    try{
+      var data = JSON.parse(await file.text()), day = data.days && data.days[state.date];
+      if(!day || !Array.isArray(day.rows)){ toast('That file has no calls for '+state.date); return; }
+      var go = window.cdConfirm ? await window.cdConfirm('Replace '+state.date+' ('+rows().length+' calls) with the '+day.rows.length+' calls in this file? Current calls are backed up first.', {title:'Restore from file'}) : confirm('Restore?'); if(!go) return;
+      await createBackup('pre-restore', state.date, state.rows); state.rows = day.rows; if(Array.isArray(day.notes)) state.notes = day.notes; markDirty(); render(); await saveAllChanges(); toast('Restored '+day.rows.length+' calls'); if(el) closeOv(el);
+    }catch(x){ toast('Could not read that backup file'); }
+  }, true);
+
+  /* ================= global click wiring ================= */
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t.closest) return; var b;
+    if((b = t.closest('[data-d33rp]'))){ e.preventDefault(); e.stopPropagation(); rpId = b.getAttribute('data-d33rp'); rpIdx = 0; open('reply'); return; }
+    if((b = t.closest('[data-d33fix]'))){ var id = b.getAttribute('data-d33fix'); var bar = document.getElementById('d33Casc'); if(bar) bar.remove(); var tmp = document.createElement('button'); tmp.setAttribute('data-d29qa','rs'); tmp.setAttribute('data-id', id); document.body.appendChild(tmp); tmp.click(); tmp.remove(); return; }
+    if((b = t.closest('[data-d33chase]'))){ var r = rowById(b.getAttribute('data-d33chase')); if(r && window.d29ChaseMsg) copy(window.d29ChaseMsg(r), b); return; }
+    if((b = t.closest('[data-d33open]'))){ var nx = document.getElementById('d33Next'); if(nx) nx.remove(); if(window.d23Open) window.d23Open(b.getAttribute('data-d33open')); return; }
+    if((b = t.closest('#d33Left [data-d33t]'))){ var lf = document.getElementById('d33Left'); if(lf) lf.remove(); chTab = 'left'; open('changes'); return; }
+  }, true);
+
+  /* ================= pre-import check ================= */
+  function importIssues(){
+    var ta = document.getElementById('importText'); if(!ta || !ta.value.trim()) return [];
+    var P = []; try{ P = parseImportText(ta.value, state.date, state.importDefaultRound || '1st'); }catch(e){ return []; }
+    var dEl = document.getElementById('importDate'), target = (dEl && dEl.value) || state.date;
+    var cur = P.filter(function(r){ return !r._targetDate || r._targetDate===target; }).filter(function(r){ return r.candidate; });
+    var out = [], board = target===state.date ? rows().filter(function(r){ return r.candidate && !r.woi && !r.status; }) : [];
+    var range = function(r){ var m = timeToMinutes(r.time); return m===9999 ? null : [m, m+dur(r)]; };
+    cur.forEach(function(r, i){
+      var rg = range(r);
+      if(!r.woi && !rg) out.push(['🕒', r.candidate+' has no readable time', 'Line will be added without a time.']);
+      for(var j=i+1;j<cur.length;j++){ var o = cur[j]; if(nk(o.candidate)!==nk(r.candidate)) continue; var og = range(o);
+        if(rg && og && rg[0]<og[1] && og[0]<rg[1]) out.push(['⏱', r.candidate+' is booked twice at once', (r.time||'?')+' ('+(r.duration||'30 min?')+') and '+(o.time||'?')+' ('+(o.duration||'30 min?')+') in this paste.']);
+        else if(sameCo(r.company,o.company) && (r.round||'')===(o.round||'')) out.push(['👯', r.candidate+' appears twice for '+(r.company||'the same client'), 'Same round, in this paste.']); }
+      board.forEach(function(x){ if(nk(x.candidate)!==nk(r.candidate)) return; var xg = range(x);
+        if(rg && xg && timeToMinutes(r.time)===timeToMinutes(x.time) && sameCo(r.company,x.company)) out.push(['👯', r.candidate+' is already on the board', 'Same client and time ('+x.time+').']);
+        else if(rg && xg && rg[0]<xg[1] && xg[0]<rg[1]) out.push(['⏱', r.candidate+' would overlap an existing call', (r.time)+' vs '+x.time+' at '+(x.company||'another client')+'.']); });
+      var o2 = null, ms = timeToMinutes(r.time);
+      if(rg){ var CZ = {USA:'America/New_York', UK:'Europe/London', Ireland:'Europe/Dublin', Canada:'America/Toronto', Germany:'Europe/Berlin'}[r.country||'USA']; if(CZ){ try{ var p = target.split('-').map(Number), ms2 = Date.UTC(p[0],p[1]-1,p[2]+(bd(r.time)>=720?1:0)) + (ms-330)*60000, h = +new Intl.DateTimeFormat('en-US',{timeZone:CZ, hour:'numeric', hour12:false}).format(new Date(ms2)) % 24; if(h<7 || h>=20) out.push(['🌙', r.candidate+' is outside business hours there', (r.country||'USA')+' local time is about '+(h%12||12)+(h>=12?' PM':' AM')+'.']); }catch(x){} } }
+    });
+    var H = hist(); if(H){ var seen = {}; cur.forEach(function(r){ if(r.woi) return; var k = nk(r.candidate)+'|'+ck(r.company)+'|'+String(r.round||'').toLowerCase(); if(seen[k]) return; seen[k] = 1;
+      var prev = H.filter(function(h){ return h && h._date && h._date<state.date && !h.woi && !h.status && (nk(h.candidate)+'|'+ck(h.company)+'|'+String(h.round||'').toLowerCase())===k; })[0];
+      if(prev) out.push(['🔁', r.candidate+' already had this round', (r.company||'')+' · '+(r.round||'')+' on '+prev._date+'.']); }); }
+    return out.slice(0, 12);
+  }
+  var bypass = false;
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('#runImport'); if(!b || bypass) return;
+    var iss = []; try{ iss = importIssues(); }catch(x){ console.warn('d33 check', x); }
+    if(!iss.length) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    var el = ov('d33Chk', 'Check before adding', iss.length+' thing'+(iss.length===1?'':'s')+' to look at',
+      '<div class="d27-list">'+iss.map(function(i){ return '<div class="d27-row" style="cursor:default"><span class="t">'+i[0]+'</span><span class="n"><b>'+esc(i[1])+'</b><small style="white-space:normal">'+esc(i[2])+'</small></span></div>'; }).join('')+'</div><div class="d27-actions"><button type="button" class="d27-btn" data-d33addany>Add anyway</button><button type="button" class="d27-btn ghost" data-d33x>Go back and edit</button></div>');
+    el.addEventListener('click', function(ev){ if(ev.target.closest('[data-d33addany]')){ closeOv(el); bypass = true; var rb = document.getElementById('runImport'); if(rb) rb.click(); setTimeout(function(){ bypass = false; }, 400); } });
+  }, true);
+
+  /* ================= nudges + install ================= */
+  var pn = window.d28Nudges;
+  window.d28Nudges = function(){
+    var base = []; try{ base = pn ? pn() : []; }catch(e){}
+    var ex = [];
+    try{ if(nowBd()>=1260 && !LS.g('cd.wrap.'+state.date,'')) ex.push({ic:'🌙', t:'End-of-day wrap is ready', s:'open 🧰 Tools → End-of-day wrap', tool:'wrap'}); }catch(e){}
+    return base.concat(ex).slice(0, 9);
+  };
+  var rt = 0;
+  function install(){
+    if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,300); }
+    var o = window.render;
+    window.render = function(){ var r = o.apply(this, arguments); afterRender(); setTimeout(checkLeft, 1200); return r; };
+    setInterval(function(){ try{ nextCard(); }catch(e){} }, 30000);
+    setInterval(function(){ saveSeen(true); }, 20000);
+    document.addEventListener('visibilitychange', function(){ if(document.hidden) saveSeen(true); else { seenChecked = false; setTimeout(checkLeft, 800); } });
+    addEventListener('pagehide', function(){ saveSeen(true); });
+    var kick = function(){ ensureHist(function(){ buildRel(); decorate(); }); };
+    setTimeout(function(){ if('requestIdleCallback' in window) requestIdleCallback(kick, {timeout:8000}); else kick(); }, 6000);
+    setInterval(function(){ if(Date.now()-relAt > 600000) ensureHist(function(){ buildRel(); decorate(); }); }, 120000);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();
