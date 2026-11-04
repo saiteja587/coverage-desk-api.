@@ -1525,3 +1525,18 @@ button.d27-row{width:100%;text-align:left;font:inherit;color:inherit}
 #d30Wrap .d30-i .ic{font-size:20px;line-height:1}#d30Wrap .d30-i small{font-size:9px;color:var(--muted);line-height:1}
 #d30Wrap .d30-i:active{background:color-mix(in srgb,var(--teal) 25%,var(--surface))}
 body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-open #d30Orb{opacity:0;pointer-events:none}
+
+/* ===== d32: info popups, pins, phone info chips ===== */
+#d20Hist,#d31Cl,#d32Pop{position:fixed}
+[data-d32pin]{position:absolute;top:6px;right:8px;border:0;background:transparent;font-size:14px;cursor:pointer;opacity:.55;padding:4px;line-height:1}
+[data-d32pin]:hover{opacity:1}
+#d32Pins{position:fixed;right:16px;bottom:16px;z-index:100005;display:flex;flex-direction:column;gap:10px;max-width:min(430px,92vw);max-height:80vh;overflow:auto;pointer-events:none}
+.d32-pin{position:relative;pointer-events:auto;padding:12px 34px 12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--teal,#2dd4bf);box-shadow:0 14px 40px -10px rgba(0,0,0,.6)}
+.d32-pin-x{position:absolute;top:6px;right:8px;border:0;background:transparent;color:inherit;opacity:.6;cursor:pointer;font-size:13px;padding:4px}
+.d32-pin-in{position:static!important;min-width:0!important;max-width:none!important;padding:0!important;border:0!important;box-shadow:none!important;background:transparent!important}
+.d32-info{margin:10px 0}.d32-it{font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.d32-chips{display:flex;flex-wrap:wrap;gap:7px}
+.d32-chips button{min-height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:600 12.5px var(--sans,inherit);cursor:pointer}
+.d32-chips button:active{background:color-mix(in srgb,var(--teal) 25%,var(--surface))}
+.d32-body{color:var(--text)}
+.d22-cn,.d22-cs{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
