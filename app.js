@@ -16323,6 +16323,8 @@ function portalMatchSuppressedInfo(row){
   }
 
   appEl.addEventListener('touchstart', (e)=>{
+    // the ⓘ beside a name (phone) is a plain tap target — never start a swipe or long-press from it
+    try{ if(window.d36Ic && e.touches[0] && window.d36Ic(e.target, e.touches[0].clientX)) return; }catch(x){}
     const tr = e.target.closest('tbody tr[data-id]');
     // Single-cell note/detail rows (doubt, status, pin-detail) have
     // nothing to swipe — a whole call row is the unit being acted on.
