@@ -4991,6 +4991,7 @@ window.cdOwnerOf = function(r){
     go();
   }catch(e){} })();
 
+  window.d29RuleFor = function(c){ return RULES[ck(c)] || ''; };
   /* ---------- hub ---------- */
   var hub = null;
   function hubHtml(){
@@ -5154,4 +5155,82 @@ window.cdOwnerOf = function(r){
   }
   function install(){ if(typeof window.render!=='function' || !window.__d17vw){ return setTimeout(install,300); } build(); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', install); else install();
+})();
+
+/* ===== d31: hover a client name → every earlier call at that client (who, role, round, owner, outcome) ===== */
+;(function(){
+  if(window.__d31) return; window.__d31 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var pop = null, timer = null, curEl = null, seq = 0;
+  var canHover = function(){ try{ return window.matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){ return true; } };
+  function hide(){ clearTimeout(timer); timer = null; curEl = null; seq++; if(pop){ pop.remove(); pop = null; } }
+  function short(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'}); }catch(e){ return d||''; } }
+  var ST = {rescheduled:['🔁','Rescheduled'], cancelled:['✕','Cancelled'], not_responded:['☎','No response'], no_invite:['📨','No invite']};
+  function same(a, b){ try{ return normalizeCompanyKey(a)===normalizeCompanyKey(b) || fuzzyCompanyKeyMatch(a, b); }catch(e){ return false; } }
+  function collect(row, name){
+    var hist = null; try{ hist = (typeof _allRowsAcrossDatesCache!=='undefined') ? _allRowsAcrossDatesCache : null; }catch(e){}
+    var out = [];
+    if(hist){
+      hist.forEach(function(r){ if(!r || !r.candidate || r.woi || !r.company || !same(r.company, name)) return; try{ if(row && countryConflict(r.country, row.country)) return; }catch(e){} out.push({date:r._date||'', time:r.time||'', candidate:r.candidate, role:r.role||'', round:r.round||'', owner:(r.drivingPerson||r.assignee||''), status:r.status||''}); });
+    } else if(state.clientHistory){
+      state.clientHistory.forEach(function(en){ if(!same(en.company, name)) return; en.occurrences.forEach(function(o){ try{ if(row && countryConflict(o.country, row.country)) return; }catch(e){} out.push({date:o.date||'', time:o.time||'', candidate:o.candidate||'', role:o.role||'', round:o.round||'', owner:o.assignee||'', status:''}); }); });
+    }
+    /* today's list is always current */
+    (state.rows||[]).forEach(function(r){ if(!r.candidate || r.woi || !r.company || !same(r.company, name)) return; if(out.some(function(o){ return o.date===state.date && o.candidate===r.candidate && o.time===(r.time||'') && o.round===(r.round||''); })) return; out.push({date:state.date, time:r.time||'', candidate:r.candidate, role:r.role||'', round:r.round||'', owner:(r.drivingPerson||r.assignee||''), status:r.status||''}); });
+    var seen = {}; out = out.filter(function(o){ var k = [o.date,o.time,o.candidate.toLowerCase(),o.round].join('|'); if(seen[k]) return false; seen[k] = 1; return true; });
+    out.sort(function(a,b){ return b.date.localeCompare(a.date) || String(b.time).localeCompare(String(a.time)); });
+    return out;
+  }
+  function build(name, el, loading){
+    var tr = el.closest && el.closest('tr'), id = tr ? tr.getAttribute('data-id') : '', row = null;
+    try{ row = (state.rows||[]).find(function(r){ return r.id===id; }); }catch(e){}
+    var L = collect(row, name), people = {}, bad = 0;
+    L.forEach(function(o){ people[o.candidate.trim().toLowerCase()] = 1; if(o.status) bad++; });
+    var h = '<div style="font-weight:700;font-size:13px">'+esc(name)+'</div>';
+    var rule = ''; try{ rule = window.d29RuleFor ? window.d29RuleFor(name) : ''; }catch(e){}
+    if(rule) h += '<div style="margin:6px 0;padding:7px 10px;border-radius:9px;border:1px solid rgba(245,185,66,.6);background:rgba(245,185,66,.13);font-size:12px;line-height:1.4"><b>📌 Client rule</b><br>'+esc(rule)+'</div>';
+    if(!L.length) return h + '<div style="opacity:.75;font-size:12px;margin-top:4px">'+(loading?'Loading earlier calls…':'No calls on file for this client.')+'</div>';
+    h += '<div style="opacity:.75;font-size:11.5px;margin:3px 0 6px">'+L.length+' call'+(L.length===1?'':'s')+' · '+Object.keys(people).length+' candidate'+(Object.keys(people).length===1?'':'s')+(bad?' · '+bad+' not completed':'')+' · newest first'+(loading?' · loading…':'')+'</div>';
+    h += '<div style="max-height:min(60vh,420px);overflow:auto;padding-right:4px"><div style="display:grid;grid-template-columns:auto minmax(0,1.2fr) minmax(0,1.4fr) auto auto;gap:3px 12px;font-size:12.5px;align-items:baseline">';
+    var me = row ? (row.candidate||'').trim().toLowerCase() : '';
+    L.forEach(function(o){
+      var mine = me && o.candidate.trim().toLowerCase()===me, bg = mine ? 'background:rgba(80,200,160,.14);border-radius:6px;' : '';
+      var st = o.status && ST[o.status] ? ' <span style="color:var(--amber,#e5b045)" title="'+esc(ST[o.status][1])+'">'+ST[o.status][0]+'</span>' : '';
+      h += '<span style="white-space:nowrap;opacity:.8;'+bg+'">'+esc(short(o.date))+(o.date===state.date?' · today':'')+'</span>'
+        + '<span style="min-width:0;overflow-wrap:anywhere;'+bg+'"><b>'+esc(o.candidate)+'</b>'+st+'</span>'
+        + '<span style="min-width:0;overflow-wrap:anywhere;opacity:.8;'+bg+'">'+esc(o.role||'—')+'</span>'
+        + '<span style="white-space:nowrap;opacity:.85;'+bg+'">'+esc(o.round)+'</span>'
+        + '<span style="white-space:nowrap;'+bg+'">'+(o.owner?esc(o.owner):'<span style="opacity:.5">—</span>')+'</span>';
+    });
+    return h + '</div></div>';
+  }
+  function show(el){
+    var name = (el.value||'').trim(); if(name.length<2) return;
+    hide(); curEl = el; var my = ++seq;
+    pop = document.createElement('div'); pop.id = 'd31Cl';
+    pop.style.cssText = 'position:fixed;z-index:100010;max-width:min(680px,94vw);min-width:320px;padding:12px 14px;border-radius:12px;background:var(--surface,#1c2230);color:var(--text,#fff);border:1px solid var(--border,#333);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);pointer-events:auto;font-family:inherit';
+    var cached = false; try{ cached = !!_allRowsAcrossDatesCache; }catch(e){}
+    pop.innerHTML = build(name, el, !cached);
+    document.body.appendChild(pop); place(el);
+    if(!cached && typeof fetchAllRowsAcrossDates==='function'){
+      fetchAllRowsAcrossDates().then(function(){ if(my===seq && pop && curEl===el){ pop.innerHTML = build(name, el, false); place(el); } }).catch(function(){});
+    }
+  }
+  function place(el){
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth-pw-8))+'px';
+    var top = r.bottom+6; if(top+ph > innerHeight-8) top = Math.max(8, r.top-ph-6); pop.style.top = top+'px';
+  }
+  var SEL = 'input.cell-input[data-field="company"]';
+  document.addEventListener('mouseover', function(e){
+    if(!canHover()) return; var el = e.target && e.target.closest ? e.target.closest(SEL) : null; if(!el) return;
+    if(el===curEl && pop) return; clearTimeout(timer); timer = setTimeout(function(){ try{ show(el); }catch(x){} }, 350);
+  }, true);
+  document.addEventListener('mouseout', function(e){
+    var el = e.target && e.target.closest ? e.target.closest(SEL) : null;
+    if(el){ var to = e.relatedTarget; if(to && (el.contains(to) || (pop && pop.contains(to)))) return; clearTimeout(timer); setTimeout(function(){ if(pop && !pop.matches(':hover') && document.activeElement!==el && !el.matches(':hover')) hide(); }, 160); }
+    else if(pop && e.target.closest && e.target.closest('#d31Cl')){ var t2 = e.relatedTarget; if(!t2 || !(pop.contains(t2) || (curEl && curEl.contains(t2)))) setTimeout(function(){ if(pop && !pop.matches(':hover') && curEl && !curEl.matches(':hover')) hide(); }, 160); }
+  }, true);
+  ['focusin','keydown','mousedown','touchstart','scroll'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(pop && e.target && e.target.nodeType===1 && pop.contains(e.target)) return; hide(); }, true); });
+  window.addEventListener('blur', hide);
 })();
