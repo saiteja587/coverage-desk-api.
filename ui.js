@@ -5608,6 +5608,7 @@ window.cdOwnerOf = function(r){
     if(n.classList.contains('m-l2') && !n.textContent.trim()) return null;
     return { kind: (n.classList.contains('d22-cn') || n.classList.contains('m-l1')) ? 'cand' : 'client', id: card ? card.getAttribute('data-d22open') : tr.getAttribute('data-id') };
   }
+  window.d36Ic = icHit;
   function icOpen(h){ lpFired = Date.now(); clearTimeout(lp); openInfo(h.kind, rowById(h.id)); }
   document.addEventListener('touchstart', function(e){ var q = e.touches && e.touches[0]; ihit = q ? icHit(e.target, q.clientX) : null; if(ihit){ ihit.t0 = Date.now(); lpFired = ihit.t0; clearTimeout(lp); } }, {capture:true, passive:true});
   document.addEventListener('touchend', function(e){
