@@ -6592,7 +6592,8 @@ window.cdOwnerOf = function(r){
     var b = el.querySelector('.d38-body'); if(!b) return;
     var h = '';
     if(S.err){
-      h = '<div class="d27-empty">'+esc(S.err)+'</div><button type="button" class="d27-btn" data-d38="retry">Try again</button>';
+      h = '<div class="d27-empty">'+esc(S.err)+'</div><button type="button" class="d27-btn" data-d38="retry">Try again</button>'
+        + '<p class="d29-p">If you know a table name, open it directly:</p><div class="d38-bar"><input data-d38m placeholder="table name, e.g. incentives" autocomplete="off"><button type="button" class="d27-btn" data-d38="manual">Open</button></div>';
       if(/not connected|not_configured/i.test(S.err)) h = '<div class="d27-empty">TTOP is not connected yet.</div><p class="d29-p">Add <b>TTOP_SUPABASE_URL</b> and <b>TTOP_SUPABASE_KEY</b> in Vercel → Settings → Environment Variables, then redeploy.</p>';
       b.innerHTML = h; return;
     }
@@ -6653,7 +6654,7 @@ window.cdOwnerOf = function(r){
     el.addEventListener('click', function(e){
       var t = e.target;
       if(t===el || (t.closest && t.closest('[data-d38x]'))) return close();
-      var a = t.closest && t.closest('[data-d38]'); if(a){ var k = a.getAttribute('data-d38'); if(k==='retry') boot(); else if(k==='reload') load(false); else if(k==='more') load(true); else if(k==='back') paint(); return; }
+      var a = t.closest && t.closest('[data-d38]'); if(a){ var k = a.getAttribute('data-d38'); if(k==='retry') boot(); else if(k==='reload') load(false); else if(k==='more') load(true); else if(k==='back') paint(); else if(k==='manual'){ var mi = el.querySelector('[data-d38m]'); var nm = mi && mi.value.trim(); if(/^[A-Za-z0-9_]+$/.test(nm||'')){ S.tables=[{name:nm,columns:[]}]; S.table=nm; S.err=''; S.q=''; load(false); } } return; }
       var r = t.closest && t.closest('[data-d38r]'); if(r) detail(+r.getAttribute('data-d38r'));
     });
     el.addEventListener('change', function(e){ if(e.target.hasAttribute('data-d38s')){ S.table = e.target.value; LS(LK,S.table); S.q = ''; load(false); } });
