@@ -4375,7 +4375,8 @@ window.cdOwnerOf = function(r){
       '◀ Back gesture now closes every tool sheet, not just the older panels',
       '🔕 Quiet alerts — quiet hours, daily limit, skip calls already confirmed',
       '↻ Try-again buttons when a tool can’t load',
-      '⚡ Faster start — the Excel library no longer blocks the page from showing'
+      '⚡ Faster start — the Excel library no longer blocks the page from showing',
+      'ⓘ Phone — tap the ⓘ beside a candidate or client name to see the same details desktop shows on hover'
     ]],
     ['V2.6','2026-11-05','Notifications that act',[
       '🔔 Notification buttons — Confirmed / No-show / Rescheduled right from the alert; the call updates without opening the app',
@@ -5575,6 +5576,28 @@ window.cdOwnerOf = function(r){
   }, {passive:true, capture:true});
   ['click','pointerup','touchend'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(Date.now()-lpFired < 700 && e.target.closest && e.target.closest('.d22-cn, .d22-cs, [data-d22open]')){ e.stopPropagation(); e.preventDefault(); } }, true); });
   document.addEventListener('contextmenu', function(e){ if(e.target.closest && e.target.closest('.d22-cn, .d22-cs')) e.preventDefault(); }, true);
+
+  /* the visible ⓘ at the right end of a name on a phone card — caught on touchend so the card underneath does not open too */
+  var IC_SEL = '.d22-cn, .d22-cs, td.m-sum .m-l1, td.m-sum .m-l2', ihit = null;
+  function icHit(t, x){
+    if(!t || !t.closest || !window.matchMedia('(max-width:759px)').matches) return null;
+    var n = t.closest(IC_SEL); if(!n) return null;
+    var card = n.closest('[data-d22open]'), tr = n.closest('tr[data-id]'); if(!card && !tr) return null;
+    var r = n.getBoundingClientRect(); if(x < r.right - 40) return null;
+    if(n.classList.contains('m-l2') && !n.textContent.trim()) return null;
+    return { kind: (n.classList.contains('d22-cn') || n.classList.contains('m-l1')) ? 'cand' : 'client', id: card ? card.getAttribute('data-d22open') : tr.getAttribute('data-id') };
+  }
+  function icOpen(h){ lpFired = Date.now(); clearTimeout(lp); openInfo(h.kind, rowById(h.id)); }
+  document.addEventListener('touchstart', function(e){ var q = e.touches && e.touches[0]; ihit = q ? icHit(e.target, q.clientX) : null; if(ihit) ihit.t0 = Date.now(); }, {capture:true, passive:true});
+  document.addEventListener('touchend', function(e){
+    if(!ihit) return; var h = ihit; ihit = null; if(Date.now() - h.t0 > 500) return;
+    e.preventDefault(); e.stopPropagation(); icOpen(h);
+  }, true);
+  document.addEventListener('touchmove', function(){ ihit = null; }, {capture:true, passive:true});
+  ['pointerup','mouseup','click'].forEach(function(ev){ document.addEventListener(ev, function(e){
+    if(Date.now() - lpFired < 700 && e.target.closest && e.target.closest(IC_SEL+', [data-d22open], tr[data-id]')){ e.stopPropagation(); e.preventDefault(); return; }
+    if(ev==='click' && e.pointerType!=='touch'){ var h = icHit(e.target, e.clientX); if(h){ e.preventDefault(); e.stopPropagation(); icOpen(h); } }
+  }, true); });
 
   var curId = null, o23 = window.d23Open; if(o23) window.d23Open = function(id){ curId = id; return o23.apply(this, arguments); };
   var CH = [['cand','👤','Candidate'],['client','🏢','Client'],['owner','🙋','Owner’s day'],['time','🕒','Time zones'],['country','🌍','Country'],['role','🎯','Role'],['round','🪜','Rounds'],['dur','⏱','Duration'],['status','ℹ️','Status'],['conflict','⚠','Conflict']];
