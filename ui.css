@@ -1583,3 +1583,14 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 .d35-row b{display:block;font-size:14px}.d35-row small{display:block;font-size:12px;color:var(--muted)}
 .d35-row input[type=checkbox]{width:22px;height:22px;flex:none}.d35-row input[type=number],.d35-two input{min-height:40px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:0 8px;font-size:15px;box-sizing:border-box}
 .d35-two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.d35-two label{font-size:12px;color:var(--muted);display:grid;gap:4px}.d35-two input{width:100%}
+
+/* live-feed toasts on desktop: safe base look (zero specificity, so any fuller rule elsewhere still wins) */
+@media(min-width:760px){
+:where(#liveFeedToasts){position:fixed;right:16px;bottom:72px;z-index:9400;display:flex;flex-direction:column;gap:8px;width:min(380px,calc(100vw - 32px));pointer-events:none}
+:where(#liveFeedToasts .lf-toast){pointer-events:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 32px -10px rgba(0,0,0,.6);padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px}
+:where(#liveFeedToasts .lf-item-main){display:flex;flex-direction:column;gap:2px}
+:where(#liveFeedToasts .lf-title){font-weight:700;font-size:13.5px}
+:where(#liveFeedToasts .lf-toast button){background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:6px 12px;font-size:12px;cursor:pointer}
+:where(#liveFeedBell){position:fixed;right:16px;bottom:16px;z-index:9300;min-height:40px;padding:0 14px;border-radius:99px;background:var(--surface);color:var(--text);border:1px solid var(--border);box-shadow:0 8px 24px -10px rgba(0,0,0,.6);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+:where(#liveFeedPanel){position:fixed;right:16px;bottom:64px;z-index:9350;width:min(400px,calc(100vw - 32px));max-height:70vh;overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 16px 40px -12px rgba(0,0,0,.65);padding:10px}
+}
