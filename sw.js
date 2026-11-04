@@ -10,7 +10,7 @@
 // Bump CACHE whenever you want to force every device to drop old cached
 // files (rare — the network-first strategy already means this normally
 // isn't needed).
-const CACHE = 'coverage-desk-v6';
+const CACHE = 'coverage-desk-v7';
 const APP_SHELL = [
   './',
   './index.html',
@@ -73,6 +73,8 @@ self.addEventListener('push', (event) => {
     timestamp: Date.now(),
     data: data.data || {},
   };
+  const acts = data.actions || cdActionsFor(options.data);
+  if(acts && acts.length) options.actions = acts;
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
@@ -81,6 +83,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const d = event.notification.data || {};
+  if(event.action && event.action.indexOf('st:') === 0){ event.waitUntil(cdStatusFromNotification(d, event.action.slice(3))); return; }
   const q = d.kind === 'gdoc' ? '?cd_open=gdoc' : (d.date || d.candidate) ? '?cd_date=' + encodeURIComponent(d.date || '') + '&cd_cand=' + encodeURIComponent(d.candidate || '') : '';
   event.waitUntil((async () => {
     const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -102,3 +105,93 @@ self.addEventListener('notificationclick', (event) => {
     if(self.clients.openWindow) return self.clients.openWindow('./' + q);
   })());
 });
+
+
+// ---------- One-tap status straight from a notification ----------
+// A notification about a call gets Confirmed / No-show / Rescheduled buttons. Tapping one updates the
+// call right here in the background (same endpoints the app itself uses) — the app does not have to open.
+// The page leaves its sign-in details in IndexedDB (see ui.js, layer d34) so this worker can make the call.
+const CD_ACTIONS = [
+  { action: 'st:confirmed', title: '\u2705 Confirmed' },
+  { action: 'st:not_responded', title: '\u260E No-show' },
+  { action: 'st:rescheduled', title: '\uD83D\uDD01 Rescheduled' },
+];
+function cdActionsFor(d){
+  return (d && d.date && (d.id || d.candidate) && d.kind !== 'gdoc') ? CD_ACTIONS : [];
+}
+function cdIdb(){
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open('cd-sw', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('kv'); };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function cdGetAuth(){
+  try{
+    const db = await cdIdb();
+    return await new Promise((resolve) => {
+      const q = db.transaction('kv').objectStore('kv').get('auth');
+      q.onsuccess = () => resolve(q.result || null);
+      q.onerror = () => resolve(null);
+    });
+  }catch(e){ return null; }
+}
+const cdNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+async function cdApi(auth, resource, date, body){
+  const headers = { 'Content-Type': 'application/json' };
+  if(auth.pw){ headers['x-admin-password'] = auth.pw; headers['x-password'] = auth.pw; }
+  if(auth.user) headers['x-username'] = auth.user;
+  const url = String(auth.base || '').replace(/\/$/, '') + '/api/data?resource=' + resource + '&date=' + encodeURIComponent(date);
+  const resp = await fetch(url, body ? { method: 'POST', headers, body: JSON.stringify(body) } : { headers });
+  if(!resp.ok) throw new Error(resource + ' ' + resp.status);
+  return resp.json();
+}
+// Returns { ok, text }. Never throws.
+async function cdApplyStatus(d, kind, auth){
+  try{
+    if(!auth || !auth.base) return { ok: false, text: 'Open the app once while signed in, then try again.' };
+    const date = d.date;
+    // find the call id (the push carries it; a reminder may only know the candidate name)
+    let id = d.id, name = d.candidate || '';
+    if(!id || !name){
+      const calls = await cdApi(auth, 'calls', date);
+      const rows = calls.rows || [];
+      let hit = id ? rows.find((r) => String(r.id) === String(id)) : null;
+      if(!hit && name){ const k = cdNorm(name); const m = rows.filter((r) => cdNorm(r.candidate) === k && !r.woi); hit = m.length === 1 ? m[0] : (m.find((r) => !r.status) || null); }
+      if(!hit) return { ok: false, text: 'Could not find that call on ' + date + '.' };
+      id = hit.id; name = hit.candidate || name;
+    }
+    if(kind === 'confirmed'){
+      const nd = await cdApi(auth, 'notes', date);
+      const rows = nd.rows || [];
+      const nid = date + '-confirm-ids';
+      let e = rows.find((n) => n && n.id === nid), m = {};
+      try{ m = e ? (JSON.parse(e.text) || {}) : {}; }catch(x){ m = {}; }
+      m[id] = 'confirmed';
+      if(e) e.text = JSON.stringify(m); else rows.push({ id: nid, text: JSON.stringify(m) });
+      await cdApi(auth, 'notes', date, { date, rows });
+      return { ok: true, text: name + ' marked as confirmed.' };
+    }
+    const sd = await cdApi(auth, 'call_status', date);
+    const list = (sd.rows || []).filter((r) => String(r.callId) !== String(id));
+    const reason = 'Marked from the notification';
+    list.push({ callId: id, status: kind, reason, statusFields: [{ label: 'Reason', value: reason }] });
+    await cdApi(auth, 'call_status', date, { date, rows: list });
+    return { ok: true, text: name + ' marked as ' + (kind === 'not_responded' ? 'no-show' : 'rescheduled') + '.' };
+  }catch(e){
+    return { ok: false, text: 'Could not update (' + (e && e.message ? e.message : 'network') + '). Tap the alert to open the app.' };
+  }
+}
+async function cdStatusFromNotification(d, kind){
+  const res = await cdApplyStatus(d, kind, await cdGetAuth());
+  try{
+    await self.registration.showNotification(res.ok ? '\u2713 Done' : 'Not updated', {
+      body: res.text, tag: 'cd-status-result', icon: 'icon-192.png', badge: 'icon-192.png', data: res.ok ? {} : d,
+    });
+    if(res.ok) setTimeout(async () => { try{ (await self.registration.getNotifications({ tag: 'cd-status-result' })).forEach((n) => n.close()); }catch(e){} }, 6000);
+  }catch(e){}
+  if(res.ok){
+    try{ (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).forEach((c) => c.postMessage({ type: 'cd-refresh', date: d.date })); }catch(e){}
+  }
+}
