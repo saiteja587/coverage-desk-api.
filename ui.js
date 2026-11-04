@@ -4356,7 +4356,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.6', SEEN_KEY = 'cd.v2.seen';
+  var VERSION = 'V2.6', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -5078,7 +5078,7 @@ window.cdOwnerOf = function(r){
     }
     if((b = t.closest('[data-d29link]'))){ copy(location.origin+location.pathname+'?handler='+encodeURIComponent(b.getAttribute('data-d29link')), b); return; }
   }
-  function openHub(){ if(hub) closeOv(hub); hub = ov('d29Hub', 'Desk tools', state.date+' · V2.2', hubHtml()); hub.addEventListener('click', function(e){
+  function openHub(){ if(hub) closeOv(hub); hub = ov('d29Hub', 'Desk tools', state.date+' · '+(window.__cdVer||'V2.6'), hubHtml()); hub.addEventListener('click', function(e){
     var t = e.target.closest && e.target.closest('[data-d29t]'); if(t){ openTool(t.getAttribute('data-d29t')); return; }
     var o = e.target.closest && e.target.closest('[data-d29open]'); if(o){ closeOv(hub); hub = null; if(window.d23Open) window.d23Open(o.getAttribute('data-d29open')); }
   }); }
