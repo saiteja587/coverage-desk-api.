@@ -1559,3 +1559,10 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 .d33-relnote{padding:8px 11px;border-radius:10px;border:1px solid #ff6b6b;background:color-mix(in srgb,#ff6b6b 14%,var(--surface));font-size:12.5px;line-height:1.4}
 
 @media (max-width:759px){.d33-bar{bottom:84px}}
+
+/* ===== d34 ===== */
+.d34-big{display:flex;flex-direction:column;gap:2px;margin:12px 0}
+.d34-big small{font:700 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.d34-big b{font-size:34px;line-height:1.1;color:var(--teal)}.d34-big span{font-size:13px;color:var(--muted)}
+.d29-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px;font-size:12px}
+.d29-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
