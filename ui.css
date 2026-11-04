@@ -1571,3 +1571,15 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 .d27-card{max-height:calc(100vh - 90px);max-height:calc(100dvh - 90px);min-height:0}
 .d27-card>.d29-body,.d27-card>.d27-body,.d27-card>.d34-body{overflow-y:auto;overflow-x:hidden;flex:1 1 auto;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 @media(min-width:760px){.d27-ov{align-items:center;padding:20px 20px 70px}.d27-card{border-radius:24px}}
+
+/* ===== d35 ===== */
+.d35-bar{margin:2px 0 10px;display:grid;gap:8px}
+.d35-q{width:100%;box-sizing:border-box;min-height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:0 14px;font-size:15px}
+.d35-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.d35-chips small{font:700 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.d35-chip{min-height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:600 12.5px var(--sans,inherit);cursor:pointer}
+.d29-tile{position:relative}.d35-star{position:absolute;top:8px;right:10px;font-style:normal;font-size:18px;line-height:1;color:var(--muted);padding:6px;margin:-6px;cursor:pointer}
+.d35-fav .d35-star{color:#ffd166}.d35-fav{border-color:rgba(255,209,102,.45)}
+.d35-row{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);margin-bottom:8px}
+.d35-row b{display:block;font-size:14px}.d35-row small{display:block;font-size:12px;color:var(--muted)}
+.d35-row input[type=checkbox]{width:22px;height:22px;flex:none}.d35-row input[type=number],.d35-two input{min-height:40px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:0 8px;font-size:15px;box-sizing:border-box}
+.d35-two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.d35-two label{font-size:12px;color:var(--muted);display:grid;gap:4px}.d35-two input{width:100%}
