@@ -1594,3 +1594,16 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 :where(#liveFeedBell){position:fixed;right:16px;bottom:16px;z-index:9300;min-height:40px;padding:0 14px;border-radius:99px;background:var(--surface);color:var(--text);border:1px solid var(--border);box-shadow:0 8px 24px -10px rgba(0,0,0,.6);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 :where(#liveFeedPanel){position:fixed;right:16px;bottom:64px;z-index:9350;width:min(400px,calc(100vw - 32px));max-height:70vh;overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 16px 40px -12px rgba(0,0,0,.65);padding:10px}
 }
+
+/* phone: a visible ⓘ at the right end of the candidate and client names (tap = the same details desktop shows on hover) */
+@media(max-width:759px){
+  .d22-card .d22-cn,.d22-card .d22-cs{position:relative;padding-right:34px}
+  .d22-card .d22-cs:empty{padding-right:0}
+  .d22-card .d22-cn::after,.d22-card .d22-cs:not(:empty)::after{content:'ⓘ';position:absolute;right:0;top:50%;transform:translateY(-50%);width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:17px;line-height:1;color:var(--teal);opacity:.85;background:color-mix(in srgb,var(--teal) 10%,transparent);border-radius:50%}
+  .d22-card .d22-cs:not(:empty)::after{width:26px;height:26px;font-size:15px}
+}
+@media(max-width:759px){
+  td.m-sum .m-l1,td.m-sum .m-l2{position:relative;padding-right:38px;box-sizing:border-box;min-height:30px}
+  td.m-sum .m-l1::after,td.m-sum .m-l2:not(:empty)::after{content:'ⓘ';position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:17px;line-height:1;color:var(--teal);background:color-mix(in srgb,var(--teal) 10%,transparent);border-radius:50%;opacity:.9}
+  td.m-sum .m-l2:not(:empty)::after{width:26px;height:26px;font-size:15px}
+}
