@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.7', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V2.8', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,11 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V2.8','2026-11-05','Edit from the coverage chart',[
+      '📊 Hover a bar in “Coverage by half hour” — the pop-up now lists every call in that slot',
+      '🕒 Change a call’s time right there (type 9:45 PM and press Enter) and reassign from the same pop-up',
+      '📱 On a phone, tap a bar to open the same editor as a sheet'
+    ]],
     ['V2.7','2026-11-05','Refinements',[
       '🔎 Tools hub — search box, ★ pins that stay on top, and a Recent row for one-tap return',
       '⌨ Shortcuts — T Tools, N prep the next call, / quick search, Esc closes any sheet',
@@ -6418,4 +6423,127 @@ window.cdOwnerOf = function(r){
     el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d35x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
     return true;
   };
+})();
+
+/* ===== d37: V2.8 — edit calls straight from the "Coverage by half hour" bars (hover on desktop, tap on phone) ===== */
+;(function(){
+  if(window.__d37) return; window.__d37 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var canHover = function(){ try{ return window.matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){ return true; } };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var toast = function(m){ try{ if(window.d2Toast) window.d2Toast(m,{ms:3500}); }catch(e){} };
+  var bucketOf = function(t){ try{ var m = timeToMinutes(t); return m===9999 ? '?' : String(Math.floor(m/30)); }catch(e){ return '?'; } };
+  var ownerName = function(r){ try{ var o = window.cdOwnerOf ? window.cdOwnerOf(r) : null; return o && o.name ? o.name : (r.assignee||''); }catch(e){ return r.assignee||''; } };
+  var pop = null, cur = null, showT = 0, hideT = 0, titleBar = null;
+
+  function normTime(v){
+    v = String(v||'').trim().toLowerCase().replace(/\./g,':').replace(/\s+/g,'');
+    var m = /^(\d{1,2})(?::?(\d{2}))?(am|pm|a|p)?$/.exec(v); if(!m) return null;
+    var h = +m[1], mi = m[2] ? +m[2] : 0, ap = m[3];
+    if(mi>59 || h>24) return null;
+    if(!ap){ if(h>=13 && h<=23){ ap = 'pm'; h -= 12; } else if(h===0){ ap = 'am'; h = 12; } else ap = 'pm'; }
+    else ap = ap[0]==='a' ? 'am' : 'pm';
+    if(h<1 || h>12) return null;
+    return h+':'+(mi<10?'0':'')+mi+' '+ap.toUpperCase();
+  }
+  function listFor(b){ return (state.rows||[]).filter(function(r){ return r && r.candidate && bucketOf(r.time)===b; }).sort(function(x,y){ var a = timeToMinutes(x.time), c = timeToMinutes(y.time); return (a-c) || String(x.candidate).localeCompare(String(y.candidate)); }); }
+  function label(b){ try{ return b==='?' ? 'Unknown time' : halfHourBucketLabel(+b*30); }catch(e){ return b; } }
+
+  function html(){
+    var L = listFor(cur.b), ed = admin();
+    var h = '<div class="d37-hd"><div><small>COVERAGE · IST</small><b>'+esc(label(cur.b))+'</b> <span>'+L.length+' call'+(L.length===1?'':'s')+'</span></div><button type="button" class="d37-x" data-d37x aria-label="Close">✕</button></div>';
+    var sm = (cur.title||'').split('\n').filter(function(x){ return /^(HYD|Pradeep|Development|Marketing)/.test(x); });
+    if(sm.length) h += '<div class="d37-sm">'+sm.map(function(x){ return '<span>'+esc(x)+'</span>'; }).join('')+'</div>';
+    h += '<div class="d37-l">'+(L.length ? L.map(function(r){
+      var own = ownerName(r);
+      return '<div class="d37-r'+(r.woi?' woi':'')+'" data-id="'+esc(r.id)+'"><div class="d37-n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company, r.round, r.woi?'WOI':''].filter(Boolean).join(' · '))+'</small></div>'
+        + (ed ? '<input class="d37-t" data-d37t value="'+esc(r.time||'')+'" aria-label="Time" inputmode="text" autocomplete="off">' : '<span class="d37-t ro">'+esc(r.time||'')+'</span>')
+        + (ed ? '<button type="button" class="d37-a'+(own?'':' none')+'" data-d37a>'+esc(own||'Assign')+' ▾</button>' : '<span class="d37-a ro">'+esc(own||'—')+'</span>')+'</div>';
+    }).join('') : '<div class="d27-empty">No calls in this slot any more.</div>')+'</div>';
+    h += '<div class="d37-ft">'+(ed ? 'Change the time and press Enter, or tap the name to reassign.' : 'View only.')+' <button type="button" class="d37-jump" data-d37j>Jump to these calls</button></div>';
+    return h;
+  }
+  function paint(){ if(!pop || !cur) return; var act = document.activeElement, keep = act && pop.contains(act) && act.classList.contains('d37-t') ? act.closest('.d37-r').getAttribute('data-id') : null; pop.innerHTML = html(); if(keep){ var i = pop.querySelector('.d37-r[data-id="'+keep+'"] .d37-t'); if(i){ try{ i.focus(); }catch(e){} } } }
+
+  function place(bar){
+    var phone = !canHover() || (window.__d17vw||innerWidth)<760;
+    pop.classList.toggle('sheet', phone);
+    if(phone){ pop.style.left = pop.style.top = pop.style.right = ''; return; }
+    var r = bar.getBoundingClientRect(), w = 440;
+    pop.style.width = w+'px';
+    var left = Math.max(10, Math.min(innerWidth - w - 10, r.left + r.width/2 - w/2));
+    pop.style.left = left+'px';
+    var h = pop.offsetHeight, below = innerHeight - r.bottom - 14;
+    var top = (below >= Math.min(h, 260) || r.top < h+14) ? r.bottom + 10 : r.top - h - 10;
+    pop.style.top = Math.max(8, Math.min(innerHeight - h - 8, top))+'px';
+  }
+  function open(bar, mode){
+    var b = bar.getAttribute('data-bucket'); if(b==null) return;
+    var title = bar.getAttribute('title') || bar.getAttribute('data-d37title') || '';
+    if(bar.hasAttribute('title')){ bar.setAttribute('data-d37title', title); bar.removeAttribute('title'); titleBar = bar; }
+    cur = {b:b, bar:bar, title:title, mode:mode};
+    if(!pop){ pop = document.createElement('div'); pop.id = 'd37Pop'; pop.className = 'd37-pop'; document.body.appendChild(pop);
+      pop.addEventListener('mouseenter', function(){ clearTimeout(hideT); });
+      pop.addEventListener('mouseleave', function(){ if(cur && cur.mode==='hover') schedHide(); });
+      pop.addEventListener('click', onClick); pop.addEventListener('change', onChange); pop.addEventListener('keydown', onKey);
+    }
+    paint(); place(bar);
+    pop.classList.add('on');
+  }
+  function close(){ clearTimeout(showT); clearTimeout(hideT); if(pop){ pop.remove(); pop = null; } if(titleBar && titleBar.isConnected){ var t = titleBar.getAttribute('data-d37title'); if(t) titleBar.setAttribute('title', t); } titleBar = null; cur = null; document.body.classList.remove('d37-open'); }
+  function schedHide(){ clearTimeout(hideT); hideT = setTimeout(function(){ if(pop && pop.contains(document.activeElement) && document.activeElement.tagName==='INPUT') return; close(); }, 260); }
+
+  function applyTime(id, raw, input){
+    var r = (state.rows||[]).filter(function(x){ return String(x.id)===String(id); })[0]; if(!r) return;
+    var n = normTime(raw);
+    if(!n){ toast('Type a time like 9:45 PM'); if(input) input.value = r.time||''; return; }
+    if(n===r.time) return;
+    var old = r.time; r.time = n;
+    try{ markDirty(); }catch(e){}
+    try{ render(); }catch(e){}
+    toast(r.candidate+': '+old+' → '+n+(bucketOf(n)!==cur.b ? ' (moved out of this slot)' : ''));
+    paint(); if(cur) place(cur.bar);
+  }
+  function onChange(e){ var i = e.target.closest && e.target.closest('[data-d37t]'); if(i) applyTime(i.closest('.d37-r').getAttribute('data-id'), i.value, i); }
+  function onKey(e){ if(e.key==='Enter' && e.target.matches && e.target.matches('[data-d37t]')){ e.preventDefault(); applyTime(e.target.closest('.d37-r').getAttribute('data-id'), e.target.value, e.target); } if(e.key==='Escape'){ e.stopPropagation(); close(); } }
+  function onClick(e){
+    var t = e.target; if(!t.closest) return;
+    if(t.closest('[data-d37x]')){ close(); return; }
+    var a = t.closest('[data-d37a]'); if(a){ var id = a.closest('.d37-r').getAttribute('data-id'); if(window.d2OpenAssign) window.d2OpenAssign(id, a); return; }
+    if(t.closest('[data-d37j]')){ var b = cur && cur.b; close(); var row = document.querySelector('tr[data-bucket="'+(window.CSS&&CSS.escape?CSS.escape(b):b)+'"]'); if(row){ row.scrollIntoView({behavior:'smooth', block:'center'}); } return; }
+  }
+
+  /* desktop hover */
+  document.addEventListener('mouseover', function(e){
+    if(!canHover()) return; var t = e.target; if(!t || !t.closest) return;
+    var bar = t.closest('.hour[data-bucket]'); if(!bar) return;
+    clearTimeout(hideT); clearTimeout(showT);
+    if(cur && cur.bar===bar) return;
+    showT = setTimeout(function(){ open(bar, 'hover'); }, 220);
+  });
+  document.addEventListener('mouseout', function(e){
+    if(!canHover()) return; var t = e.target; if(!t || !t.closest) return;
+    var bar = t.closest('.hour[data-bucket]'); if(!bar) return;
+    clearTimeout(showT);
+    var to = e.relatedTarget; if(to && to.closest && (to.closest('#d37Pop') || to.closest('.hour[data-bucket]')===bar)) return;
+    if(cur && cur.mode==='hover') schedHide();
+  });
+  /* click on a bar keeps its old behaviour (jump) on desktop; on touch it opens the editor instead */
+  document.addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.closest) return;
+    var bar = t.closest('.hour[data-bucket]');
+    if(bar){ var touch = !canHover(); if(touch){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); open(bar, 'tap'); } else { close(); } return; }
+    if(pop && !t.closest('#d37Pop') && !t.closest('.d2-pop')) close();
+  }, true);
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && pop) close(); });
+  window.addEventListener('scroll', function(){ if(cur && cur.mode==='hover') close(); }, true);
+
+  /* keep the list honest when something else changes the calls (assigning from the picker, etc.) */
+  function hook(){
+    if(typeof window.render!=='function' || !window.__d17vw) return setTimeout(hook, 300);
+    var o = window.render, tm = 0;
+    window.render = function(){ var r = o.apply(this, arguments); if(pop && cur){ clearTimeout(tm); tm = setTimeout(function(){ if(!pop||!cur) return; var bar = document.querySelector('.hour[data-bucket="'+cur.b+'"]'); if(bar){ cur.bar = bar; if(bar.hasAttribute('title')){ cur.title = bar.getAttribute('title')||cur.title; bar.setAttribute('data-d37title', cur.title); bar.removeAttribute('title'); titleBar = bar; } } paint(); if(cur.bar) place(cur.bar); }, 60); } return r; };
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', hook); else hook();
+  window.d37Open = function(bar){ open(bar, 'tap'); };
 })();
