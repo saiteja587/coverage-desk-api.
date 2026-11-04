@@ -6434,7 +6434,7 @@ window.cdOwnerOf = function(r){
   var toast = function(m){ try{ if(window.d2Toast) window.d2Toast(m,{ms:3500}); }catch(e){} };
   var bucketOf = function(t){ try{ var m = timeToMinutes(t); return m===9999 ? '?' : String(Math.floor(m/30)); }catch(e){ return '?'; } };
   var ownerName = function(r){ try{ var o = window.cdOwnerOf ? window.cdOwnerOf(r) : null; return o && o.name ? o.name : (r.assignee||''); }catch(e){ return r.assignee||''; } };
-  var pop = null, cur = null, showT = 0, hideT = 0, titleBar = null;
+  var pop = null, cur = null, showT = 0, hideT = 0, titleBar = null, openAs = null;
 
   function normTime(v){
     v = String(v||'').trim().toLowerCase().replace(/\./g,':').replace(/\s+/g,'');
@@ -6449,6 +6449,17 @@ window.cdOwnerOf = function(r){
   function listFor(b){ return (state.rows||[]).filter(function(r){ return r && r.candidate && bucketOf(r.time)===b; }).sort(function(x,y){ var a = timeToMinutes(x.time), c = timeToMinutes(y.time); return (a-c) || String(x.candidate).localeCompare(String(y.candidate)); }); }
   function label(b){ try{ return b==='?' ? 'Unknown time' : halfHourBucketLabel(+b*30); }catch(e){ return b; } }
 
+  function picker(r){
+    var list = []; try{ list = window.d2Rank ? window.d2Rank(r) : []; }catch(e){}
+    var h = '<div class="d37-pk"><input class="d37-q" data-d37q placeholder="Search handler or team…" autocomplete="off">'
+      + '<div class="d37-pl">'
+      + (r.assignee ? '<button type="button" class="d37-p un" data-d37p="">✕ Unassign ('+esc(r.assignee)+')</button>' : '')
+      + list.map(function(x){
+        var flags = (x.absent?'<em class="bad">absent</em>':'')+(x.clash?'<em class="bad">clash</em>':'')+(x.learn>=2?'<em class="ok">★ usual</em>':'')+(x.prior?'<em class="ok">↻ before</em>':'');
+        return '<button type="button" class="d37-p'+(x.isTeam?' team':'')+'" data-d37p="'+esc(x.name)+'" data-s="'+esc((x.name+' '+(x.team||'')).toLowerCase())+'"><span class="d37-pn"><b>'+(x.isTeam?'◆ ':'')+esc(x.name)+'</b><small>'+esc(x.team||'')+'</small></span><span class="d37-pf">'+flags+'</span><span class="d37-pm">'+x.load+' call'+(x.load===1?'':'s')+'</span></button>';
+      }).join('')+'</div></div>';
+    return h;
+  }
   function html(){
     var L = listFor(cur.b), ed = admin();
     var h = '<div class="d37-hd"><div><small>COVERAGE · IST</small><b>'+esc(label(cur.b))+'</b> <span>'+L.length+' call'+(L.length===1?'':'s')+'</span></div><button type="button" class="d37-x" data-d37x aria-label="Close">✕</button></div>';
@@ -6458,9 +6469,10 @@ window.cdOwnerOf = function(r){
       var own = ownerName(r);
       return '<div class="d37-r'+(r.woi?' woi':'')+'" data-id="'+esc(r.id)+'"><div class="d37-n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company, r.round, r.woi?'WOI':''].filter(Boolean).join(' · '))+'</small></div>'
         + (ed ? '<input class="d37-t" data-d37t value="'+esc(r.time||'')+'" aria-label="Time" inputmode="text" autocomplete="off">' : '<span class="d37-t ro">'+esc(r.time||'')+'</span>')
-        + (ed ? '<button type="button" class="d37-a'+(own?'':' none')+'" data-d37a>'+esc(own||'Assign')+' ▾</button>' : '<span class="d37-a ro">'+esc(own||'—')+'</span>')+'</div>';
+        + (ed ? '<button type="button" class="d37-a'+(own?'':' none')+(openAs===String(r.id)?' on':'')+'" data-d37a>'+esc(own||'Assign')+' '+(openAs===String(r.id)?'▴':'▾')+'</button>' : '<span class="d37-a ro">'+esc(own||'—')+'</span>')
+        + (ed && openAs===String(r.id) ? picker(r) : '') + '</div>';
     }).join('') : '<div class="d27-empty">No calls in this slot any more.</div>')+'</div>';
-    h += '<div class="d37-ft">'+(ed ? 'Change the time and press Enter, or tap the name to reassign.' : 'View only.')+' <button type="button" class="d37-jump" data-d37j>Jump to these calls</button></div>';
+    h += '<div class="d37-ft">'+(ed ? 'Change the time and press Enter, or tap the name to reassign. Press Esc or ✕ to close.' : 'View only.')+' <button type="button" class="d37-jump" data-d37j>Jump to these calls</button></div>';
     return h;
   }
   function paint(){ if(!pop || !cur) return; var act = document.activeElement, keep = act && pop.contains(act) && act.classList.contains('d37-t') ? act.closest('.d37-r').getAttribute('data-id') : null; pop.innerHTML = html(); if(keep){ var i = pop.querySelector('.d37-r[data-id="'+keep+'"] .d37-t'); if(i){ try{ i.focus(); }catch(e){} } } }
@@ -6468,14 +6480,7 @@ window.cdOwnerOf = function(r){
   function place(bar){
     var phone = !canHover() || (window.__d17vw||innerWidth)<760;
     pop.classList.toggle('sheet', phone);
-    if(phone){ pop.style.left = pop.style.top = pop.style.right = ''; return; }
-    var r = bar.getBoundingClientRect(), w = 440;
-    pop.style.width = w+'px';
-    var left = Math.max(10, Math.min(innerWidth - w - 10, r.left + r.width/2 - w/2));
-    pop.style.left = left+'px';
-    var h = pop.offsetHeight, below = innerHeight - r.bottom - 14;
-    var top = (below >= Math.min(h, 260) || r.top < h+14) ? r.bottom + 10 : r.top - h - 10;
-    pop.style.top = Math.max(8, Math.min(innerHeight - h - 8, top))+'px';
+    pop.style.left = pop.style.top = pop.style.right = pop.style.width = '';   /* centred by CSS */
   }
   function open(bar, mode){
     var b = bar.getAttribute('data-bucket'); if(b==null) return;
@@ -6485,13 +6490,13 @@ window.cdOwnerOf = function(r){
     if(!pop){ pop = document.createElement('div'); pop.id = 'd37Pop'; pop.className = 'd37-pop'; document.body.appendChild(pop);
       pop.addEventListener('mouseenter', function(){ clearTimeout(hideT); });
       pop.addEventListener('mouseleave', function(){ if(cur && cur.mode==='hover') schedHide(); });
-      pop.addEventListener('click', onClick); pop.addEventListener('change', onChange); pop.addEventListener('keydown', onKey);
+      pop.addEventListener('input', function(e){ var q = e.target.closest && e.target.closest('[data-d37q]'); if(!q) return; var v = q.value.trim().toLowerCase(); q.closest('.d37-pk').querySelectorAll('.d37-p[data-s]').forEach(function(b){ b.style.display = (!v || b.getAttribute('data-s').indexOf(v)>=0) ? '' : 'none'; }); }); pop.addEventListener('click', onClick); pop.addEventListener('focusin', function(){ if(cur){ cur.mode = 'pinned'; clearTimeout(hideT); } }); pop.addEventListener('change', onChange); pop.addEventListener('keydown', onKey);
     }
     paint(); place(bar);
     pop.classList.add('on');
   }
-  function close(){ clearTimeout(showT); clearTimeout(hideT); if(pop){ pop.remove(); pop = null; } if(titleBar && titleBar.isConnected){ var t = titleBar.getAttribute('data-d37title'); if(t) titleBar.setAttribute('title', t); } titleBar = null; cur = null; document.body.classList.remove('d37-open'); }
-  function schedHide(){ clearTimeout(hideT); hideT = setTimeout(function(){ if(pop && pop.contains(document.activeElement) && document.activeElement.tagName==='INPUT') return; close(); }, 260); }
+  function close(){ openAs = null; clearTimeout(showT); clearTimeout(hideT); if(pop){ pop.remove(); pop = null; } if(titleBar && titleBar.isConnected){ var t = titleBar.getAttribute('data-d37title'); if(t) titleBar.setAttribute('title', t); } titleBar = null; cur = null; document.body.classList.remove('d37-open'); }
+  function schedHide(){ clearTimeout(hideT); hideT = setTimeout(function(){ if(!cur || cur.mode==='pinned') return; if(pop && pop.contains(document.activeElement) && document.activeElement.tagName==='INPUT') return; if(document.querySelector('.d2-pop')) return; close(); }, 1600); }
 
   function applyTime(id, raw, input){
     var r = (state.rows||[]).filter(function(x){ return String(x.id)===String(id); })[0]; if(!r) return;
@@ -6505,11 +6510,13 @@ window.cdOwnerOf = function(r){
     paint(); if(cur) place(cur.bar);
   }
   function onChange(e){ var i = e.target.closest && e.target.closest('[data-d37t]'); if(i) applyTime(i.closest('.d37-r').getAttribute('data-id'), i.value, i); }
-  function onKey(e){ if(e.key==='Enter' && e.target.matches && e.target.matches('[data-d37t]')){ e.preventDefault(); applyTime(e.target.closest('.d37-r').getAttribute('data-id'), e.target.value, e.target); } if(e.key==='Escape'){ e.stopPropagation(); close(); } }
+  function onKey(e){ if(e.key==='Enter' && e.target.matches && e.target.matches('[data-d37t]')){ e.preventDefault(); applyTime(e.target.closest('.d37-r').getAttribute('data-id'), e.target.value, e.target); } if(e.key==='Escape'){ e.stopPropagation(); if(openAs){ openAs = null; paint(); } else close(); } }
   function onClick(e){
     var t = e.target; if(!t.closest) return;
+    if(cur) cur.mode = 'pinned'; clearTimeout(hideT);
     if(t.closest('[data-d37x]')){ close(); return; }
-    var a = t.closest('[data-d37a]'); if(a){ var id = a.closest('.d37-r').getAttribute('data-id'); if(window.d2OpenAssign) window.d2OpenAssign(id, a); return; }
+    var a = t.closest('[data-d37a]'); if(a){ var id = a.closest('.d37-r').getAttribute('data-id'); openAs = (openAs===String(id)) ? null : String(id); paint(); if(cur) place(cur.bar); var q = pop && pop.querySelector('[data-d37q]'); if(q){ try{ q.focus({preventScroll:true}); }catch(x){} var rr = q.closest('.d37-r'); if(rr && rr.scrollIntoView) rr.scrollIntoView({block:'nearest'}); } return; }
+    var pk = t.closest('[data-d37p]'); if(pk){ var rid = pk.closest('.d37-r').getAttribute('data-id'), nm = pk.getAttribute('data-d37p'); openAs = null; if(nm){ if(window.d2AssignTo) window.d2AssignTo(rid, nm); } else { var rw = (state.rows||[]).filter(function(x){ return String(x.id)===String(rid); })[0]; if(rw){ rw.assignee = ''; try{ markDirty(); render(); }catch(x){} } } paint(); if(cur) place(cur.bar); return; }
     if(t.closest('[data-d37j]')){ var b = cur && cur.b; close(); var row = document.querySelector('tr[data-bucket="'+(window.CSS&&CSS.escape?CSS.escape(b):b)+'"]'); if(row){ row.scrollIntoView({behavior:'smooth', block:'center'}); } return; }
   }
 
@@ -6518,7 +6525,7 @@ window.cdOwnerOf = function(r){
     if(!canHover()) return; var t = e.target; if(!t || !t.closest) return;
     var bar = t.closest('.hour[data-bucket]'); if(!bar) return;
     clearTimeout(hideT); clearTimeout(showT);
-    if(cur && cur.bar===bar) return;
+    if(cur && (cur.bar===bar || cur.mode==='pinned')) return;
     showT = setTimeout(function(){ open(bar, 'hover'); }, 220);
   });
   document.addEventListener('mouseout', function(e){
@@ -6535,7 +6542,7 @@ window.cdOwnerOf = function(r){
     if(bar){ var touch = !canHover(); if(touch){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); open(bar, 'tap'); } else { close(); } return; }
     if(pop && !t.closest('#d37Pop') && !t.closest('.d2-pop')) close();
   }, true);
-  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && pop) close(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && pop){ if(openAs){ openAs = null; paint(); return; } close(); } });
   window.addEventListener('scroll', function(e){ if(e.target && e.target.nodeType===1 && e.target.closest && e.target.closest('#d37Pop')) return; if(cur && cur.mode==='hover') close(); }, true);
 
   /* keep the list honest when something else changes the calls (assigning from the picker, etc.) */
