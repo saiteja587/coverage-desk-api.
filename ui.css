@@ -1540,3 +1540,22 @@ body.d27-open #d30Orb,body.d23-open #d30Orb,body.d12-open #d30Orb,body.d5-side-o
 .d32-chips button:active{background:color-mix(in srgb,var(--teal) 25%,var(--surface))}
 .d32-body{color:var(--text)}
 .d22-cn,.d22-cs{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+
+/* ===== d33: desk assistant ===== */
+.d33-bar{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100020;width:min(560px,calc(100vw - 24px));display:flex;gap:8px;align-items:center;padding:11px 12px;border-radius:14px;border:1px solid var(--border);background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(14px);box-shadow:0 14px 40px -10px rgba(0,0,0,.6);color:var(--text);font-size:13px;animation:d2fade .2s both}
+.d33-bar>span{flex:1;min-width:0;line-height:1.4}
+.d33-bar button{min-height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--border);background:var(--surface-2,var(--surface));color:var(--text);font:600 12.5px var(--sans,inherit);cursor:pointer;white-space:nowrap}
+.d33-nx{display:flex;gap:10px;width:100%;align-items:flex-start}
+.d33-nx>div:first-child{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.d33-nx small{font:700 10.5px var(--mono);letter-spacing:.08em;color:var(--teal)}
+.d33-nx b{font-size:15px}.d33-nx span{color:var(--muted);font-size:12.5px}
+.d33-nx em{font-style:normal;font-size:12px;padding:5px 8px;border-radius:8px;background:color-mix(in srgb,var(--teal) 10%,var(--surface))}
+.d33-nxb{display:flex;flex-direction:column;gap:6px}
+#d33Next{border-color:var(--teal)}
+.d33-rel{display:inline-block;margin-right:5px;padding:1px 6px;border-radius:99px;font:700 10.5px var(--mono);background:color-mix(in srgb,#ff6b6b 22%,var(--surface));color:#ffb3b3;border:1px solid #ff6b6b;vertical-align:middle}
+.d33-ho{margin:10px 0;display:flex;flex-direction:column;gap:8px}
+.d33-ho label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+.d33-ho textarea{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:13px/1.45 var(--sans,inherit);resize:vertical}
+.d33-relnote{padding:8px 11px;border-radius:10px;border:1px solid #ff6b6b;background:color-mix(in srgb,#ff6b6b 14%,var(--surface));font-size:12.5px;line-height:1.4}
+
+@media (max-width:759px){.d33-bar{bottom:84px}}
