@@ -1709,3 +1709,5 @@ tr.d39-r2,[data-d22open].d39-r2{box-shadow:inset 3px 0 0 #ef5b5b;background-imag
 .d39-sbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 @media(min-width:760px){.d39-wide .d27-card{width:min(1180px,calc(100vw - 40px));max-width:none}}
 @media(max-width:759px){.d39-sc{grid-template-columns:1fr}.d39-ch,.d39-cr{grid-template-columns:1.2fr 1fr 1fr 38px}}
+
+.d39-eng{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px}.d39-eng label{display:flex;gap:6px;align-items:center;opacity:.9}.d39-eng select{border-radius:8px;padding:4px 8px;background:var(--surface,#161c28);color:inherit;border:1px solid var(--border,#333)}
