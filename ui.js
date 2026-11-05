@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V3.0', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.1', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,12 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.1','2026-11-05','Person card',[
+      '👤 Hover a driving person or handler for one pop-up: Today · Week · Incentives · Record',
+      '📱 Tools → Person card for anyone, on phone or laptop',
+      '🖱 Right-click a call → Person card; names in Insights and the incentives leaderboard open it too',
+      '🎙 Daily scrum can use Groq Whisper for Telugu'
+    ]],
     ['V3.0','2026-11-05','Scrum board and quick actions',[
       '🗣 Daily scrum — yesterday’s calls with feedback, today’s calls by type, and a Telugu mic transcript (Tools → Daily scrum)',
       '📅 Day compare — this day against the same weekday last week',
@@ -5046,7 +5052,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript']];
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
@@ -5505,7 +5511,7 @@ window.cdOwnerOf = function(r){
   var NEEDS_HIST = {role:1, round:1, dur:1};
   function content(kind, row, el, H){
     switch(kind){
-      case 'handler': return handlerHtml(el && el.value !== undefined ? (el.value||'') : (row?ownerName(row):''));
+      case 'handler': { var hn = el && el.value !== undefined ? (el.value||'') : (row?ownerName(row):''); if(hn && !isTeam(hn) && window.d40Person) return window.d40Person(hn); return handlerHtml(hn); }
       case 'team': return teamHtml(el.getAttribute('data-team'));
       case 'time': return row ? timeHtml(row) : '';
       case 'country': return row ? countryHtml(row) : '';
@@ -5516,13 +5522,13 @@ window.cdOwnerOf = function(r){
       case 'conflict': return row ? conflictHtml(row) : '';
       case 'cand': return row ? candHtml(row) : '';
       case 'client': return row ? clientHtml(row) : '';
-      case 'owner': return row ? handlerHtml(ownerName(row)) : '';
+      case 'owner': { var on = (el && el.value) || (row?ownerName(row):''); if(on && !isTeam(on) && window.d40Person) return window.d40Person(on); return row ? handlerHtml(ownerName(row)) : ''; }
       case 'stat': return statHtml(el.getAttribute('data-d32stat'));
     }
     return '';
   }
   var TARGETS = [
-    ['select.cell-input[data-field="assignee"]','handler'], ['.team-load-cell[data-team]','team'], ['input.cell-input[data-field="time"]','time'],
+    ['select.cell-input[data-field="assignee"]','handler'], ['select.driving-person-select','owner'], ['.team-load-cell[data-team]','team'], ['input.cell-input[data-field="time"]','time'],
     ['select.cell-input[data-field="country"]','country'], ['input.cell-input[data-field="role"]','role'], ['input.cell-input[data-field="round"]','round'],
     ['input.cell-input[data-field="duration"]','dur'], ['td .prior-badge','status'], ['td.time .flag-icon','conflict'], ['.summary .cell','stat']
   ];
@@ -6195,6 +6201,7 @@ window.cdOwnerOf = function(r){
     var closures = null; try{ closures = await computeClosuresPerformance(); }catch(e){}
     incData = {cur:A[0], prev:A[1], key:cur, now:now, closures:closures}; return incData;
   }
+  window.d34IncData = function(){ return (incData && Date.now()-incData.now.getTime()<600000) ? Promise.resolve(incData) : loadInc(); };
   function incHtml(){
     if(!incData) return '<div class="d27-empty">Loading…</div>';
     var C = incData.cur && incData.cur.d, P = incData.prev && incData.prev.d;
@@ -6761,7 +6768,7 @@ window.cdOwnerOf = function(r){
     var items = [];
     if(A && !r.woi){ items.push(['conf','✅','Mark confirmed'+(cf==='confirmed'?' (on)':'')], ['noreply','🔕','Mark no reply'+(cf==='noreply'?' (on)':'')]); }
     items.push(['cname','📋','Copy candidate name'], ['ctime','🕒','Copy time (IST + client zone)'], ['cmsg','💬','Copy reminder message']);
-    items.push(['prep','🧭','Prep card'], ['hist','🕘','History of this call']);
+    items.push(['prep','🧭','Prep card'], ['hist','🕘','History of this call']); if(window.cdOwnerOf && window.cdOwnerOf(r)) items.push(['pcard','👤','Person card']);
     menu = document.createElement('div'); menu.id = 'd39Menu';
     menu.innerHTML = '<div class="d39-mh">'+esc(r.candidate||'Call')+'<small>'+esc(r.time||'')+'</small></div>'+items.map(function(i){ return '<button type="button" data-d39m="'+i[0]+'"><span>'+i[1]+'</span>'+esc(i[2])+'</button>'; }).join('');
     document.body.appendChild(menu);
@@ -6787,6 +6794,7 @@ window.cdOwnerOf = function(r){
     else if(k==='cmsg') copy(window.d29ChaseMsg ? window.d29ChaseMsg(r) : (r.candidate||'')+' – '+timeText(r));
     else if(k==='prep'){ if(window.d34Open){ window.d34Open('prep'); } if(window.d34Prep) window.d34Prep(r.id); }
     else if(k==='hist') overlay('d39H','Call history','THIS CALL', historyHtml(r));
+    else if(k==='pcard'){ var ow = window.cdOwnerOf && window.cdOwnerOf(r); if(ow && window.d40Open) window.d40Open(ow.name); }
   }, true);
   ['scroll','keydown','resize'].forEach(function(ev){ window.addEventListener(ev, function(e){ if(menu && !(ev==='keydown' && e.key!=='Escape')) closeMenu(); }, true); });
 
@@ -6982,4 +6990,170 @@ window.cdOwnerOf = function(r){
     setInterval(ring, 30000); setTimeout(ring, 400);
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', hook); else hook();
+})();
+
+/* ===== d40: V3.1 — person card: hover (or tap) any person's name for Today / Week / Incentives / Record ===== */
+(function(){
+  if(window.__d40) return; window.__d40 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var rows = function(){ return (typeof state!=='undefined' && state.rows) || []; };
+  var today = function(){ try{ return todayDateString(); }catch(e){ return ''; } };
+  var phone = function(){ return (window.__d17vw||innerWidth) < 760; };
+  var inr = function(n){ try{ return '₹'+Number(n||0).toLocaleString('en-IN'); }catch(e){ return '₹'+n; } };
+  var same = function(a,b){ a = String(a||'').trim(); b = String(b||'').trim(); if(!a||!b) return false; if(a.toLowerCase()===b.toLowerCase()) return true; try{ return namesEquivalent(a,b); }catch(e){ return false; } };
+  var ownerOf = function(r){ try{ var o = window.cdOwnerOf && window.cdOwnerOf(r); return o && o.name ? o.name : (r.assignee||''); }catch(e){ return r.assignee||''; } };
+  var durMin = function(r){ var m = String(r.duration||'').match(/\d+/); return m ? +m[0] : 30; };
+  var fmtBd = function(m){ var t = (m+720)%1440, h = Math.floor(t/60), mi = t%60, ap = h>=12?'PM':'AM'; return (h%12||12)+':'+('0'+mi).slice(-2)+' '+ap; };
+  var ICON = {rescheduled:'🔁', cancelled:'✕', not_responded:'☎', no_invite:'📨'};
+  var row3 = function(a,b,c){ return '<div class="d40-r"><span class="t">'+a+'</span><span class="n">'+b+'</span><span class="o">'+(c||'')+'</span></div>'; };
+  var sum = function(items){ return '<div class="d40-sum">'+items.map(function(i){ return '<span class="'+(i[2]||'')+'"><b>'+i[0]+'</b> '+i[1]+'</span>'; }).join('')+'</div>'; };
+  var loading = '<div class="d40-empty">Loading…</div>';
+  var TABS = [['today','Today'],['week','Week'],['inc','Incentives'],['rec','Record']];
+
+  function personInfo(name){
+    var p = (state.roster||[]).filter(function(x){ return same(x.name,name); })[0] || null, off = false;
+    try{ off = !!(p && (state.absentIds||[]).indexOf(p.id)>=0); }catch(e){}
+    return {team: p ? (p.team||'') : '', off: off};
+  }
+  function todayHtml(name){
+    var isToday = state.date===today(), n = isToday ? (function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; })() : 0;
+    var L = rows().filter(function(r){ return r.candidate && !r.woi && same(ownerOf(r),name); }).sort(function(a,b){ return bd(a.time)-bd(b.time); });
+    var live = L.filter(function(r){ return !r.status; }), left = live.filter(function(r){ return bd(r.time)+durMin(r)>=n; }), out = L.length-live.length;
+    var h = sum([[L.length,'call'+(L.length===1?'':'s')+' · '+esc(state.date)],[left.length,'left'],[out,'rescheduled / cancelled', out?'bad':'']]);
+    if(!L.length) return h+'<div class="d40-empty">No calls on this day.</div>';
+    h += '<div class="d40-list">'+L.map(function(r){
+      var b = bd(r.time), now = isToday && !r.status && n>=b && n<b+durMin(r);
+      return '<div class="d40-r'+(now?' now':'')+(r.status?' dim':'')+'"><span class="t">'+esc(r.time||'')+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company,r.round,r.role].filter(Boolean).join(' · '))+'</small></span><span class="o">'+(r.status?(ICON[r.status]||esc(r.status)):(now?'● now':''))+'</span></div>';
+    }).join('')+'</div>';
+    var t = Math.max(n,0), ok = null; for(var i=0;i<live.length;i++){ var s = bd(live[i].time), e = s+durMin(live[i]); if(e<t) continue; if(s-t>=45){ ok = t; break; } t = Math.max(t,e); }
+    if(ok===null && t<=1440-45) ok = t;
+    return h+'<div class="d40-foot">Next free (45 min): <b>'+(ok===null?'none today':esc(fmtBd(ok)))+'</b></div>';
+  }
+  function allRows(){ return typeof fetchAllRowsAcrossDates==='function' ? fetchAllRowsAcrossDates().then(function(L){ return L||[]; }) : Promise.resolve([]); }
+  function weekHtml(name){
+    return allRows().then(function(A){
+      var mon = deskMonday(today()), days = [], i, byDay = {}, cl = {};
+      for(i=0;i<7;i++) days.push(deskDateAdd(mon,i));
+      var mine = A.filter(function(r){ return r.candidate && !r.woi && days.indexOf(r._date)>=0 && same(ownerOf(r),name); });
+      mine.forEach(function(r){ byDay[r._date] = (byDay[r._date]||0)+1; var k = r.company||'—'; cl[k] = (cl[k]||0)+1; });
+      var mx = 1; days.forEach(function(d){ mx = Math.max(mx, byDay[d]||0); });
+      var names = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      var h = sum([[mine.length,'calls this week'],[mine.filter(function(r){ return r.status; }).length,'rescheduled / cancelled']]);
+      h += '<div class="d40-list">'+days.map(function(d,i){ var c = byDay[d]||0; return '<div class="d40-bar'+(d===today()?' now':'')+'"><span>'+names[i]+' '+d.slice(8)+'</span><i><u style="width:'+Math.round(c/mx*100)+'%"></u></i><b>'+c+'</b></div>'; }).join('')+'</div>';
+      var top = Object.keys(cl).sort(function(a,b){ return cl[b]-cl[a]; }).slice(0,4);
+      if(top.length) h += '<div class="d40-foot">Most calls with: '+top.map(function(k){ return '<b>'+esc(k)+'</b> ('+cl[k]+')'; }).join(' · ')+'</div>';
+      return h;
+    });
+  }
+  function incHtml(name){
+    if(!window.d34IncData) return '<div class="d40-empty">Incentives are not available yet.</div>';
+    return window.d34IncData().then(function(D){
+      var C = D && D.cur && D.cur.d; if(!C || !(C.byHandler||[]).length) return '<div class="d40-empty">No incentive data saved for this month yet. Open Reports → Incentives and press Refresh once.</div>';
+      var H = C.byHandler.slice().sort(function(a,b){ return Number(b.total||0)-Number(a.total||0); });
+      var i = -1; H.forEach(function(x,k){ if(i<0 && same(x.handler,name)) i = k; });
+      if(i<0) return '<div class="d40-empty">'+esc(name)+' has no incentive entry this month.</div>';
+      var m = H[i], tot = Number(m.total||0), P = D.prev && D.prev.d, pm = P ? (P.byHandler||[]).filter(function(h){ return same(h.handler,name); })[0] : null;
+      var now = D.now, day = now.getDate(), dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate(), proj = day ? Math.round(tot/day*dim) : tot;
+      var h = '<div class="d40-big"><small>'+esc(now.toLocaleString(undefined,{month:'long',year:'numeric'}))+' · so far</small><b>'+inr(tot)+'</b><span>#'+(i+1)+' of '+H.length+'</span></div>';
+      h += sum([[inr(m.promotion),'promotion'],[inr(m.selection),'selection'],[Number(m.records||0),'records']]);
+      h += '<div class="d40-list">';
+      if(i>0) h += row3('⬆','<b>'+inr(Number(H[i-1].total||0)-tot)+' to pass '+esc(H[i-1].handler)+'</b>','');
+      else h += row3('🏆','<b>#1 this month</b>','');
+      if(pm){ var d = tot-Number(pm.total||0); h += row3(d>=0?'📈':'📉','<b>'+(d>=0?'+':'−')+inr(Math.abs(d))+' vs last month</b><small>last month '+inr(pm.total)+'</small>',''); }
+      h += row3('🧮','<b>On pace for '+inr(proj)+'</b><small>day '+day+' of '+dim+'</small>','')+'</div>';
+      return h;
+    });
+  }
+  function recHtml(name){
+    var pInc = window.d34IncData ? window.d34IncData().catch(function(){ return null; }) : Promise.resolve(null);
+    return Promise.all([allRows(), pInc]).then(function(R){
+      var A = R[0], D = R[1], from = deskDateAdd(today(),-29);
+      var mine = A.filter(function(r){ return r.candidate && !r.woi && r._date>=from && r._date<=today() && same(ownerOf(r),name); });
+      var st = {}; mine.forEach(function(r){ if(r.status) st[r.status] = (st[r.status]||0)+1; });
+      var bad = Object.keys(st).reduce(function(t,k){ return t+st[k]; },0), rate = mine.length ? Math.round(bad/mine.length*100) : 0;
+      var h = sum([[mine.length,'calls · 30 days'],[bad,'did not go ahead', bad?'bad':''],[rate+'%','of their calls']]);
+      var keys = Object.keys(st); 
+      if(keys.length) h += '<div class="d40-list">'+keys.map(function(k){ return row3(ICON[k]||'•','<b>'+esc(k.replace(/_/g,' '))+'</b>','<b>'+st[k]+'</b>'); }).join('')+'</div>';
+      var cl = null; try{ cl = ((D&&D.closures||{}).rows||[]).filter(function(r){ return same(r.handler,name); })[0]; }catch(e){}
+      if(cl) h += '<div class="d40-list">'+row3('🏆','<b>'+cl.closures+' closure'+(cl.closures===1?'':'s')+' credited</b><small>all time, matched to calls</small>','')+'</div>';
+      var rc = {}; mine.forEach(function(r){ var k = r.role||''; if(k) rc[k] = (rc[k]||0)+1; });
+      var tr = Object.keys(rc).sort(function(a,b){ return rc[b]-rc[a]; }).slice(0,4);
+      if(tr.length) h += '<div class="d40-foot">Usually handles: '+tr.map(function(k){ return '<b>'+esc(k)+'</b> ('+rc[k]+')'; }).join(' · ')+'</div>';
+      return h;
+    });
+  }
+  function tabBody(name, tab){ return tab==='today' ? todayHtml(name) : tab==='week' ? weekHtml(name) : tab==='inc' ? incHtml(name) : recHtml(name); }
+  window.d40Person = function(name, tab){
+    tab = tab || 'today'; var pi = personInfo(name);
+    return '<div class="d40-card" data-d40n="'+esc(name)+'" data-d40tab="'+tab+'"><div class="d40-hd"><b>'+esc(name)+'</b><small>'+esc(pi.team||'')+(pi.off?' · 🏖 off today':'')+'</small></div>'
+      + '<div class="d40-tabs">'+TABS.map(function(t){ return '<button type="button" data-d40t="'+t[0]+'" class="'+(t[0]===tab?'on':'')+'">'+t[1]+'</button>'; }).join('')+'</div>'
+      + '<div class="d40-body">'+todayHtml(name)+'</div></div>';
+  };
+  document.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('[data-d40t]'); if(!t) return;
+    e.preventDefault(); e.stopPropagation();
+    var card = t.closest('.d40-card'), name = card.getAttribute('data-d40n'), tab = t.getAttribute('data-d40t');
+    card.setAttribute('data-d40tab', tab); card.querySelectorAll('[data-d40t]').forEach(function(b){ b.classList.toggle('on', b===t); });
+    var body = card.querySelector('.d40-body'); body.innerHTML = loading;
+    Promise.resolve().then(function(){ return tabBody(name, tab); }).then(function(h){ if(card.isConnected && card.getAttribute('data-d40tab')===tab) body.innerHTML = h; })
+      .catch(function(){ if(card.isConnected) body.innerHTML = '<div class="d40-empty">Could not load. Close and try again.</div>'; });
+  }, true);
+
+  /* ---- generic hover / tap on any [data-d40p] name ---- */
+  var pop = null, timer = null, curEl = null;
+  function hide(){ clearTimeout(timer); curEl = null; if(pop){ pop.remove(); pop = null; } }
+  function show(el){
+    hide(); var name = el.getAttribute('data-d40p'); if(!name) return; curEl = el;
+    pop = document.createElement('div'); pop.id = 'd40Pop'; pop.innerHTML = window.d40Person(name); document.body.appendChild(pop);
+    var r = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth-w-8))+'px'; var top = r.bottom+6; if(top+h>innerHeight-8) top = Math.max(8, r.top-h-6); pop.style.top = top+'px';
+  }
+  document.addEventListener('mouseover', function(e){
+    if(phone()) return; var t = e.target; if(!t.closest) return; var el = t.closest('[data-d40p]'); if(!el) return;
+    if(el===curEl && pop) return; clearTimeout(timer); timer = setTimeout(function(){ show(el); }, 380);
+  }, true);
+  document.addEventListener('mouseout', function(e){
+    var t = e.target; if(!t.closest) return; var inEl = t.closest('[data-d40p]'), inPop = t.closest('#d40Pop'); if(!inEl && !inPop) return;
+    var to = e.relatedTarget; if(to && ((inEl && inEl.contains(to)) || (pop && pop.contains(to)))) return;
+    clearTimeout(timer); setTimeout(function(){ if(pop && !pop.matches(':hover') && !(curEl && curEl.matches(':hover'))) hide(); }, 200);
+  }, true);
+  ['mousedown','scroll','keydown','touchstart'].forEach(function(ev){ document.addEventListener(ev, function(e){ if(pop && e.target && e.target.nodeType===1 && pop.contains(e.target)) return; hide(); }, true); });
+  function sheet(name){
+    var old = document.getElementById('d40S'); if(old) old.remove();
+    var el = document.createElement('div'); el.id = 'd40S'; el.className = 'd27-ov d40-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>PERSON</small><h2>'+esc(name)+'</h2></div><button type="button" class="d27-x" data-d40x aria-label="Close">✕</button></div><div class="d29-body">'+window.d40Person(name)+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d40x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
+  }
+  window.d40Open = sheet;
+  document.addEventListener('click', function(e){
+    var el = e.target.closest && e.target.closest('[data-d40p]'); if(!el || !phone()) return;
+    e.preventDefault(); e.stopPropagation(); sheet(el.getAttribute('data-d40p'));
+  }, true);
+
+  /* ---- Tools hub: pick a person ---- */
+  function picker(){
+    var old = document.getElementById('d40P'); if(old) old.remove();
+    var ppl = (state.roster||[]).filter(function(p){ return p && p.name; }).sort(function(a,b){ return (a.team||'').localeCompare(b.team||'') || a.name.localeCompare(b.name); });
+    var el = document.createElement('div'); el.id = 'd40P'; el.className = 'd27-ov d40-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>PEOPLE</small><h2>Person card</h2></div><button type="button" class="d27-x" data-d40x aria-label="Close">✕</button></div><div class="d29-body"><input class="d40-q" placeholder="Search a person…" autocomplete="off"><div class="d27-list d40-pl">'+ppl.map(function(p){ return '<button type="button" class="d27-row" data-d40pick="'+esc(p.name)+'"><span class="n"><b>'+esc(p.name)+'</b><small>'+esc(p.team||'')+'</small></span><span class="o">›</span></button>'; }).join('')+'</div></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('input', function(e){ if(!e.target.classList.contains('d40-q')) return; var q = e.target.value.toLowerCase(); el.querySelectorAll('[data-d40pick]').forEach(function(b){ b.style.display = b.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none'; }); });
+    el.addEventListener('click', function(e){
+      if(e.target===el || (e.target.closest && e.target.closest('[data-d40x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); return; }
+      var b = e.target.closest && e.target.closest('[data-d40pick]'); if(b){ var n = b.getAttribute('data-d40pick'); el.remove(); sheet(n); }
+    });
+  }
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='person'){ picker(); return true; } return typeof prev==='function' ? prev(k) : false; };
+
+  /* decorate names that live in rendered lists (Insights owners, incentives leaderboard) */
+  function decorate(){
+    document.querySelectorAll('.d27-load > div > span:first-child:not([data-d40p])').forEach(function(s){
+      var n = s.textContent.trim(); if(!n) return; var ok = (state.roster||[]).some(function(p){ return same(p.name,n); });
+      if(ok){ s.setAttribute('data-d40p', n); s.style.cursor = 'help'; }
+    });
+  }
+  try{ new MutationObserver(function(){ clearTimeout(decorate._t); decorate._t = setTimeout(decorate, 150); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
 })();
