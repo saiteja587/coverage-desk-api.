@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V2.9', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.0', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,16 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.0','2026-11-05','Scrum board and quick actions',[
+      '🗣 Daily scrum — yesterday’s calls with feedback, today’s calls by type, and a Telugu mic transcript (Tools → Daily scrum)',
+      '📅 Day compare — this day against the same weekday last week',
+      '🟠 Calls starting within 30 min that aren’t confirmed get an amber ring (red under 10 min)',
+      '🖱 Right-click a call: confirm, copy name / time / reminder, prep card, history',
+      '📋 Hover a name or time for a one-tap copy button'
+    ]],
+    ['V2.9','2026-11-05','TTOP page',[
+      '🛰 Tools → TTOP data — read-only view of the TTOP portal (needs the TTOP key in Vercel)'
+    ]],
     ['V2.8','2026-11-05','Edit from the coverage chart',[
       '📊 Hover a bar in “Coverage by half hour” — the pop-up now lists every call in that slot',
       '🕒 Change a call’s time right there (type 9:45 PM and press Enter) and reassign from the same pop-up',
@@ -5036,7 +5046,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript']];
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
@@ -6665,4 +6675,267 @@ window.cdOwnerOf = function(r){
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='ttop') return open(); return typeof prev==='function' ? prev(k) : false; };
   window.d38Open = open;
+})();
+
+/* ===== d39: V3.0 — not-confirmed ring, right-click menu, copy chips, call history, day compare, daily scrum board ===== */
+(function(){
+  if(window.__d39) return; window.__d39 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d=new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  var phone = function(){ return (window.__d17vw||innerWidth) < 760; };
+  var rows = function(){ return (typeof state!=='undefined' && state.rows) || []; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0]; };
+  var today = function(){ try{ return todayDateString(); }catch(e){ return ''; } };
+  function toast(t){ var b = document.getElementById('d39Toast'); if(!b){ b = document.createElement('div'); b.id = 'd39Toast'; document.body.appendChild(b); } b.textContent = t; b.classList.add('on'); clearTimeout(b._t); b._t = setTimeout(function(){ b.classList.remove('on'); }, 1800); }
+  function copy(t){ var done = function(){ toast('Copied'); }; try{ navigator.clipboard.writeText(t).then(done, function(){ fb(); }); }catch(e){ fb(); } function fb(){ var a = document.createElement('textarea'); a.value = t; a.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(a); a.select(); try{ document.execCommand('copy'); done(); }catch(x){} a.remove(); } }
+  function getConf(date){ var e = ((state.notes)||[]).filter(function(n){ return n && n.id===(date||state.date)+'-confirm-ids'; })[0]; try{ return e ? (JSON.parse(e.text)||{}) : {}; }catch(x){ return {}; } }
+  function setConf(rid, v){
+    var m = getConf(); if(v && m[rid]!==v) m[rid] = v; else delete m[rid];
+    state.notes = state.notes || []; var id = state.date+'-confirm-ids';
+    var i = state.notes.findIndex(function(n){ return n && n.id===id; }), keys = Object.keys(m);
+    if(keys.length){ var tx = JSON.stringify(m); if(i>=0) state.notes[i].text = tx; else state.notes.push({id:id, text:tx}); } else if(i>=0) state.notes.splice(i,1);
+    try{ markDirty(); }catch(e){}
+  }
+  var ZONE = {USA:'America/New_York', UK:'Europe/London', Ireland:'Europe/Dublin', Canada:'America/Toronto', Germany:'Europe/Berlin'};
+  function timeText(r){
+    if(!r || !r.time) return '';
+    var m = timeToMinutes(r.time), out = r.time+' IST';
+    var p = (r.date||state.date||'').split('-').map(Number); if(m===9999 || p.length<3 || !ZONE[r.country||'USA']) return out;
+    try{ var ms = Date.UTC(p[0],p[1]-1,p[2],0,m) - 330*60000, z = ZONE[r.country||'USA'];
+      var t = new Intl.DateTimeFormat('en-GB',{timeZone:z,hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(ms));
+      return out+' / '+t.toUpperCase()+' '+(r.country||'USA')+' time'; }catch(e){ return out; }
+  }
+
+  /* ---------- 1. not-confirmed ring ---------- */
+  function ring(){
+    try{
+      var els = document.querySelectorAll('tr[data-id].d39-r1, tr[data-id].d39-r2, [data-d22open].d39-r1, [data-d22open].d39-r2');
+      els.forEach(function(e){ e.classList.remove('d39-r1','d39-r2'); });
+      if(typeof state==='undefined' || state.date!==today()) return;
+      var n = nowBd(), cf = getConf(), hit = {};
+      rows().forEach(function(r){
+        if(r.woi || r.status || !r.candidate || cf[r.id]==='confirmed') return;
+        var d = bd(r.time)-n; if(bd(r.time)===9999 || d>30 || d<-10) return;
+        hit[r.id] = d<=10 ? 'd39-r2' : 'd39-r1';
+      });
+      Object.keys(hit).forEach(function(id){
+        document.querySelectorAll('tr[data-id="'+id+'"], [data-d22open="'+id+'"]').forEach(function(e){ e.classList.add(hit[id]); });
+      });
+    }catch(e){}
+  }
+  window.d39Ring = ring;
+
+  /* ---------- 2. call history ---------- */
+  var HL = {time:'Time', status:'Status', assignee:'Team', drivingPerson:'Owner', company:'Client', round:'Round', duration:'Duration', candidate:'Candidate', role:'Role', country:'Country', woi:'Waiting for invite'};
+  function ago(t){ var s = Math.max(1, Math.round((Date.now()-t)/60000)); return s<60 ? s+' min ago' : s<1440 ? Math.round(s/60)+' h ago' : Math.round(s/1440)+' d ago'; }
+  function historyHtml(r){
+    var A = []; try{ A = JSON.parse(localStorage.getItem('cd.audit')||'[]'); }catch(e){}
+    A = A.filter(function(a){ return String(a.id)===String(r.id) && a.k==='chg'; });
+    var h = '<div class="d36-hd"><b>'+esc(r.candidate||'')+'</b><small>'+esc([r.company, r.time].filter(Boolean).join(' · '))+'</small></div>';
+    var sf = (r.statusFields||[]).filter(function(f){ return (f.value||'').trim(); });
+    if(r.status) h += '<div class="d36-rule"><b>Status: '+esc(String(r.status).replace(/_/g,' '))+'</b><span>'+(sf.length ? sf.map(function(f){ return esc(f.label)+': '+esc(f.value); }).join(' · ') : 'no reason entered')+'</span></div>';
+    var cf = getConf()[r.id]; if(cf) h += '<div class="d36-rule"><b>Confirmation</b><span>'+esc(cf)+'</span></div>';
+    if(!A.length) return h + '<div class="d27-empty">No edits recorded for this call on this device yet.</div><p class="d29-p">The trail starts when changes are made while this app is open.</p>';
+    return h + '<div class="d36-list">'+A.map(function(a){
+      return '<div class="d36-it"><div class="d36-l1"><b>'+esc(HL[a.f]||a.f)+'</b><em>'+ago(a.t)+'</em></div><div class="d36-l2">'+esc(a.a||'—')+'  →  <b>'+esc(a.b||'—')+'</b></div></div>';
+    }).join('')+'</div><p class="d29-p">Edits made on this device only.</p>';
+  }
+  function overlay(id, title, kicker, body, cls){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d39-ov '+(cls||'');
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d39x aria-label="Close">✕</button></div><div class="d29-body d39-body"></div></div>';
+    el.querySelector('.d39-body').innerHTML = body;
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d39x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
+    return el;
+  }
+
+  /* ---------- 3. right-click menu ---------- */
+  var menu = null;
+  function closeMenu(){ if(menu){ menu.remove(); menu = null; } }
+  function openMenu(x, y, r){
+    closeMenu();
+    var cf = getConf()[r.id], A = admin();
+    var items = [];
+    if(A && !r.woi){ items.push(['conf','✅','Mark confirmed'+(cf==='confirmed'?' (on)':'')], ['noreply','🔕','Mark no reply'+(cf==='noreply'?' (on)':'')]); }
+    items.push(['cname','📋','Copy candidate name'], ['ctime','🕒','Copy time (IST + client zone)'], ['cmsg','💬','Copy reminder message']);
+    items.push(['prep','🧭','Prep card'], ['hist','🕘','History of this call']);
+    menu = document.createElement('div'); menu.id = 'd39Menu';
+    menu.innerHTML = '<div class="d39-mh">'+esc(r.candidate||'Call')+'<small>'+esc(r.time||'')+'</small></div>'+items.map(function(i){ return '<button type="button" data-d39m="'+i[0]+'"><span>'+i[1]+'</span>'+esc(i[2])+'</button>'; }).join('');
+    document.body.appendChild(menu);
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.max(6, Math.min(x, innerWidth-w-6))+'px'; menu.style.top = Math.max(6, Math.min(y, innerHeight-h-6))+'px';
+    menu.__r = r;
+  }
+  document.addEventListener('contextmenu', function(e){
+    if(phone()) return; var t = e.target; if(!t.closest) return;
+    var tr = t.closest('tbody tr[data-id]'); if(!tr) return;
+    if(t.closest('textarea') || (t.closest('input') && /text|search/.test(t.closest('input').type||'text') && t.closest('input').selectionStart!==t.closest('input').selectionEnd)) return;
+    var r = rowById(tr.getAttribute('data-id')); if(!r) return;
+    e.preventDefault(); openMenu(e.clientX, e.clientY, r);
+  }, false);
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d39m]');
+    if(!b){ if(menu && !(e.target.closest && e.target.closest('#d39Menu'))) closeMenu(); return; }
+    var r = menu && menu.__r, k = b.getAttribute('data-d39m'); closeMenu(); if(!r) return;
+    if(k==='conf'){ setConf(r.id, 'confirmed'); try{ render(); }catch(x){} ring(); }
+    else if(k==='noreply'){ setConf(r.id, 'noreply'); try{ render(); }catch(x){} ring(); }
+    else if(k==='cname') copy(r.candidate||'');
+    else if(k==='ctime') copy(timeText(r));
+    else if(k==='cmsg') copy(window.d29ChaseMsg ? window.d29ChaseMsg(r) : (r.candidate||'')+' – '+timeText(r));
+    else if(k==='prep'){ if(window.d34Open){ window.d34Open('prep'); } if(window.d34Prep) window.d34Prep(r.id); }
+    else if(k==='hist') overlay('d39H','Call history','THIS CALL', historyHtml(r));
+  }, true);
+  ['scroll','keydown','resize'].forEach(function(ev){ window.addEventListener(ev, function(e){ if(menu && !(ev==='keydown' && e.key!=='Escape')) closeMenu(); }, true); });
+
+  /* ---------- 4. copy chip on hover ---------- */
+  var chip = null, chipT = 0;
+  function hideChip(){ clearTimeout(chipT); if(chip){ chip.remove(); chip = null; } }
+  document.addEventListener('mouseover', function(e){
+    if(phone()) return; var t = e.target; if(!t.closest) return;
+    if(t.closest('#d39Chip')) { clearTimeout(chipT); return; }
+    var inp = t.closest('tbody tr[data-id] input.cell-input[data-field="candidate"], tbody tr[data-id] input.cell-input[data-field="time"]');
+    if(!inp){ if(chip){ clearTimeout(chipT); chipT = setTimeout(hideChip, 250); } return; }
+    if(chip && chip.__el===inp) return;
+    clearTimeout(chipT); chipT = setTimeout(function(){
+      hideChip(); var tr = inp.closest('tr'), r = rowById(tr.getAttribute('data-id')); if(!r) return;
+      var isT = inp.getAttribute('data-field')==='time', txt = isT ? timeText(r) : (r.candidate||''); if(!txt) return;
+      chip = document.createElement('button'); chip.type = 'button'; chip.id = 'd39Chip'; chip.title = 'Copy: '+txt; chip.textContent = '📋'; chip.__el = inp; chip.__txt = txt;
+      document.body.appendChild(chip); var b = inp.getBoundingClientRect();
+      chip.style.left = Math.min(innerWidth-34, b.right-26)+'px'; chip.style.top = (b.top+(b.height-24)/2)+'px';
+      chip.addEventListener('mouseleave', function(){ chipT = setTimeout(hideChip, 250); });
+      chip.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); copy(chip.__txt); hideChip(); });
+    }, 350);
+  }, true);
+  window.addEventListener('scroll', hideChip, true);
+
+  /* ---------- 5. day compare ---------- */
+  function dayStats(L){
+    var o = {total:0, first:0, adv:0, un:0, woi:0, b:{}};
+    L.forEach(function(r){ if(!r.candidate) return; if(r.woi){ o.woi++; return; } o.total++; if(typeof isAdvancedRound==='function' && isAdvancedRound(r.round)) o.adv++; else o.first++; if(!(r.assignee||'').trim()) o.un++; var m = bd(r.time); if(m!==9999){ var k = Math.floor(m/60); o.b[k] = (o.b[k]||0)+1; } });
+    return o;
+  }
+  function cmpHtml(A, B, da, db){
+    var peak = function(S){ var best = null; Object.keys(S.b).forEach(function(k){ if(best===null || S.b[k]>S.b[best]) best = k; }); return best; };
+    var hl = function(k){ var h = (+k+12)%24; var ap = h>=12?'PM':'AM'; var hh = h%12||12; return hh+' '+ap; };
+    var delta = function(a,b){ var d = a-b; return '<em class="'+(d>0?'up':d<0?'dn':'')+'">'+(d>0?'+':'')+d+'</em>'; };
+    var h = '<div class="d39-cmp"><div class="d39-ch"><span></span><b>'+esc(da)+'</b><b>'+esc(db)+'</b><span></span></div>';
+    [['Calls','total'],['1st round','first'],['2nd round +','adv'],['Unassigned','un'],['Waiting for invite','woi']].forEach(function(x){ h += '<div class="d39-cr"><span>'+x[0]+'</span><b>'+A[x[1]]+'</b><b>'+B[x[1]]+'</b>'+delta(A[x[1]],B[x[1]])+'</div>'; });
+    var pa = peak(A), pb = peak(B);
+    h += '<div class="d39-cr"><span>Busiest hour</span><b>'+(pa===null?'—':hl(pa)+' ('+A.b[pa]+')')+'</b><b>'+(pb===null?'—':hl(pb)+' ('+B.b[pb]+')')+'</b><em></em></div></div>';
+    var mx = 1; for(var i=0;i<24;i++) mx = Math.max(mx, A.b[i]||0, B.b[i]||0);
+    var bars = '';
+    for(var k=0;k<24;k++){ if(!(A.b[k]||B.b[k])) continue; bars += '<div class="d39-br"><span>'+hl(k)+'</span><div><i class="a" style="width:'+Math.round((A.b[k]||0)/mx*100)+'%"></i><i class="b" style="width:'+Math.round((B.b[k]||0)/mx*100)+'%"></i></div><b>'+(A.b[k]||0)+' · '+(B.b[k]||0)+'</b></div>'; }
+    return h + '<p class="d29-p">By hour (IST business day). <span class="d39-key a"></span>'+esc(da)+' <span class="d39-key b"></span>'+esc(db)+'</p>'+(bars||'<div class="d27-empty">No timed calls.</div>');
+  }
+  function openCmp(){
+    var d1 = state.date, d0 = (typeof deskDateAdd==='function') ? deskDateAdd(d1,-7) : d1;
+    var el = overlay('d39C','Day compare','SAME WEEKDAY LAST WEEK','<div class="d27-empty">Loading '+esc(d0)+'…</div>');
+    var A = dayStats(rows());
+    var go = function(L){ var B = dayStats(L.filter(function(r){ return r._date===d0; })); if(el.isConnected) el.querySelector('.d39-body').innerHTML = cmpHtml(A, B, d1, d0); };
+    if(typeof fetchAllRowsAcrossDates==='function') fetchAllRowsAcrossDates().then(function(L){ go(L||[]); }).catch(function(){ if(el.isConnected) el.querySelector('.d39-body').innerHTML = (window.d35Fail?window.d35Fail('d39:cmp'):'Could not load.'); });
+  }
+
+  /* ---------- 6. daily scrum board ---------- */
+  var SC = {rec:null, listening:false, recog:null, timer:0, dirty:false, idx:[]};
+  var TECH = /(develop|engineer|data|devops|qa\b|test|java|python|\.net|cloud|sql|analyst|architect|sap|salesforce|software|full.?stack|ml\b|ai\b|security|network|sre|platform|backend|frontend)/i;
+  var yday = function(){ var t = today(); return (typeof deskDateAdd==='function') ? deskDateAdd(t,-1) : t; };
+  function newRec(L){
+    var t = today(), y = yday();
+    var pick = function(d){ return L.filter(function(r){ return r._date===d && r.candidate && !r.woi; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }); };
+    var tr = state.date===t && rows().length ? rows().filter(function(r){ return r.candidate && !r.woi; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }) : pick(t);
+    return { date:t, yesterday: pick(y).map(function(r){ var sf = (r.statusFields||[]).filter(function(f){ return (f.value||'').trim(); }).map(function(f){ return f.label+': '+f.value; }).join(' · ');
+        return {id:r.id, time:r.time, candidate:r.candidate, company:r.company||'', round:r.round||'', status:r.status||'', note:sf, feedback:''}; }),
+      today: tr.map(function(r){ return {id:r.id, time:r.time, candidate:r.candidate, company:r.company||'', round:r.round||'', role:r.role||'', type: TECH.test(r.role||'') ? 'technical' : 'theoretical'}; }),
+      transcript:'', summary:'' };
+  }
+  function scrumHtml(){
+    var R = SC.rec, T = R.today, tech = T.filter(function(c){ return c.type==='technical'; }).length, th = T.filter(function(c){ return c.type==='theoretical'; }).length;
+    var h = '<div class="d39-sc"><div class="d39-scl">';
+    h += '<div class="d39-sh">Yesterday’s calls <small>'+R.yesterday.length+'</small></div>';
+    h += R.yesterday.length ? R.yesterday.map(function(c,i){ return '<div class="d39-cc"><div class="d39-c1"><b>'+esc(c.candidate)+'</b><small>'+esc([c.time,c.company,c.round].filter(Boolean).join(' · '))+'</small>'+(c.status?'<em>'+esc(c.status.replace(/_/g,' '))+'</em>':'')+'</div>'+(c.note?'<div class="d39-c2">'+esc(c.note)+'</div>':'')+'<textarea data-d39fb="'+i+'" rows="2" placeholder="How did it go / feedback…">'+esc(c.feedback)+'</textarea></div>'; }).join('') : '<div class="d27-empty">No calls found for yesterday.</div>';
+    h += '<div class="d39-sh">Today’s calls <small>'+T.length+' · '+tech+' technical · '+th+' theoretical</small></div>';
+    h += T.length ? T.map(function(c,i){ return '<div class="d39-cc"><div class="d39-c1"><b>'+esc(c.candidate)+'</b><small>'+esc([c.time,c.company,c.round,c.role].filter(Boolean).join(' · '))+'</small><select data-d39ty="'+i+'"><option value="technical"'+(c.type==='technical'?' selected':'')+'>Technical</option><option value="theoretical"'+(c.type==='theoretical'?' selected':'')+'>Theoretical</option><option value="other"'+(c.type==='other'?' selected':'')+'>Other</option></select></div></div>'; }).join('') : '<div class="d27-empty">No calls on the board for today.</div>';
+    h += '</div><div class="d39-scr"><div class="d39-sh">Transcript <small id="d39St">'+(SC.listening?'🔴 listening…':'stopped')+'</small></div>'
+      + '<div class="d39-sbar"><button type="button" class="d27-btn" data-d39s="mic">'+(SC.listening?'⏹ Stop':'🎙 Start listening')+'</button><button type="button" class="d27-btn" data-d39s="save">💾 Save record</button><button type="button" class="d27-btn" data-d39s="copy">📋 Copy</button><button type="button" class="d27-btn" data-d39s="past">🗂 Past</button></div>'
+      + '<textarea id="d39Tx" rows="14" placeholder="Telugu speech appears here while you talk. You can type or fix anything.">'+esc(R.transcript)+'</textarea>'
+      + '<div class="d39-sh">Decisions / action items</div><textarea id="d39Sm" rows="4" placeholder="Notes for the record…">'+esc(R.summary)+'</textarea>'
+      + '<p class="d29-p" id="d39Ms">Speech is typed from this device’s microphone (Chrome). No audio is stored. Tell the team the scrum is being transcribed.</p></div></div>';
+    return h;
+  }
+  function sync(el){
+    var tx = el.querySelector('#d39Tx'), sm = el.querySelector('#d39Sm'); if(tx) SC.rec.transcript = tx.value; if(sm) SC.rec.summary = sm.value;
+    el.querySelectorAll('[data-d39fb]').forEach(function(t){ var c = SC.rec.yesterday[+t.getAttribute('data-d39fb')]; if(c) c.feedback = t.value; });
+    el.querySelectorAll('[data-d39ty]').forEach(function(s){ var c = SC.rec.today[+s.getAttribute('data-d39ty')]; if(c) c.type = s.value; });
+  }
+  function stopMic(){ SC.listening = false; try{ if(SC.recog){ SC.recog.onend = null; SC.recog.stop(); } }catch(e){} SC.recog = null; }
+  function startMic(el){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var ms = el.querySelector('#d39Ms');
+    if(!SR){ if(ms) ms.textContent = 'This browser can’t transcribe speech. Use Chrome on the laptop.'; return; }
+    var rec = new SR(); rec.lang = 'te-IN'; rec.continuous = true; rec.interimResults = true; SC.recog = rec; SC.listening = true;
+    var tx = el.querySelector('#d39Tx'), base = tx.value;
+    rec.onresult = function(ev){
+      var fin = '', interim = '';
+      for(var i=ev.resultIndex;i<ev.results.length;i++){ var r = ev.results[i]; if(r.isFinal) fin += r[0].transcript; else interim += r[0].transcript; }
+      if(fin){ var d = new Date(), stamp = '['+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+'] '; base += (base && !/\n$/.test(base) ? '\n' : '')+stamp+fin.trim(); }
+      tx.value = base + (interim ? (base?'\n':'')+interim : ''); tx.scrollTop = tx.scrollHeight; SC.rec.transcript = base; SC.dirty = true;
+    };
+    rec.onerror = function(ev){ if(ms) ms.textContent = ev.error==='not-allowed' ? 'Microphone is blocked. Allow it in the address bar, then press Start.' : ev.error==='no-speech' ? 'Waiting for speech…' : 'Mic problem: '+ev.error; if(ev.error==='not-allowed'){ SC.listening = false; paintBtns(el); } };
+    rec.onend = function(){ if(SC.listening && el.isConnected){ try{ rec.start(); }catch(e){} } else { SC.listening = false; paintBtns(el); } };
+    try{ rec.start(); }catch(e){ if(ms) ms.textContent = 'Could not start the microphone.'; SC.listening = false; }
+    paintBtns(el);
+  }
+  function paintBtns(el){ var b = el.querySelector('[data-d39s="mic"]'), s = el.querySelector('#d39St'); if(b) b.textContent = SC.listening ? '⏹ Stop' : '🎙 Start listening'; if(s) s.textContent = SC.listening ? '🔴 listening…' : 'stopped'; }
+  function saveRec(el){
+    sync(el); var r = SC.rec, ms = el.querySelector('#d39Ms');
+    var calls = [apiCall('app_settings',{method:'POST',body:{key:'scrum_'+r.date, value:JSON.stringify(r)}})];
+    if(SC.idx.indexOf(r.date)<0) SC.idx.unshift(r.date);
+    calls.push(apiCall('app_settings',{method:'POST',body:{key:'scrum_index', value:JSON.stringify(SC.idx.slice(0,120))}}));
+    Promise.all(calls).then(function(){ SC.dirty = false; if(ms) ms.textContent = 'Saved as '+r.date+'.'; toast('Scrum saved'); }).catch(function(e){ if(ms) ms.textContent = 'Could not save: '+((e&&e.message)||e); });
+  }
+  function scrumText(){
+    var r = SC.rec, L = ['Daily scrum — '+r.date, '', 'YESTERDAY'];
+    r.yesterday.forEach(function(c){ L.push('• '+c.candidate+' ('+[c.time,c.company,c.round].filter(Boolean).join(', ')+')'+(c.status?' ['+c.status+']':'')+(c.feedback?' — '+c.feedback:'')); });
+    L.push('', 'TODAY ('+r.today.length+' calls)'); r.today.forEach(function(c){ L.push('• '+c.time+' '+c.candidate+' — '+c.company+' · '+c.type); });
+    L.push('', 'NOTES', r.summary||'', '', 'TRANSCRIPT', r.transcript||''); return L.join('\n');
+  }
+  function openPast(el){
+    var body = el.querySelector('.d39-body'); sync(el);
+    var go = function(){ body.innerHTML = '<button type="button" class="d27-btn" data-d39s="back">‹ Back</button><div class="d27-list">'+(SC.idx.length ? SC.idx.map(function(d){ return '<button type="button" class="d27-row" data-d39ld="'+esc(d)+'"><span class="n"><b>'+esc(d)+'</b></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">No saved scrums yet.</div>')+'</div>'; };
+    apiCall('app_settings',{qs:'key=scrum_index'}).then(function(d){ try{ SC.idx = JSON.parse(d.value)||[]; }catch(e){} go(); }).catch(function(){ go(); });
+  }
+  function openScrum(){
+    var el = overlay('d39S','Daily scrum','11:30 AM BOARD','<div class="d27-empty">Loading calls…</div>','d39-wide');
+    var show = function(L){ SC.rec = newRec(L||[]);
+      apiCall('app_settings',{qs:'key=scrum_'+SC.rec.date}).then(function(d){ if(d && d.value){ try{ var saved = JSON.parse(d.value); if(saved && saved.date===SC.rec.date) SC.rec = saved; }catch(e){} } }).catch(function(){}).then(function(){ if(el.isConnected) el.querySelector('.d39-body').innerHTML = scrumHtml(); });
+    };
+    if(typeof fetchAllRowsAcrossDates==='function') fetchAllRowsAcrossDates().then(show).catch(function(){ show([]); }); else show([]);
+    el.addEventListener('click', function(e){
+      var b = e.target.closest && e.target.closest('[data-d39s]'); var k = b && b.getAttribute('data-d39s');
+      if(k==='mic'){ if(SC.listening){ stopMic(); paintBtns(el); } else startMic(el); }
+      else if(k==='save') saveRec(el);
+      else if(k==='copy'){ sync(el); copy(scrumText()); }
+      else if(k==='past') openPast(el);
+      else if(k==='back'){ el.querySelector('.d39-body').innerHTML = scrumHtml(); }
+      var ld = e.target.closest && e.target.closest('[data-d39ld]');
+      if(ld){ var d = ld.getAttribute('data-d39ld'); apiCall('app_settings',{qs:'key=scrum_'+d}).then(function(x){ try{ SC.rec = JSON.parse(x.value); }catch(e){} el.querySelector('.d39-body').innerHTML = scrumHtml(); }).catch(function(){ toast('Could not load'); }); }
+      if(e.target===el || (e.target.closest && e.target.closest('[data-d39x]'))){ stopMic(); }
+    });
+    el.addEventListener('input', function(){ SC.dirty = true; });
+  }
+
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='dcmp'){ openCmp(); return true; } if(k==='scrum'){ openScrum(); return true; } return typeof prev==='function' ? prev(k) : false; };
+  window.d39History = function(id){ var r = rowById(id); if(r) overlay('d39H','Call history','THIS CALL', historyHtml(r)); };
+
+  function hook(){
+    if(typeof window.render!=='function' || !window.__d17vw) return setTimeout(hook, 300);
+    var o = window.render, tm = 0;
+    window.render = function(){ var r = o.apply(this, arguments); clearTimeout(tm); tm = setTimeout(ring, 120); return r; };
+    setInterval(ring, 30000); setTimeout(ring, 400);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', hook); else hook();
 })();
