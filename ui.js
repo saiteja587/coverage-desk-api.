@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V3.1', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.2', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,12 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.2','2026-11-05','Cards everywhere',[
+      '🧑 Candidate hover: History · Rounds · Tests & flags',
+      '🏢 Client hover: History · Rules & stats · Handlers (who runs it smoothest)',
+      '🗂 Right-click a call → Call card: Overview · Trail · Prep',
+      '👤 Person names in more Tools lists open the person card'
+    ]],
     ['V3.1','2026-11-05','Person card',[
       '👤 Hover a driving person or handler for one pop-up: Today · Week · Incentives · Record',
       '📱 Tools → Person card for anyone, on phone or laptop',
@@ -5602,7 +5608,7 @@ window.cdOwnerOf = function(r){
     return el;
   }
   function openInfo(kind, row){
-    if(!row) return;
+    if(!row) return; window.__d41ctx = {kind:kind, id:row.id};
     var H = NEEDS_HIST[kind] ? past() : null, el = sheet(content(kind, row, null, H) || '<div style="opacity:.75">Nothing to show.</div>');
     if((NEEDS_HIST[kind] || kind==='client') && !hist() && typeof fetchAllRowsAcrossDates==='function') fetchAllRowsAcrossDates().then(function(){ if(el.isConnected) el.querySelector('.d32-body').innerHTML = content(kind, row, null, past()); }).catch(function(){});
   }
@@ -6317,6 +6323,7 @@ window.cdOwnerOf = function(r){
     setBody(el, prepHtml(r, hist())); if(!hist()) ensureHist(function(H){ if(el.isConnected) setBody(el, H ? prepHtml(r, H) : window.d35Fail('d34:prep:'+r.id)); });
   }
   window.d34Prep = openPrep;
+  window.d34PrepHtml = function(r){ var H = hist(); return H ? prepHtml(r, H) : ''; };
   async function onTool(e){
     var el = e.currentTarget, t = e.target; if(!t.closest) return; var b;
     if((b = t.closest('[data-d35retry]'))){ var rk = b.getAttribute('data-d35retry'); if(rk.indexOf('d34:prep:')===0){ openPrep(rk.slice(9)); } else if(rk==='d34:dtrend'){ setBody(el,'<div class="d27-empty">Reading every saved day…</div>'); ensureHist(function(H){ setBody(el, H ? dtHtml(H) : window.d35Fail(rk)); }); } else { setBody(el,'<div class="d27-empty">Loading…</div>'); loadInc().then(function(){ setBody(el, incHtml()); }).catch(function(){ setBody(el, window.d35Fail(rk)); }); } return; }
@@ -6768,7 +6775,7 @@ window.cdOwnerOf = function(r){
     var items = [];
     if(A && !r.woi){ items.push(['conf','✅','Mark confirmed'+(cf==='confirmed'?' (on)':'')], ['noreply','🔕','Mark no reply'+(cf==='noreply'?' (on)':'')]); }
     items.push(['cname','📋','Copy candidate name'], ['ctime','🕒','Copy time (IST + client zone)'], ['cmsg','💬','Copy reminder message']);
-    items.push(['prep','🧭','Prep card'], ['hist','🕘','History of this call']); if(window.cdOwnerOf && window.cdOwnerOf(r)) items.push(['pcard','👤','Person card']);
+    items.push(['prep','🧭','Prep card'], ['hist','🕘','History of this call']); items.unshift(['ccard','🗂','Call card']); if(window.cdOwnerOf && window.cdOwnerOf(r)) items.push(['pcard','👤','Person card']);
     menu = document.createElement('div'); menu.id = 'd39Menu';
     menu.innerHTML = '<div class="d39-mh">'+esc(r.candidate||'Call')+'<small>'+esc(r.time||'')+'</small></div>'+items.map(function(i){ return '<button type="button" data-d39m="'+i[0]+'"><span>'+i[1]+'</span>'+esc(i[2])+'</button>'; }).join('');
     document.body.appendChild(menu);
@@ -6794,6 +6801,7 @@ window.cdOwnerOf = function(r){
     else if(k==='cmsg') copy(window.d29ChaseMsg ? window.d29ChaseMsg(r) : (r.candidate||'')+' – '+timeText(r));
     else if(k==='prep'){ if(window.d34Open){ window.d34Open('prep'); } if(window.d34Prep) window.d34Prep(r.id); }
     else if(k==='hist') overlay('d39H','Call history','THIS CALL', historyHtml(r));
+    else if(k==='ccard'){ if(window.d41Call) window.d41Call(r.id); }
     else if(k==='pcard'){ var ow = window.cdOwnerOf && window.cdOwnerOf(r); if(ow && window.d40Open) window.d40Open(ow.name); }
   }, true);
   ['scroll','keydown','resize'].forEach(function(ev){ window.addEventListener(ev, function(e){ if(menu && !(ev==='keydown' && e.key!=='Escape')) closeMenu(); }, true); });
@@ -6981,6 +6989,7 @@ window.cdOwnerOf = function(r){
 
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='dcmp'){ openCmp(); return true; } if(k==='scrum'){ openScrum(); return true; } return typeof prev==='function' ? prev(k) : false; };
+  window.d39TimeText = timeText; window.d39HistoryHtml = historyHtml; window.d39Conf = getConf;
   window.d39History = function(id){ var r = rowById(id); if(r) overlay('d39H','Call history','THIS CALL', historyHtml(r)); };
 
   function hook(){
@@ -7156,4 +7165,182 @@ window.cdOwnerOf = function(r){
     });
   }
   try{ new MutationObserver(function(){ clearTimeout(decorate._t); decorate._t = setTimeout(decorate, 150); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+})();
+
+/* ===== d41: V3.2 — tabs on candidate & client cards, call card, person names in more places ===== */
+(function(){
+  if(window.__d41) return; window.__d41 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var nk = function(c){ try{ return normalizeNameKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var rows = function(){ return (typeof state!=='undefined' && state.rows) || []; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0] || null; };
+  var ICON = {rescheduled:'🔁', cancelled:'✕', not_responded:'☎', no_invite:'📨'};
+  var loading = '<div class="d41-empty">Loading…</div>';
+  var ownerOf = function(r){ try{ var o = window.cdOwnerOf && window.cdOwnerOf(r); return o && o.name ? o.name : (r.assignee||''); }catch(e){ return r.assignee||''; } };
+  var adv = function(rd){ try{ return isAdvancedRound(rd); }catch(e){ return /2|3|final|second|third/i.test(rd||''); } };
+  var short = function(d){ var p = String(d||'').split('-'); return p.length===3 ? p[2]+'/'+p[1] : d||''; };
+  var sum = function(items){ return '<div class="d41-sum">'+items.map(function(i){ return '<span class="'+(i[2]||'')+'"><b>'+i[0]+'</b> '+i[1]+'</span>'; }).join('')+'</div>'; };
+  function allRows(){ return typeof fetchAllRowsAcrossDates==='function' ? fetchAllRowsAcrossDates().then(function(L){ return L||[]; }) : Promise.resolve([]); }
+  var pname = function(n){ return '<span data-d40p="'+esc(n)+'" style="cursor:help">'+esc(n)+'</span>'; };
+
+  /* ---------- candidate panes ---------- */
+  function roundsHtml(name){
+    return allRows().then(function(A){
+      var k = nk(name), L = A.filter(function(r){ return r.candidate && nk(r.candidate)===k && !r.woi; }).sort(function(a,b){ return String(a._date).localeCompare(String(b._date)); });
+      if(!L.length) return '<div class="d41-empty">No other calls found for this candidate.</div>';
+      var cos = {}; L.forEach(function(r){ if(r.company) cos[r.company.toLowerCase()] = 1; });
+      var h = sum([[L.length,'call'+(L.length===1?'':'s')],[Object.keys(cos).length,'client'+(Object.keys(cos).length===1?'':'s')],[L.filter(function(r){ return adv(r.round); }).length,'2nd round +']]);
+      return h+'<div class="d41-list">'+L.map(function(r){
+        var o = ownerOf(r);
+        return '<div class="d41-r"><span class="t">'+esc(short(r._date))+'</span><span class="n"><b>'+esc(r.company||'—')+'</b><small>'+esc([r.round,r.role,r.time].filter(Boolean).join(' · '))+'</small></span><span class="o">'+(r.status?(ICON[r.status]||esc(r.status)):'')+(o?' '+pname(o):'')+'</span></div>';
+      }).join('')+'</div>';
+    });
+  }
+  function testsHtml(name, row){
+    var h = '', as = [], os = [];
+    try{ as = assessmentsForCandidate(name, row && row.company) || []; }catch(e){}
+    try{ os = onsitesForCandidate(name, row && row.company) || []; }catch(e){}
+    h += '<div class="d41-sec">Assessments</div>'+(as.length ? '<div class="d41-list">'+as.map(function(a){ return '<div class="d41-r"><span class="t">'+esc(short(a.date))+'</span><span class="n"><b>'+esc(a.assessment||'Assessment')+'</b><small>'+esc(a.company||'')+'</small></span><span class="o">'+esc(a.done?'done':(a.status||'pending'))+'</span></div>'; }).join('')+'</div>' : '<div class="d41-empty">None on file.</div>');
+    h += '<div class="d41-sec">Onsite</div>'+(os.length ? '<div class="d41-list">'+os.map(function(o){ return '<div class="d41-r"><span class="t">'+esc(short(o.date))+'</span><span class="n"><b>'+esc(o.company||'Onsite')+'</b><small>'+esc(o.location||'')+'</small></span><span class="o"></span></div>'; }).join('')+'</div>' : '<div class="d41-empty">None on file.</div>');
+    var flags = [];
+    try{ if(row && row.candidate){ var key = nk(row.candidate)+'|'+(typeof normalizeCompanyKey==='function'?normalizeCompanyKey(row.company||''):''); if(typeof expectedClosureKeys!=='undefined' && expectedClosureKeys.has(key)) flags.push('🎯 Flagged as an expected closure'); } }catch(e){}
+    try{ var rn = row ? findRepeatNoShowFlag(row) : null; if(rn) flags.push('⚠ '+rn.count+' earlier rescheduled / cancelled / no-response outcomes'); }catch(e){}
+    if(flags.length) h += '<div class="d41-sec">Flags</div>'+flags.map(function(f){ return '<div class="d41-note">'+esc(f)+'</div>'; }).join('');
+    if(row) h += '<button type="button" class="d27-btn d41-btn" data-d41prep="'+esc(row.id)+'">🧭 Open prep card</button>';
+    return h;
+  }
+  /* ---------- client panes ---------- */
+  function collectFor(name, row){
+    var L = []; try{ L = window.d31Collect ? (window.d31Collect(row || {company:name, candidate:'', country:''}, name) || []) : []; }catch(e){} return L;
+  }
+  function statsHtml(name, row){
+    return allRows().then(function(){
+      var L = collectFor(name, row), rule = ''; try{ rule = window.d29RuleFor ? window.d29RuleFor(name) : ''; }catch(e){}
+      var h = rule ? '<div class="d41-note">📌 <b>Client rule</b><br>'+esc(rule)+'</div>' : '<div class="d41-empty">No client rule saved. Add one in Tools → Client rules.</div>';
+      if(!L.length) return h+'<div class="d41-empty">No calls on file for this client.</div>';
+      var cand = {}, bad = 0, a2 = 0, roles = {}, days = {};
+      L.forEach(function(o){ cand[nk(o.candidate)] = 1; if(o.status) bad++; if(adv(o.round)) a2++; if(o.role) roles[o.role] = (roles[o.role]||0)+1; days[o.date] = 1; });
+      h += sum([[L.length,'calls'],[Object.keys(cand).length,'candidates'],[Math.round(bad/L.length*100)+'%','did not go ahead', bad?'bad':''],[a2,'2nd round +']]);
+      var tr = Object.keys(roles).sort(function(a,b){ return roles[b]-roles[a]; }).slice(0,5);
+      if(tr.length) h += '<div class="d41-sec">Roles they hire for</div><div class="d41-list">'+tr.map(function(k){ return '<div class="d41-r"><span class="t"></span><span class="n"><b>'+esc(k)+'</b></span><span class="o"><b>'+roles[k]+'</b></span></div>'; }).join('')+'</div>';
+      return h+'<div class="d41-foot">Across '+Object.keys(days).length+' day'+(Object.keys(days).length===1?'':'s')+' on file.</div>';
+    });
+  }
+  function whoHtml(name, row){
+    return allRows().then(function(){
+      var L = collectFor(name, row), by = {};
+      L.forEach(function(o){ var k = o.owner || ''; if(!k) return; try{ if(getTeamNames().has(k)) return; }catch(e){} by[k] = by[k] || {n:0, bad:0}; by[k].n++; if(o.status) by[k].bad++; });
+      var ks = Object.keys(by).sort(function(a,b){ return by[b].n-by[a].n; });
+      if(!ks.length) return '<div class="d41-empty">No handler information for this client yet.</div>';
+      var best = ks.filter(function(k){ return by[k].n>=3; }).sort(function(a,b){ return by[a].bad/by[a].n-by[b].bad/by[b].n || by[b].n-by[a].n; })[0];
+      var h = best ? '<div class="d41-note">⭐ Smoothest so far: <b>'+pname(best)+'</b> — '+by[best].n+' calls, '+Math.round(by[best].bad/by[best].n*100)+'% did not go ahead</div>' : '<div class="d41-empty">Need 3+ calls per handler to suggest the smoothest one.</div>';
+      return h+'<div class="d41-list">'+ks.slice(0,10).map(function(k){ return '<div class="d41-r"><span class="t"></span><span class="n"><b>'+pname(k)+'</b><small>'+Math.round(by[k].bad/by[k].n*100)+'% did not go ahead</small></span><span class="o"><b>'+by[k].n+'</b> calls</span></div>'; }).join('')+'</div>';
+    });
+  }
+  var KINDS = {
+    cand: [['hist','History'],['rounds','Rounds'],['tests','Tests & flags']],
+    client: [['hist','History'],['stats','Rules & stats'],['who','Handlers']]
+  };
+  var ACT = {cand:'hist', client:'hist'};
+  function paneHtml(kind, tab, name, row){
+    if(kind==='cand') return tab==='rounds' ? roundsHtml(name) : testsHtml(name, row);
+    return tab==='stats' ? statsHtml(name, row) : whoHtml(name, row);
+  }
+  function show(container, kind, tab, name, row){
+    ACT[kind] = tab;
+    container.querySelectorAll(':scope > .d41-tabs [data-d41t]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-d41t')===tab); });
+    container.querySelectorAll(':scope > .d41-pane').forEach(function(p){ p.style.display = p.getAttribute('data-d41p')===tab ? '' : 'none'; });
+    if(tab==='hist') return;
+    var pane = container.querySelector(':scope > .d41-pane[data-d41p="'+tab+'"]');
+    if(!pane){ pane = document.createElement('div'); pane.className = 'd41-pane'; pane.setAttribute('data-d41p', tab); container.appendChild(pane); }
+    if(pane.__done) return; pane.innerHTML = loading;
+    Promise.resolve().then(function(){ return paneHtml(kind, tab, name, row); }).then(function(h){ if(pane.isConnected){ pane.innerHTML = h; pane.__done = true; } }).catch(function(){ if(pane.isConnected) pane.innerHTML = '<div class="d41-empty">Could not load.</div>'; });
+  }
+  function wrap(container, kind, name, row){
+    if(!container || container.querySelector(':scope > .d41-tabs') || !name) return;
+    var orig = document.createElement('div'); orig.className = 'd41-pane'; orig.setAttribute('data-d41p','hist');
+    while(container.firstChild) orig.appendChild(container.firstChild);
+    var bar = document.createElement('div'); bar.className = 'd41-tabs';
+    bar.innerHTML = KINDS[kind].map(function(t){ return '<button type="button" data-d41t="'+t[0]+'">'+t[1]+'</button>'; }).join('');
+    container.appendChild(bar); container.appendChild(orig);
+    bar.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d41t]'); if(!b) return; e.preventDefault(); e.stopPropagation(); show(container, kind, b.getAttribute('data-d41t'), name, row); });
+    bar.addEventListener('mousedown', function(e){ e.stopPropagation(); });
+    show(container, kind, ACT[kind]||'hist', name, row);
+    container.insertBefore(bar, container.firstChild);
+  }
+  var seenObs = new WeakSet();
+  function rewrapOnChange(container, fn){
+    if(seenObs.has(container)) return; seenObs.add(container);
+    try{ new MutationObserver(function(){ if(!container.querySelector(':scope > .d41-tabs')) fn(); }).observe(container, {childList:true}); }catch(e){}
+  }
+  function firstLine(el){ var f = el.firstElementChild; while(f && (f.tagName==='BUTTON' || f.classList.contains('d41-tabs'))) f = f.nextElementSibling; return f ? f.textContent.trim().split('\n')[0] : ''; }
+  function hookPopup(el){
+    var kind = el.id==='d20Hist' ? 'cand' : 'client';
+    var go = function(){
+      var name = firstLine(el), row = null;
+      if(kind==='cand') row = rows().filter(function(r){ return r.candidate===name; })[0] || null; else row = rows().filter(function(r){ return r.company===name; })[0] || null;
+      wrap(el, kind, name, row);
+    };
+    go(); rewrapOnChange(el, go);
+  }
+  function hookSheet(el){
+    var body = el.querySelector('.d32-body'); var ctx = window.__d41ctx; if(!body || !ctx || (ctx.kind!=='cand' && ctx.kind!=='client')) return;
+    var row = rowById(ctx.id); if(!row) return; var name = ctx.kind==='cand' ? row.candidate : row.company;
+    var go = function(){ wrap(body, ctx.kind, name, row); };
+    go(); rewrapOnChange(body, go);
+  }
+  try{ new MutationObserver(function(muts){
+    muts.forEach(function(m){ m.addedNodes.forEach(function(n){
+      if(n.nodeType!==1) return;
+      if(n.id==='d20Hist' || n.id==='d31Cl') hookPopup(n);
+      else if(n.id==='d32Sheet') hookSheet(n);
+    }); });
+  }).observe(document.body, {childList:true}); }catch(e){}
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d41prep]'); if(!b) return;
+    e.preventDefault(); e.stopPropagation(); if(window.d34Open) window.d34Open('prep'); if(window.d34Prep) window.d34Prep(b.getAttribute('data-d41prep'));
+  }, true);
+
+  /* ---------- call card ---------- */
+  function overviewHtml(r){
+    var o = ownerOf(r), cf = ''; try{ cf = (window.d39Conf ? window.d39Conf()[r.id] : '') || ''; }catch(e){}
+    var sf = (r.statusFields||[]).filter(function(f){ return (f.value||'').trim(); });
+    var kv = [['Candidate',r.candidate],['Client',r.company],['Role',r.role],['Round',r.round],['Time',window.d39TimeText ? window.d39TimeText(r) : r.time],['Duration',r.duration],['Country',r.country||'USA'],['Team',r.assignee],['Owner',o],['Confirmation',cf],['Waiting for invite',r.woi?'yes':''],['Status',r.status?String(r.status).replace(/_/g,' '):''],['Reason',sf.map(function(f){ return f.label+': '+f.value; }).join(' · ')],['Doubts',(r.doubts||[]).join(' ')]];
+    return '<div class="d41-kv">'+kv.filter(function(x){ return x[1]; }).map(function(x){ return '<div><small>'+esc(x[0])+'</small><div>'+(x[0]==='Owner' ? pname(x[1]) : esc(x[1]))+'</div></div>'; }).join('')+'</div>';
+  }
+  function callTab(r, tab){
+    if(tab==='ov') return overviewHtml(r);
+    if(tab==='trail') return window.d39HistoryHtml ? window.d39HistoryHtml(r) : '<div class="d41-empty">Not available.</div>';
+    if(!window.d34PrepHtml) return '<div class="d41-empty">Not available.</div>';
+    var h = window.d34PrepHtml(r);
+    if(h) return h;
+    return allRows().then(function(){ return window.d34PrepHtml(r) || '<div class="d41-empty">No earlier history to prepare from.</div>'; });
+  }
+  window.d41Call = function(id){
+    var r = rowById(id); if(!r) return;
+    var old = document.getElementById('d41C'); if(old) old.remove();
+    var el = document.createElement('div'); el.id = 'd41C'; el.className = 'd27-ov d41-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc([r.time,r.company].filter(Boolean).join(' · '))+'</small><h2>'+esc(r.candidate||'Call')+'</h2></div><button type="button" class="d27-x" data-d41x aria-label="Close">✕</button></div><div class="d29-body"><div class="d41-tabs">'+[['ov','Overview'],['trail','Trail'],['prep','Prep']].map(function(t,i){ return '<button type="button" data-d41c="'+t[0]+'" class="'+(i===0?'on':'')+'">'+t[1]+'</button>'; }).join('')+'</div><div class="d41-cb"></div></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    var cb = el.querySelector('.d41-cb'), cur = 'ov';
+    var paint = function(tab){ cur = tab; cb.innerHTML = loading; Promise.resolve().then(function(){ return callTab(r, tab); }).then(function(h){ if(el.isConnected && cur===tab) cb.innerHTML = h; }).catch(function(){ if(el.isConnected) cb.innerHTML = '<div class="d41-empty">Could not load.</div>'; }); };
+    paint('ov');
+    el.addEventListener('click', function(e){
+      if(e.target===el || (e.target.closest && e.target.closest('[data-d41x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); return; }
+      var b = e.target.closest && e.target.closest('[data-d41c]'); if(!b) return;
+      el.querySelectorAll('[data-d41c]').forEach(function(x){ x.classList.toggle('on', x===b); }); paint(b.getAttribute('data-d41c'));
+    });
+  };
+
+  /* ---------- person names in more Tools lists ---------- */
+  function decorate(){
+    var ppl = (state.roster||[]).map(function(p){ return p && p.name; }).filter(Boolean);
+    if(!ppl.length) return;
+    document.querySelectorAll('.d27-ov:not(#d40S):not(#d40P) .n > b, .d27-ov .d27-row > b, .d27-ov .d27-load span:first-child').forEach(function(s){
+      if(s.hasAttribute('data-d40p') || s.querySelector('[data-d40p]')) return;
+      var n = s.textContent.trim(); if(!n) return;
+      if(ppl.some(function(p){ return p.toLowerCase()===n.toLowerCase(); })){ s.setAttribute('data-d40p', n); s.style.cursor = 'help'; }
+    });
+  }
+  try{ new MutationObserver(function(){ clearTimeout(decorate._t); decorate._t = setTimeout(decorate, 200); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
 })();
