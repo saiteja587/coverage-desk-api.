@@ -6839,7 +6839,7 @@ window.cdOwnerOf = function(r){
   }
 
   /* ---------- 6. daily scrum board ---------- */
-  var SC = {rec:null, listening:false, recog:null, timer:0, dirty:false, idx:[]};
+  var SC = {rec:null, listening:false, recog:null, timer:0, dirty:false, idx:[], engine:(function(){ try{ return localStorage.getItem('cd.scrum.eng')||'groq'; }catch(e){ return 'groq'; } })(), lang:(function(){ try{ return localStorage.getItem('cd.scrum.lang')||'te'; }catch(e){ return 'te'; } })(), rg:null, cfg:null};
   var TECH = /(develop|engineer|data|devops|qa\b|test|java|python|\.net|cloud|sql|analyst|architect|sap|salesforce|software|full.?stack|ml\b|ai\b|security|network|sre|platform|backend|frontend)/i;
   var yday = function(){ var t = today(); return (typeof deskDateAdd==='function') ? deskDateAdd(t,-1) : t; };
   function newRec(L){
@@ -6860,6 +6860,7 @@ window.cdOwnerOf = function(r){
     h += T.length ? T.map(function(c,i){ return '<div class="d39-cc"><div class="d39-c1"><b>'+esc(c.candidate)+'</b><small>'+esc([c.time,c.company,c.round,c.role].filter(Boolean).join(' · '))+'</small><select data-d39ty="'+i+'"><option value="technical"'+(c.type==='technical'?' selected':'')+'>Technical</option><option value="theoretical"'+(c.type==='theoretical'?' selected':'')+'>Theoretical</option><option value="other"'+(c.type==='other'?' selected':'')+'>Other</option></select></div></div>'; }).join('') : '<div class="d27-empty">No calls on the board for today.</div>';
     h += '</div><div class="d39-scr"><div class="d39-sh">Transcript <small id="d39St">'+(SC.listening?'🔴 listening…':'stopped')+'</small></div>'
       + '<div class="d39-sbar"><button type="button" class="d27-btn" data-d39s="mic">'+(SC.listening?'⏹ Stop':'🎙 Start listening')+'</button><button type="button" class="d27-btn" data-d39s="save">💾 Save record</button><button type="button" class="d27-btn" data-d39s="copy">📋 Copy</button><button type="button" class="d27-btn" data-d39s="past">🗂 Past</button></div>'
+      + '<div class="d39-eng"><label>Engine <select data-d39eng><option value="groq"'+(SC.engine==='groq'?' selected':'')+'>Groq Whisper (accurate)</option><option value="browser"'+(SC.engine==='browser'?' selected':'')+'>Browser (free, basic)</option></select></label><label>Output <select data-d39lang><option value="te"'+(SC.lang==='te'?' selected':'')+'>Telugu text</option><option value="en"'+(SC.lang==='en'?' selected':'')+'>English translation</option></select></label></div>'
       + '<textarea id="d39Tx" rows="14" placeholder="Telugu speech appears here while you talk. You can type or fix anything.">'+esc(R.transcript)+'</textarea>'
       + '<div class="d39-sh">Decisions / action items</div><textarea id="d39Sm" rows="4" placeholder="Notes for the record…">'+esc(R.summary)+'</textarea>'
       + '<p class="d29-p" id="d39Ms">Speech is typed from this device’s microphone (Chrome). No audio is stored. Tell the team the scrum is being transcribed.</p></div></div>';
@@ -6870,8 +6871,45 @@ window.cdOwnerOf = function(r){
     el.querySelectorAll('[data-d39fb]').forEach(function(t){ var c = SC.rec.yesterday[+t.getAttribute('data-d39fb')]; if(c) c.feedback = t.value; });
     el.querySelectorAll('[data-d39ty]').forEach(function(s){ var c = SC.rec.today[+s.getAttribute('data-d39ty')]; if(c) c.type = s.value; });
   }
-  function stopMic(){ SC.listening = false; try{ if(SC.recog){ SC.recog.onend = null; SC.recog.stop(); } }catch(e){} SC.recog = null; }
+  function stopMic(){
+    SC.listening = false; try{ if(SC.recog){ SC.recog.onend = null; SC.recog.stop(); } }catch(e){} SC.recog = null;
+    var g = SC.rg; if(g){ g.on = false; clearTimeout(g.t); try{ if(g.rec && g.rec.state!=='inactive') g.rec.stop(); }catch(e){} setTimeout(function(){ try{ g.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} }, 1500); }
+  }
+  /* Groq Whisper: record the mic in ~25 s standalone chunks, send each to the server (which forwards to Groq and keeps nothing). */
+  function stamp(){ var d = new Date(); return '['+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+'] '; }
+  function b64(blob){ return new Promise(function(res, rej){ var f = new FileReader(); f.onload = function(){ res(String(f.result).split(',')[1]||''); }; f.onerror = rej; f.readAsDataURL(blob); }); }
+  function startGroq(el){
+    var ms = el.querySelector('#d39Ms'), tx = el.querySelector('#d39Tx');
+    if(!navigator.mediaDevices || !window.MediaRecorder){ if(ms) ms.textContent = 'This browser can’t record audio. Use Chrome.'; return; }
+    navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:true}}).then(function(stream){
+      var g = SC.rg = {on:true, stream:stream, rec:null, t:0, q:Promise.resolve(), sent:0, done:0, err:0};
+      SC.listening = true; paintBtns(el);
+      var mime = ['audio/webm;codecs=opus','audio/webm','audio/mp4'].filter(function(m){ try{ return MediaRecorder.isTypeSupported(m); }catch(e){ return false; } })[0] || '';
+      var info = function(extra){ if(ms) ms.textContent = 'Groq Whisper · '+g.done+'/'+g.sent+' pieces transcribed'+(extra?' · '+extra:''); };
+      function send(blob){
+        if(blob.size < 3000) return; g.sent++; info('working…');
+        g.q = g.q.then(function(){ return b64(blob); }).then(function(a){
+          return apiCall('stt',{method:'POST', timeoutMs:60000, body:{audio:a, mime:blob.type||mime, mode: SC.lang==='en' ? 'translate' : 'transcribe'}});
+        }).then(function(j){
+          g.done++; var t = (j && j.text || '').trim();
+          if(t && tx){ var cur = tx.value; tx.value = cur + (cur && !/\n$/.test(cur) ? '\n' : '') + stamp() + t; tx.scrollTop = tx.scrollHeight; SC.rec.transcript = tx.value; SC.dirty = true; }
+          info();
+        }).catch(function(e){ g.done++; g.err++; info('a piece failed: '+String((e&&e.message)||e).replace(/^stt:\s*/,'').slice(0,90)); });
+      }
+      function cycle(){
+        if(!g.on || !el.isConnected){ return; }
+        var chunks = [], rec;
+        try{ rec = new MediaRecorder(stream, mime ? {mimeType:mime} : undefined); }catch(e){ if(ms) ms.textContent = 'Could not start recording.'; SC.listening = false; paintBtns(el); return; }
+        g.rec = rec;
+        rec.ondataavailable = function(ev){ if(ev.data && ev.data.size) chunks.push(ev.data); };
+        rec.onstop = function(){ send(new Blob(chunks, {type: rec.mimeType || mime || 'audio/webm'})); if(g.on) cycle(); else { SC.listening = false; paintBtns(el); } };
+        rec.start(); g.t = setTimeout(function(){ try{ if(rec.state!=='inactive') rec.stop(); }catch(e){} }, 25000);
+      }
+      cycle(); info('listening, first text in ~25 s');
+    }).catch(function(e){ if(ms) ms.textContent = (e && e.name==='NotAllowedError') ? 'Microphone is blocked. Allow it in the address bar, then press Start.' : 'Could not open the microphone.'; });
+  }
   function startMic(el){
+    if(SC.engine==='groq' && SC.cfg!==false) return startGroq(el);
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     var ms = el.querySelector('#d39Ms');
     if(!SR){ if(ms) ms.textContent = 'This browser can’t transcribe speech. Use Chrome on the laptop.'; return; }
@@ -6925,6 +6963,12 @@ window.cdOwnerOf = function(r){
       if(e.target===el || (e.target.closest && e.target.closest('[data-d39x]'))){ stopMic(); }
     });
     el.addEventListener('input', function(){ SC.dirty = true; });
+    el.addEventListener('change', function(e){
+      var t = e.target; if(!t.getAttribute) return;
+      if(t.hasAttribute('data-d39eng')){ SC.engine = t.value; try{ localStorage.setItem('cd.scrum.eng', t.value); }catch(x){} if(SC.listening){ stopMic(); paintBtns(el); } }
+      if(t.hasAttribute('data-d39lang')){ SC.lang = t.value; try{ localStorage.setItem('cd.scrum.lang', t.value); }catch(x){} }
+    });
+    apiCall('stt',{}).then(function(j){ SC.cfg = !!(j && j.configured); var ms = el.querySelector('#d39Ms'); if(!SC.cfg){ SC.engine = 'browser'; var s2 = el.querySelector('[data-d39eng]'); if(s2) s2.value = 'browser'; if(ms) ms.textContent = 'Groq Whisper is not switched on yet (GROQ_API_KEY missing). Using the free browser engine.'; } }).catch(function(){});
   }
 
   var prev = window.d35Open;
