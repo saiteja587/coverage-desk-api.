@@ -4101,7 +4101,11 @@ const RESCHED_UNAVAILABLE_RE = /\b(?:unable\s+to\s+attend|(?:can.?t|cannot|won.?
 // "Network issue from candidate end … audio not audible … no transcript": the call could not be held
 // because of a connection/audio problem — tracked like a candidate-side reschedule.
 const TECH_ISSUE_RE = /(?:network|connectivity|connection|internet|audio|mic(?:rophone)?|video|sound)\s+(?:issue|problem|trouble)s?|\bnot\s+(?:even\s+)?audi?ble|\bno\s+(?:audio|sound|transcript)\b|(?:could\s*n.?t|can.?t|unable\s+to|not\s+able\s+to)\s+(?:hear|join|connect)/i;
+// "postponed to 8:30pm", "pushed to", "shifted to", "moved to", "preponed to" mean the same as "rescheduled to" - normalise
+// them (only when a time follows) so every rule below sees one wording.
+function normalizeMoveWords(t){ return String(t||'').replace(/\b(?:post-?pon\w*|prepon\w*|pushed|shifted|moved|delayed|advanced)\b(?=\s+(?:\w+\s+){0,2}to\s+\d)/ig, 'rescheduled'); }
 function looksLikeRescheduleLine(line){
+  line = normalizeMoveWords(line);
   // Broadened to also catch "not responding"/"no response" messages (a
   // genuinely distinct status from reschedule/cancel), typo'd variants
   // like "no responsing", to allow a bare time like "7:00" with no AM/PM,
@@ -4141,6 +4145,7 @@ function looksLikeRescheduleLine(line){
   return hasStatusWord;
 }
 function parseRescheduleText(text){
+  text = normalizeMoveWords(text);
   const results = [];
   const lines = text.split('\n').map(l=>stripWhatsAppExportPrefix(l.trim().replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')));
   // Bare times (no AM/PM) default to PM — matches the app's existing
