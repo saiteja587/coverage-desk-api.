@@ -257,6 +257,47 @@ async function ttopRead(req, res) {
   } finally { clearTimeout(to); }
 }
 
+
+// ---- Groq Whisper speech-to-text (daily scrum) ----------------------------------------------
+async function sttHandle(req, res) {
+  const key = process.env.GROQ_API_KEY;
+  if (req.method === 'GET') return res.status(200).json({ configured: !!key, model: process.env.STT_MODEL || 'whisper-large-v3' });
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only.' });
+  if (!key) return res.status(503).json({ error: 'Speech-to-text is not configured. Add GROQ_API_KEY in Vercel.', code: 'not_configured' });
+  const b = req.body || {};
+  const b64 = String(b.audio || '');
+  if (!b64) return res.status(400).json({ error: 'No audio.' });
+  if (b64.length > 5500000) return res.status(413).json({ error: 'Audio chunk too large.' });
+  const mime = /^audio\/(webm|ogg|mp4|mpeg|wav|x-m4a)/.test(String(b.mime || '')) ? String(b.mime).split(';')[0] : 'audio/webm';
+  const ext = /ogg/.test(mime) ? 'ogg' : /mp4|m4a/.test(mime) ? 'm4a' : /wav/.test(mime) ? 'wav' : /mpeg/.test(mime) ? 'mp3' : 'webm';
+  const translate = b.mode === 'translate';
+  const base = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/$/, '');
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 2000) return res.status(200).json({ ok: true, text: '' });
+    const fd = new FormData();
+    fd.append('file', new Blob([buf], { type: mime }), 'chunk.' + ext);
+    fd.append('model', process.env.STT_MODEL || 'whisper-large-v3');
+    fd.append('response_format', 'verbose_json');
+    fd.append('temperature', '0');
+    if (!translate) {
+      fd.append('language', 'te');
+      fd.append('prompt', 'Telugu team scrum about interview calls, candidates, clients, rescheduled, no show, feedback. Technical and English words are mixed in.');
+    }
+    const r = await fetch(base + (translate ? '/audio/translations' : '/audio/transcriptions'), { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd });
+    const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (!r.ok) return res.status(r.status === 429 ? 429 : 502).json({ error: (j && j.error && j.error.message) || ('Groq said ' + r.status), status: r.status });
+    // Whisper invents text on silence; drop segments it itself marks as probably-not-speech.
+    let out = '';
+    if (j && Array.isArray(j.segments) && j.segments.length) {
+      out = j.segments.filter(sg => !(sg.no_speech_prob > 0.6) && !(sg.avg_logprob < -1.2)).map(sg => String(sg.text || '').trim()).filter(Boolean).join(' ');
+    } else out = String((j && j.text) || '').trim();
+    return res.status(200).json({ ok: true, text: out });
+  } catch (e) {
+    return res.status(502).json({ error: 'Could not reach Groq: ' + (e && e.message) });
+  }
+}
+
 module.exports = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -314,6 +355,12 @@ module.exports = async (req, res) => {
     // against what the key can actually see, so this can't be pointed anywhere else.
     if (resource === 'ttop') {
       return await ttopRead(req, res);
+    }
+
+    // Speech-to-text for the daily scrum (Groq Whisper). Audio arrives as a short base64 chunk, is forwarded
+    // to Groq and thrown away - nothing is stored. Needs GROQ_API_KEY (same key Ask Desk uses).
+    if (resource === 'stt') {
+      return await sttHandle(req, res);
     }
 
     // Read-only users can GET anything. Writes (POST) normally require the
