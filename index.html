@@ -7,7 +7,11 @@ try{
   if(localStorage.getItem('coverage-desk-theme') === 'light'){
     document.documentElement.setAttribute('data-theme', 'light');
   }
-}catch(e){}
+  // Look: glass is the default; Tools -> Look can switch back to classic.
+  if(localStorage.getItem('coverage-desk-look') !== 'classic'){
+    document.documentElement.setAttribute('data-look', 'glass');
+  }
+}catch(e){ document.documentElement.setAttribute('data-look', 'glass'); }
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0A0C10">
@@ -24,8 +28,9 @@ try{
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261121">
-<link rel="stylesheet" href="ui.css?v=20261121">
+<link rel="stylesheet" href="style.css?v=20261123">
+<link rel="stylesheet" href="ui.css?v=20261123">
+<link rel="stylesheet" href="glass.css?v=20261123">
 </head>
 <body>
 <div id="globalBusyBar" class="global-busy-bar" aria-hidden="true"></div>
@@ -61,7 +66,7 @@ try{
   </button>
 </nav>
 
-<script src="app.js?v=20261121"></script>
-<script src="ui.js?v=20261121"></script>
+<script src="app.js?v=20261123"></script>
+<script src="ui.js?v=20261123"></script>
 </body>
 </html>
