@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V3.2', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.4', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,16 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.4','2026-11-06','Glass look',[
+      '🪟 New Apple-style glass look: frosted panels, soft aurora background, pill buttons, glass pop-ups (dark + light)',
+      '🔀 Tools → “Look” switches Glass / Classic any time',
+      '🎨 Newer tool screens now follow the theme colours'
+    ]],
+    ['V3.3','2026-11-05','Student profile',[
+      '🎓 Search a student → one organised page: details, calls grouped by client with the round path, assessments, onsite, closures and flags',
+      '📜 “Full timeline” button keeps the old chronological view',
+      '↪ Reschedule paste now understands “postponed / pushed / shifted to <time>”'
+    ]],
     ['V3.2','2026-11-05','Cards everywhere',[
       '🧑 Candidate hover: History · Rounds · Tests & flags',
       '🏢 Client hover: History · Rules & stats · Handlers (who runs it smoothest)',
@@ -5058,12 +5068,13 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic']];
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
   var tool = null;
   function openTool(k){
+    if(k==='look'){ var g = document.documentElement.getAttribute('data-look')==='glass'; try{ localStorage.setItem('coverage-desk-look', g?'classic':'glass'); }catch(e){} if(g) document.documentElement.removeAttribute('data-look'); else document.documentElement.setAttribute('data-look','glass'); if(hub){ closeOv(hub); hub = null; } setTimeout(openHub, 60); return; }
     tool = k; if(hub){ closeOv(hub); hub = null; }
     if(k==='paste'){ try{ openOnlyPanel('showRescheduleImport'); render(); }catch(e){ state.showRescheduleImport = true; render(); } return; }
     var M = { chase:['Chase list','CONFIRMATIONS',chaseHtml], resched:['Reschedule helper','NEXT FREE SLOT',reschedHtml], rules:['Client rules','PER CLIENT',rulesHtml], insights:['Insights','HISTORY',null], week:['Weekly report','REPORT',null], quick:['Quick add','NEW CALL',qaHtml], handler:['Handler link','SHARE',handlerHtml] }[k];
@@ -7343,4 +7354,100 @@ window.cdOwnerOf = function(r){
     });
   }
   try{ new MutationObserver(function(){ clearTimeout(decorate._t); decorate._t = setTimeout(decorate, 200); }).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+})();
+
+/* ===== d42: V3.3 — organised student profile (opens from Search everything / any candidate tap) ===== */
+(function(){
+  if(window.__d42) return; window.__d42 = true;
+  var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var nk = function(c){ try{ return normalizeNameKey(c||''); }catch(e){ return String(c||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var today = function(){ try{ return todayDateString(); }catch(e){ return ''; } };
+  var adv = function(rd){ try{ return isAdvancedRound(rd); }catch(e){ return /2|3|final|second|third/i.test(rd||''); } };
+  var ICON = {rescheduled:'🔁', cancelled:'✕', not_responded:'☎', no_invite:'📨'};
+  var LBL = {rescheduled:'Rescheduled', cancelled:'Cancelled', not_responded:'No response', no_invite:'No invite'};
+  var sameCo = function(a,b){ try{ return fuzzyCompanyKeyMatch(a,b) || normalizeCompanyKey(a)===normalizeCompanyKey(b); }catch(e){ return String(a||'').toLowerCase()===String(b||'').toLowerCase(); } };
+  var longDate = function(d){ try{ var p = String(d).split('-').map(Number); return new Date(Date.UTC(p[0],p[1]-1,p[2])).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'}); }catch(e){ return d||''; } };
+  var chip = function(t, cls){ return '<span class="d42-chip'+(cls?' '+cls:'')+'">'+t+'</span>'; };
+  var orig = window.openCandidateProfile;
+
+  function studentInfo(name){
+    var m = null; try{ m = findStudentMasterMatchWithConfidence(name); }catch(e){}
+    return m && m.student ? m : null;
+  }
+  function build(name, data, focusCo){
+    var calls = (data.calls||[]).slice().sort(function(a,b){ return (String(a._date)+String(businessDayMinutes(a.time)).padStart(5,'0')).localeCompare(String(b._date)+String(businessDayMinutes(b.time)).padStart(5,'0')); });
+    var closures = data.closures||[], t = today();
+    var as = []; try{ as = assessmentsForCandidate(name) || []; }catch(e){}
+    var os = []; try{ os = onsitesForCandidate(name) || []; }catch(e){}
+    // group by client
+    var groups = [];
+    calls.forEach(function(c){ var g = groups.filter(function(g){ return sameCo(g.key, c.company||''); })[0]; if(!g){ g = {key:c.company||'', name:c.company||'No company', calls:[]}; groups.push(g); } g.calls.push(c); });
+    groups.sort(function(a,b){ if(focusCo){ var fa = sameCo(a.key,focusCo), fb = sameCo(b.key,focusCo); if(fa!==fb) return fa?-1:1; } return String(b.calls[b.calls.length-1]._date).localeCompare(String(a.calls[a.calls.length-1]._date)); });
+    var live = calls.filter(function(c){ return !c.status; }), bad = calls.length-live.length;
+    var upcoming = calls.filter(function(c){ return !c.status && String(c._date)>=t; })[0];
+    var furthest = calls.filter(function(c){ return !c.status; }).filter(function(c){ return adv(c.round); }).length;
+    var h = '<div class="d42-sum">'
+      + chip('<b>'+calls.length+'</b> call'+(calls.length===1?'':'s'))
+      + chip('<b>'+groups.length+'</b> client'+(groups.length===1?'':'s'))
+      + (furthest ? chip('<b>'+furthest+'</b> 2nd round +') : '')
+      + (bad ? chip('<b>'+bad+'</b> did not go ahead','bad') : '')
+      + (as.length ? chip('<b>'+as.length+'</b> assessment'+(as.length===1?'':'s')) : '')
+      + (os.length ? chip('<b>'+os.length+'</b> onsite') : '')
+      + (closures.length ? chip('🏆 <b>'+closures.length+'</b> closure'+(closures.length===1?'':'s'),'ok') : '')
+      + '</div>';
+    if(calls.length) h += '<div class="d42-meta">First call '+esc(longDate(calls[0]._date))+' · latest '+esc(longDate(calls[calls.length-1]._date))+'</div>';
+    if(upcoming) h += '<div class="d42-next"><small>NEXT UP</small><b>'+esc(longDate(upcoming._date))+' · '+esc(upcoming.time||'')+'</b><span>'+esc([upcoming.company, upcoming.round, upcoming.role].filter(Boolean).join(' · '))+'</span></div>';
+    // details
+    var si = studentInfo(name), d = [];
+    if(si){ var s = si.student; Object.keys(s).forEach(function(k){ if(k==='id'||k==='name'||s[k]==null||s[k]==='') return; if(typeof s[k]==='object') return; d.push([k.replace(/([A-Z])/g,' $1').replace(/^./,function(x){ return x.toUpperCase(); }), s[k]]); }); }
+    h += '<div class="d42-sec"><b>Details</b></div>';
+    h += si ? '<div class="d42-kv"><div><small>'+(si.exact?'Name in master':'Closest match in master (check)')+'</small><div>'+esc(si.student.name||name)+'</div></div>'+d.map(function(x){ return '<div><small>'+esc(x[0])+'</small><div>'+esc(x[1])+'</div></div>'; }).join('')+'</div>' : '<div class="d42-empty">Not found in Students Master.</div>';
+    // by client
+    h += '<div class="d42-sec"><b>Calls by client</b><span>'+groups.length+'</span></div>';
+    if(!groups.length) h += '<div class="d42-empty">No calls on file.</div>';
+    groups.forEach(function(g){
+      var seen = [], rds = []; g.calls.forEach(function(c){ var r = (c.round||'').trim(); if(r && !c.status && seen.indexOf(r)<0){ seen.push(r); rds.push(r); } });
+      h += '<div class="d42-co"><div class="d42-coh"><b>'+esc(g.name)+(focusCo && sameCo(g.key,focusCo)?' <em class="d42-here">this call</em>':'')+'</b><small>'+g.calls.length+' call'+(g.calls.length===1?'':'s')+(rds.length?' · '+esc(rds.join(' → ')):'')+'</small></div>';
+      h += g.calls.map(function(c){
+        var own = c.drivingPerson || c.assignee || '';
+        return '<div class="d42-r'+(c.status?' dim':'')+(String(c._date)===t?' now':'')+'"><span class="t">'+esc(String(c._date).slice(5).split('-').reverse().join('/'))+'<small>'+esc(c.time||'')+'</small></span><span class="n"><b>'+esc(c.round||'Call')+'</b><small>'+esc([c.role, own].filter(Boolean).join(' · '))+'</small></span><span class="o">'+(c.status?(ICON[c.status]||'')+' '+esc(LBL[c.status]||c.status):'')+'</span></div>'
+          + (c.status && (c.statusFields||[]).some(function(f){ return (f.value||'').trim(); }) ? '<div class="d42-why">'+esc((c.statusFields||[]).filter(function(f){ return (f.value||'').trim(); }).map(function(f){ return f.label+': '+f.value; }).join(' · '))+'</div>' : '');
+      }).join('')+'</div>';
+    });
+    // assessments / onsites
+    h += '<div class="d42-sec"><b>Assessments</b><span>'+as.length+'</span></div>';
+    h += as.length ? as.map(function(a){ return '<div class="d42-r"><span class="t">'+esc(String(a.date||'').slice(5).split('-').reverse().join('/'))+'<small>'+esc(a.time||'')+'</small></span><span class="n"><b>'+esc(a.assessment||'Assessment')+'</b><small>'+esc([a.company,a.role].filter(Boolean).join(' · '))+((a.handlers||[]).length?' · 👤 '+esc(a.handlers.join(', ')):'')+'</small></span><span class="o">'+(a.done?'✓ done':'pending')+'</span></div>'; }).join('') : '<div class="d42-empty">None.</div>';
+    h += '<div class="d42-sec"><b>Onsite</b><span>'+os.length+'</span></div>';
+    h += os.length ? os.map(function(o){ return '<div class="d42-r"><span class="t">'+esc(String(o.date||'').slice(5).split('-').reverse().join('/'))+'</span><span class="n"><b>'+esc(o.company||'Onsite')+'</b><small>'+esc(o.location||'')+'</small></span><span class="o"></span></div>'; }).join('') : '<div class="d42-empty">None.</div>';
+    // closures + flags
+    h += '<div class="d42-sec"><b>Closures & flags</b></div>';
+    var fl = [];
+    closures.forEach(function(c){ fl.push('🏆 Closure'+(c.company?' — '+esc(c.company):'')+(c.createdAt?' · '+esc(String(c.createdAt).slice(0,10)):'')); });
+    try{ (state.expectedClosures||[]).forEach(function(c){ if(nk(c.candidate)===nk(name)) fl.push('🎯 Expected closure'+(c.company?' — '+esc(c.company):'')+(c.note?': '+esc(c.note):'')); }); }catch(e){}
+    if(bad>=2) fl.push('⚠ '+bad+' earlier calls did not go ahead (rescheduled / cancelled / no response)');
+    h += fl.length ? fl.map(function(f){ return '<div class="d42-note">'+f+'</div>'; }).join('') : '<div class="d42-empty">Nothing flagged.</div>';
+    h += '<div class="d42-act"><button type="button" class="d27-btn" data-d42tl>📜 Full timeline</button><button type="button" class="d27-btn" data-d42cl>🏆 Record closure</button></div>';
+    return h;
+  }
+  function open(name, focusCo){
+    var old = document.getElementById('d42P'); if(old) old.remove();
+    var el = document.createElement('div'); el.id = 'd42P'; el.className = 'd27-ov d42-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>STUDENT PROFILE</small><h2>'+esc(name)+'</h2></div><button type="button" class="d27-x" data-d42x aria-label="Close">✕</button></div><div class="d29-body d42-body"><div class="d42-empty">Gathering everything for '+esc(name)+'…</div></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){
+      if(e.target===el || (e.target.closest && e.target.closest('[data-d42x]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); return; }
+      if(e.target.closest && e.target.closest('[data-d42tl]')){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); if(orig) orig(name, {__d42:1}); return; }
+      if(e.target.closest && e.target.closest('[data-d42cl]')){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); if(orig) orig(name, {openClosureForm:true}); }
+    });
+    var body = el.querySelector('.d42-body');
+    Promise.resolve().then(function(){ return computeCandidateProfile(name, false); }).then(function(d){ if(el.isConnected) body.innerHTML = build(name, d||{calls:[],closures:[]}, focusCo); })
+      .catch(function(){ if(el.isConnected) body.innerHTML = '<div class="d42-empty">Could not load this student. Close and try again.</div>'; });
+  }
+  window.d42Profile = open;
+  if(typeof orig==='function'){
+    window.openCandidateProfile = function(name, opts){
+      if(opts && (opts.openClosureForm || opts.__d42)) return orig.apply(this, arguments);
+      try{ open(name, opts && opts.scopeCompany); }catch(e){ return orig.apply(this, arguments); }
+    };
+  }
 })();
