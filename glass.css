@@ -331,3 +331,8 @@ html[data-look="glass"] #liveFeedBell,html[data-look="glass"] #scrollToTopBtn,ht
 }
 @media(max-width:759px){html[data-look="glass"] .bottom-nav{background:color-mix(in srgb,var(--g-pop) 100%,transparent)}}
 html[data-look="glass"] .quick-action-item{justify-content:flex-start;text-align:left;gap:12px}
+
+/* ---------- 11. V3.5 phone sheets / panels ---------- */
+html[data-look="glass"] #d43Panel .d43-pbody{background:var(--g-pop);-webkit-backdrop-filter:var(--g-blur-lg);backdrop-filter:var(--g-blur-lg);border-color:var(--g-line)}
+html[data-look="glass"] .d43-pc,html[data-look="glass"] .d43-pg button,html[data-look="glass"] .d43-smart,html[data-look="glass"] .d43-md,html[data-look="glass"] .d43-chip{background:var(--g-card);border-color:var(--g-line);box-shadow:var(--g-hl)}
+html[data-look="glass"] .d43-smart{border-radius:var(--g-r-md);-webkit-backdrop-filter:var(--g-blur);backdrop-filter:var(--g-blur)}
