@@ -4029,7 +4029,7 @@ window.cdOwnerOf = function(r){
     var needs = function(r){ try{ var team = !r.assignee || (typeof deskNeedsPerson==='function' && tn2 && deskNeedsPerson(r, tn2)); return team && !window.cdOwnerOf(r); }catch(e){ return !r.assignee; } };
     var need = rows.filter(needs);
     var admin = true; try{ admin = (CURRENT_ROLE==='admin'); }catch(e){}
-    var h = '<div class="d22">';
+    var h = '<div class="d22">'+(window.d43Smart ? window.d43Smart() : '');
     var my = ''; try{ my = getMyAssigneeName(); }catch(e){}
     var mineN = my ? rows.filter(function(r){ try{ return namesEquivalent(r.assignee, my); }catch(e){ return r.assignee===my; } }).length : 0;
     var mineOn = !!(my && state.assigneeFilter && (function(){ try{ return namesEquivalent(state.assigneeFilter, my); }catch(e){ return state.assigneeFilter===my; } })());
@@ -4358,7 +4358,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V3.4', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.5', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4369,13 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.5','2026-11-06','Focus modes + edge panel',[
+      '🎯 Tools → Focus modes: My calls / Needs owner, do-not-disturb timer',
+      '▮ Edge panel on the right edge: next calls + shortcuts',
+      '📳 Shake to undo (switch on in Focus modes)',
+      '📆 Tools → Calendar file: add calls to your phone calendar (.ics)',
+      '☀️ Smart card on the phone home changes with the time of day'
+    ]],
     ['V3.4','2026-11-06','Glass look',[
       '🪟 New Apple-style glass look: frosted panels, soft aurora background, pill buttons, glass pop-ups (dark + light)',
       '🔀 Tools → “Look” switches Glass / Classic any time',
@@ -5068,7 +5075,8 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)']];
+    window.d29T = T;
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
@@ -7000,7 +7008,7 @@ window.cdOwnerOf = function(r){
 
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='dcmp'){ openCmp(); return true; } if(k==='scrum'){ openScrum(); return true; } return typeof prev==='function' ? prev(k) : false; };
-  window.d39TimeText = timeText; window.d39HistoryHtml = historyHtml; window.d39Conf = getConf;
+  window.d39TimeText = timeText; window.d39HistoryHtml = historyHtml; window.d39Conf = getConf; window.d39SetConf = setConf;
   window.d39History = function(id){ var r = rowById(id); if(r) overlay('d39H','Call history','THIS CALL', historyHtml(r)); };
 
   function hook(){
@@ -7450,4 +7458,227 @@ window.cdOwnerOf = function(r){
       try{ open(name, opts && opts.scopeCompany); }catch(e){ return orig.apply(this, arguments); }
     };
   }
+})();
+
+/* ===== d43: V3.5 — phone gestures (swipe, long-press, pull-to-refresh / pull-to-search), focus modes, edge panel, shake undo, calendar file, smart card ===== */
+(function(){
+  'use strict';
+  if(window.__d43) return; window.__d43 = true;
+  var KG = 'cd.g43', KD = 'cd.dnd';
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function LSg(k,d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+  function LSs(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  function G(){ return Object.assign({swipe:true, press:true, pull:true, edge:true, shake:false}, LSg(KG,{})); }
+  function phone(){ return window.innerWidth < 760; }
+  function admin(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } }
+  function toast(m){ try{ if(window.d2Toast) window.d2Toast(m); }catch(e){} }
+  function rowById(id){ return (state.rows||[]).filter(function(r){ return String(r.id)===String(id); })[0]; }
+  function overlayOpen(){ return !!document.querySelector('.d27-ov, #d43Sh, #d43Panel.on, #quickJumpOverlay, .my-name-picker-overlay'); }
+  function best(r){
+    var list = []; try{ list = window.d2Rank ? window.d2Rank(r) : []; }catch(e){}
+    var tn = null; try{ tn = getTeamNames(); }catch(e){}
+    var ppl = list.filter(function(h){ return !h.isTeam && !(tn && tn.has(h.name)); });
+    for(var i=0;i<ppl.length;i++){ if(!ppl[i].absent && !ppl[i].clash) return ppl[i]; }
+    return ppl[0] || null;
+  }
+  function owner(r){ try{ return window.cdOwnerOf ? window.cdOwnerOf(r) : null; }catch(e){ return null; } }
+  function nowBd(){ var d = new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; }
+  function bd(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } }
+  function live(r){ return !r.woi && !r.status; }
+  function needsOwner(r){ return live(r) && !r.assignee; }
+
+  /* ---------- do not disturb (gate on top of quiet hours) ---------- */
+  var oShow = window.cdShowNotification;
+  if(typeof oShow==='function') window.cdShowNotification = function(title, opts){
+    try{ var tag = (opts && opts.tag) || ''; if(!/^cd-(esc|test)/.test(tag) && Date.now() < (+localStorage.getItem(KD)||0)) return Promise.resolve(false); }catch(e){}
+    return oShow.call(this, title, opts);
+  };
+  function dndLeft(){ var t = (+localStorage.getItem(KD)||0) - Date.now(); return t>0 ? t : 0; }
+  function untilHour(h){ var d = new Date(); d.setHours(h,0,0,0); if(d.getTime() <= Date.now()) d.setDate(d.getDate()+1); return d.getTime(); }
+  function dndText(){ var t = dndLeft(); if(!t) return 'Off'; var d = new Date(Date.now()+t); return 'until '+d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
+
+  /* ---------- Focus modes panel ---------- */
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d43-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d43c aria-label="Close">✕</button></div><div class="d29-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d43c]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
+    return el;
+  }
+  function focusHtml(){
+    var g = G(), my = ''; try{ my = getMyAssigneeName(); }catch(e){}
+    var mode = state.filter==='unassigned' ? 'need' : (my && state.assigneeFilter && state.assigneeFilter===my ? 'mine' : 'all');
+    var seg = function(k,l,sub){ return '<button type="button" class="d43-md'+(mode===k?' on':'')+'" data-d43m="'+k+'"><b>'+l+'</b><small>'+sub+'</small></button>'; };
+    var tog = function(k,l,sub){ return '<label class="d43-tg"><span><b>'+l+'</b><small>'+sub+'</small></span><input type="checkbox" data-d43g="'+k+'"'+(g[k]?' checked':'')+'></label>'; };
+    return '<div class="d43-sec">Show me</div><div class="d43-modes">'+seg('all','Everything','All calls')+seg('mine','My calls','Only '+(my||'mine'))+seg('need','Needs owner','Unassigned only')+'</div>'
+      + '<div class="d43-sec">Do not disturb <em>'+esc(dndText())+'</em></div><div class="d43-chips">'
+      + [['60','1 hour'],['120','2 hours'],['19','Until 7 PM'],['7','Until 7 AM'],['0','Off']].map(function(x){ return '<button type="button" class="d43-chip" data-d43d="'+x[0]+'">'+x[1]+'</button>'; }).join('')
+      + '</div><p class="d29-p">Silences call reminders on this device. Urgent escalations still come through. <a href="#" data-d43q>Quiet hours &amp; daily cap →</a></p>'
+      + '<div class="d43-sec">Phone extras</div>'
+      + tog('edge','Edge panel','Thin handle on the right edge → next calls and shortcuts')
+      + tog('shake','Shake to undo','Shake the phone to undo the last change');
+  }
+  function openFocus(){
+    var el = ov('d43F', 'Focus modes', 'WHAT YOU SEE · WHEN YOU’RE ALERTED', focusHtml());
+    el.addEventListener('click', function(e){
+      var m = e.target.closest('[data-d43m]');
+      if(m){
+        var k = m.getAttribute('data-d43m'), my = ''; try{ my = getMyAssigneeName(); }catch(x){}
+        if(k==='mine' && !my){ toast('Set “My calls” name first (Filters → My calls)'); return; }
+        state.filter = k==='need' ? 'unassigned' : 'all'; state.assigneeFilter = k==='mine' ? my : '';
+        try{ render(); }catch(x){} el.querySelector('.d29-body').innerHTML = focusHtml(); return;
+      }
+      var d = e.target.closest('[data-d43d]');
+      if(d){ var v = +d.getAttribute('data-d43d'); var until = !v ? 0 : (v>=60 ? Date.now()+v*60000 : untilHour(v));
+        try{ localStorage.setItem(KD, String(until)); }catch(x){} toast(until ? 'Do not disturb '+dndText() : 'Alerts back on'); el.querySelector('.d29-body').innerHTML = focusHtml(); return; }
+      if(e.target.closest('[data-d43q]')){ e.preventDefault(); el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); if(window.d29OpenTool) window.d29OpenTool('notif'); }
+    });
+    el.addEventListener('change', function(e){
+      var c = e.target.closest('[data-d43g]'); if(!c) return;
+      var k = c.getAttribute('data-d43g'), g = G(); g[k] = c.checked; LSs(KG, g);
+      if(k==='shake' && c.checked) askMotion().then(function(ok){ if(!ok){ g.shake = false; LSs(KG,g); c.checked = false; toast('Motion access was not allowed'); } });
+      edgeSync();
+    });
+  }
+  window.d43Focus = openFocus;
+
+  /* ---------- shake to undo ---------- */
+  function askMotion(){
+    try{ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function') return DeviceMotionEvent.requestPermission().then(function(r){ return r==='granted'; }).catch(function(){ return false; }); }catch(e){}
+    return Promise.resolve(typeof DeviceMotionEvent!=='undefined');
+  }
+  var lastJ = 0, jn = 0, lastAsk = 0;
+  window.addEventListener('devicemotion', function(e){
+    if(!G().shake || !phone()) return;
+    var a = e.accelerationIncludingGravity; if(!a) return;
+    var m = Math.sqrt((a.x||0)*(a.x||0)+(a.y||0)*(a.y||0)+(a.z||0)*(a.z||0));
+    if(Math.abs(m-9.8) < 16) return;
+    var t = Date.now(); if(t-lastJ > 120 && t-lastJ < 700) jn++; else jn = 1; lastJ = t;
+    if(jn >= 3 && t-lastAsk > 5000){ jn = 0; lastAsk = t;
+      if(!window.d2Undo) return;
+      (window.cdConfirm ? window.cdConfirm('Undo the last change?', {title:'Shake to undo'}) : Promise.resolve(true)).then(function(ok){ if(ok){ try{ window.d2Undo(); toast('Undone'); }catch(x){} } });
+    }
+  });
+
+  /* ---------- edge panel ---------- */
+  var handle = null, panel = null;
+  function nextCalls(){
+    var n = nowBd();
+    return (state.rows||[]).filter(function(r){ return live(r) && bd(r.time)!==9999 && bd(r.time) >= n-10; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }).slice(0,3);
+  }
+  function panelHtml(){
+    var nx = nextCalls(), n = nowBd();
+    var h = '<div class="d43-pt">Next calls</div>' + (nx.length ? nx.map(function(r){ var o = owner(r), m = bd(r.time)-n;
+      return '<button type="button" class="d43-pc" data-d43o="'+esc(r.id)+'"><b>'+esc(r.time||'')+'</b><span>'+esc(r.candidate||'')+'<small>'+esc(o?o.name:(r.assignee||'no owner yet'))+' · '+(m<=0?'now':(m<60?'in '+Math.round(m)+'m':'in '+Math.floor(m/60)+'h'))+'</small></span></button>'; }).join('') : '<div class="d43-pe">Nothing coming up</div>');
+    var need = (state.rows||[]).filter(needsOwner).length;
+    h += '<div class="d43-pt">Shortcuts</div><div class="d43-pg">'
+      + [['focus','🎯','Focus'],['chase','📞','Chase list'],['resched','🔁','Reschedule'],['person','👤','Person'],['ics','📆','Calendar'],['undo','↩︎','Undo']].map(function(x){ return '<button type="button" data-d43k="'+x[0]+'"><span>'+x[1]+'</span>'+x[2]+'</button>'; }).join('') + '</div>';
+    var fav = LSg('cd.tools.fav',[]), T = window.d29T || [];
+    var pin = fav.map(function(k){ var t = T.filter(function(x){ return x[0]===k; })[0]; return t ? '<button type="button" data-d43k="'+k+'"><span>'+t[1]+'</span>'+esc(t[2])+'</button>' : ''; }).join('');
+    if(pin) h += '<div class="d43-pt">Your pinned tools</div><div class="d43-pg">'+pin+'</div>';
+    if(need && admin()) h += '<button type="button" class="d43-need" data-d43k="need">'+need+' call'+(need>1?'s':'')+' still need an owner →</button>';
+    return h;
+  }
+  function openPanel(){
+    if(!panel){ panel = document.createElement('div'); panel.id = 'd43Panel'; document.body.appendChild(panel);
+      panel.addEventListener('click', function(e){
+        if(e.target===panel){ closePanel(); return; }
+        var o = e.target.closest('[data-d43o]'); if(o){ var id = o.getAttribute('data-d43o'); closePanel(); if(window.d23Open) window.d23Open(id); return; }
+        var k = e.target.closest('[data-d43k]'); if(!k) return; var a = k.getAttribute('data-d43k'); closePanel();
+        if(a==='focus') openFocus(); else if(a==='undo'){ if(window.d2Undo){ window.d2Undo(); toast('Undone'); } }
+        else if(a==='need'){ state.filter = 'unassigned'; try{ render(); }catch(x){} }
+        else if(window.d29OpenTool) window.d29OpenTool(a);
+      });
+      var x0 = 0; panel.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; }, {passive:true});
+      panel.addEventListener('touchend', function(e){ if(e.changedTouches[0].clientX - x0 > 60) closePanel(); }, {passive:true});
+    }
+    panel.innerHTML = '<div class="d43-pbody">'+panelHtml()+'</div>';
+    requestAnimationFrame(function(){ panel.classList.add('on'); });
+  }
+  function closePanel(){ if(panel) panel.classList.remove('on'); }
+  function edgeSync(){
+    var want = phone() && G().edge;
+    if(want && !handle){
+      handle = document.createElement('div'); handle.id = 'd43Edge'; handle.setAttribute('role','button'); handle.setAttribute('aria-label','Open side panel'); document.body.appendChild(handle);
+      var x0 = 0, y0 = 0; handle.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, {passive:true});
+      handle.addEventListener('touchend', function(e){ var c = e.changedTouches[0]; if(x0 - c.clientX > 24 || (Math.abs(c.clientX-x0) < 8 && Math.abs(c.clientY-y0) < 8)) openPanel(); }, {passive:true});
+      handle.addEventListener('click', openPanel);
+    } else if(!want && handle){ handle.remove(); handle = null; closePanel(); }
+    if(handle) handle.style.display = (document.querySelector('.d27-ov') || state.needsLogin) ? 'none' : '';
+  }
+  window.addEventListener('resize', edgeSync);
+  setInterval(edgeSync, 1500);
+
+  /* ---------- calendar file (.ics) ---------- */
+  function ids(){ var s = {}; (state.rows||[]).forEach(function(r){ var o = owner(r); var n = o ? o.name : r.assignee; if(n) s[n] = 1; }); return Object.keys(s).sort(); }
+  function pad(n){ return (n<10?'0':'')+n; }
+  function utc(d){ return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'T'+pad(d.getUTCHours())+pad(d.getUTCMinutes())+'00Z'; }
+  function parseT(t){ var m = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(t||''); if(!m) return null; var h = +m[1]%12; if(/pm/i.test(m[3])) h += 12; return [h, +m[2]]; }
+  function durMin(s){ var m = /(\d+(?:\.\d+)?)\s*(hr|hour|h)/i.exec(s||''); if(m) return Math.round(+m[1]*60); m = /(\d+)/.exec(s||''); return m ? +m[1] : 30; }
+  function icsEsc(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\;').replace(/,/g,'\\,').replace(/\r?\n/g,'\\n'); }
+  function buildIcs(rowsIn, who){
+    var L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Coverage Desk//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:Coverage Desk'+(who?' – '+icsEsc(who):'')], n = 0;
+    rowsIn.forEach(function(r){
+      if(r.woi || r.status==='cancelled') return;
+      var o = owner(r), nm = o ? o.name : r.assignee; if(who && nm!==who) return;
+      var tm = parseT(r.time), dt = r._date || state.date, p = /^(\d{4})-(\d{2})-(\d{2})/.exec(dt||''); if(!tm || !p) return;
+      var s = new Date(Date.UTC(+p[1], +p[2]-1, +p[3], tm[0], tm[1]) - 330*60000), e = new Date(s.getTime()+durMin(r.duration)*60000);
+      L.push('BEGIN:VEVENT','UID:cd-'+String(r.id||n)+'-'+dt+'@coverage-desk','DTSTAMP:'+utc(new Date()),'DTSTART:'+utc(s),'DTEND:'+utc(e),
+        'SUMMARY:'+icsEsc((r.candidate||'Call')+' – '+(r.company||'')+(r.round?' ('+r.round+')':'')),
+        'DESCRIPTION:'+icsEsc([r.role&&('Role: '+r.role), r.round&&('Round: '+r.round), r.country&&('Country: '+r.country), nm&&('Handler: '+nm), r.status&&('Status: '+r.status)].filter(Boolean).join('\n')),
+        'BEGIN:VALARM','TRIGGER:-PT10M','ACTION:DISPLAY','DESCRIPTION:Call in 10 minutes','END:VALARM','END:VEVENT'); n++;
+    });
+    L.push('END:VCALENDAR'); return {text:L.join('\r\n'), n:n};
+  }
+  function openIcs(){
+    var my = ''; try{ my = getMyAssigneeName(); }catch(e){}
+    var opts = ids();
+    var el = ov('d43I', 'Calendar file', 'ADD CALLS TO YOUR PHONE CALENDAR',
+      '<p class="d29-p">Makes a <b>.ics</b> file. Open it on your phone and tap <b>Add all</b> — each call lands in your own calendar with a 10-minute reminder. Times are converted from IST automatically.</p>'
+      + '<div class="d43-sec">Whose calls</div><select id="d43iw" class="d43-sel"><option value="">Everyone</option>'+opts.map(function(n){ return '<option'+(n===my?' selected':'')+'>'+esc(n)+'</option>'; }).join('')+'</select>'
+      + '<div class="d43-sec">Which days</div><select id="d43id" class="d43-sel"><option value="day">Just '+esc(state.date)+'</option><option value="week">Next 7 days</option></select>'
+      + '<button type="button" class="d27-btn d43-go" id="d43ig">Download .ics</button><div id="d43im" class="d29-p"></div>');
+    el.querySelector('#d43ig').addEventListener('click', function(){
+      var who = el.querySelector('#d43iw').value, sc = el.querySelector('#d43id').value, msg = el.querySelector('#d43im'); msg.textContent = 'Building…';
+      var get = sc==='day' ? Promise.resolve((state.rows||[]).map(function(r){ return Object.assign({}, r, {_date:r._date||state.date}); }))
+        : Promise.resolve(window.fetchAllRowsAcrossDates ? fetchAllRowsAcrossDates() : fetchAllRowsAcrossDates).then(function(all){
+            var d0 = state.date, d1 = typeof deskDateAdd==='function' ? deskDateAdd(d0, 7) : d0; return (all||[]).filter(function(r){ return r._date && r._date>=d0 && r._date<d1; }); });
+      get.then(function(rows){
+        var o = buildIcs(rows, who);
+        if(!o.n){ msg.textContent = 'No calls found for that choice.'; return; }
+        var blob = new Blob([o.text], {type:'text/calendar'}), a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'coverage-desk-'+(who?who.replace(/\W+/g,'-').toLowerCase()+'-':'')+state.date+'.ics';
+        document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+        msg.textContent = o.n+' call'+(o.n>1?'s':'')+' in the file. Open it to add them to your calendar.';
+      }).catch(function(){ msg.textContent = 'Could not build the file. Try again.'; });
+    });
+  }
+  window.d43Ics = openIcs; window.d43BuildIcs = buildIcs;
+
+  /* ---------- smart card on the phone home ---------- */
+  window.d43Smart = function(){
+    try{
+      var rows = (state.rows||[]).filter(function(r){ return !r.woi; }); if(!rows.length) return '';
+      var h = new Date().getHours(), need = rows.filter(needsOwner).length, ad = admin(), liveN = rows.filter(live).length;
+      if(h < 12) return '<div class="d43-smart" data-d43s="brief"><span>☀️</span><div><b>Good morning</b><small>'+rows.length+' calls today'+(ad&&need?' · '+need+' need an owner':'')+'</small></div><i>Briefing →</i></div>';
+      if(h >= 21 || !liveN) return '<div class="d43-smart" data-d43s="wrap"><span>🌙</span><div><b>'+(liveN?'Late shift':'All calls done')+'</b><small>Wrap up the day · summary + what is still open</small></div><i>Wrap →</i></div>';
+      if(ad && need) return '<div class="d43-smart warn" data-d43s="need"><span>🔔</span><div><b>'+need+' call'+(need>1?'s':'')+' still need an owner</b><small>Swipe a call right to pick who takes it</small></div><i>Show →</i></div>';
+      var nx = nextCalls()[0]; if(nx) return '<div class="d43-smart" data-d43s="next" data-d43o="'+esc(nx.id)+'"><span>⏱</span><div><b>Next: '+esc(nx.candidate||'')+'</b><small>'+esc(nx.time||'')+' · all calls covered</small></div><i>Open →</i></div>';
+    }catch(e){}
+    return '';
+  };
+  document.addEventListener('click', function(e){
+    var s = e.target.closest && e.target.closest('[data-d43s]'); if(!s) return;
+    var k = s.getAttribute('data-d43s');
+    if(k==='brief'){ var b = Array.prototype.slice.call(document.querySelectorAll('button')).filter(function(x){ return /^\s*Briefing/.test(x.textContent); })[0]; if(b) b.click(); }
+    else if(k==='wrap'){ if(window.d29OpenTool) window.d29OpenTool('wrap'); }
+    else if(k==='need'){ state.filter = 'unassigned'; try{ render(); }catch(x){} }
+    else if(k==='next'){ if(window.d23Open) window.d23Open(s.getAttribute('data-d43o')); }
+  });
+
+  /* ---------- tools hub hooks ---------- */
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='focus'){ openFocus(); return true; } if(k==='ics'){ openIcs(); return true; } return typeof prev==='function' ? prev(k) : false; };
+  edgeSync();
 })();
