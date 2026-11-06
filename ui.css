@@ -1767,3 +1767,32 @@ tr.d39-r2,[data-d22open].d39-r2{box-shadow:inset 3px 0 0 var(--coral);background
 @media(min-width:760px){.d42-ov .d27-card{width:min(720px,calc(100vw - 40px));max-width:none}}
 @media(max-width:759px){.d42-kv{grid-template-columns:1fr}}
 .d42-here{font-style:normal;font-size:10.5px;padding:1px 7px;border-radius:8px;background:color-mix(in srgb,var(--teal) 20%,transparent);color:var(--teal);margin-left:6px;font-weight:600}
+
+/* ===== d43: V3.5 phone gestures, focus, edge panel ===== */
+#d43Edge{position:fixed;right:0;top:46%;width:14px;height:76px;z-index:9000;display:none}
+#d43Edge::after{content:"";position:absolute;right:2px;top:10px;bottom:10px;width:5px;border-radius:3px;background:color-mix(in srgb,var(--text) 32%,transparent)}
+@media(max-width:759px){#d43Edge{display:block}}
+#d43Panel{position:fixed;inset:0;z-index:100055;pointer-events:none;background:rgba(0,0,0,0);transition:background .22s}
+#d43Panel.on{pointer-events:auto;background:rgba(0,0,0,.4)}
+#d43Panel .d43-pbody{position:absolute;top:0;right:0;bottom:0;width:min(86vw,340px);overflow:auto;background:var(--surface);border-left:1px solid var(--border);padding:calc(14px + env(safe-area-inset-top)) 14px 24px;transform:translateX(100%);transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+#d43Panel.on .d43-pbody{transform:none}
+.d43-pt{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin:14px 2px 8px}
+.d43-pc{display:flex;gap:10px;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border-radius:14px;border:1px solid var(--border-soft,var(--border));background:var(--surface-2);color:var(--text);font:inherit}
+.d43-pc b{font-family:var(--mono);color:var(--teal);font-size:13px;min-width:62px}.d43-pc span{display:flex;flex-direction:column;font-size:14px}.d43-pc small{opacity:.65;font-size:11.5px}
+.d43-pe{opacity:.6;font-size:13px;padding:6px 2px}
+.d43-pg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.d43-pg button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px;border-radius:14px;border:1px solid var(--border-soft,var(--border));background:var(--surface-2);color:var(--text);font:inherit;font-size:13px}
+.d43-pg button span{font-size:19px}
+.d43-need{width:100%;margin-top:14px;padding:12px;border-radius:14px;border:1px solid var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent);color:var(--amber);font:inherit;font-weight:600}
+.d43-smart{display:flex;align-items:center;gap:12px;margin:8px 0;padding:11px 14px;border-radius:16px;border:1px solid var(--border);background:var(--surface-2);cursor:pointer}
+.d43-smart>span{font-size:22px}.d43-smart div{flex:1;display:flex;flex-direction:column;min-width:0}.d43-smart b{font-size:14.5px}.d43-smart small{opacity:.7;font-size:12px}.d43-smart i{font-style:normal;font-size:12.5px;color:var(--teal);white-space:nowrap}
+.d43-smart.warn{border-color:color-mix(in srgb,var(--amber) 55%,var(--border));background:color-mix(in srgb,var(--amber) 10%,var(--surface-2))}.d43-smart.warn i{color:var(--amber)}
+.d43-sec{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.65;margin:16px 2px 8px}.d43-sec em{font-style:normal;color:var(--teal);text-transform:none;letter-spacing:0;margin-left:6px}
+.d43-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.d43-md{display:flex;flex-direction:column;gap:2px;padding:11px 10px;border-radius:14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;text-align:left}
+.d43-md small{opacity:.65;font-size:11px}.d43-md.on{border-color:var(--teal);background:color-mix(in srgb,var(--teal) 14%,var(--surface-2))}
+.d43-chips{display:flex;flex-wrap:wrap;gap:8px}.d43-chip{padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;font-size:13px}
+.d43-tg{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 4px;border-bottom:1px solid var(--border-soft,var(--border))}
+.d43-tg span{display:flex;flex-direction:column}.d43-tg small{opacity:.65;font-size:11.5px}.d43-tg input{width:20px;height:20px;accent-color:var(--teal)}
+.d43-sel{width:100%;padding:11px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit}
+.d43-go{margin-top:16px;width:100%;padding:13px}
