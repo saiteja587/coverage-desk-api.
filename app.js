@@ -4461,7 +4461,7 @@ function matchClosureLine(line){
   // "Margot") — the rest of each pattern still has to match in full
   // right after the keyword, so a spurious mid-name split just fails to
   // complete and the regex backtracks to the real boundary.
-  let m = line.match(/^(.+?)\s*(?:got|received|has\s+got|has\s+received)\s+(?:the\s+|an?\s+)?offer(?:\s+letter)?\s+(?:from|with|at)\s+(.+?)[.!]?\s*$/i);
+  let m = line.match(/^(.+?)\s*(?:got|received|has\s+got|has\s+received)\s+(?:the\s+|an?\s+)?offer(?:\s+(?:letter|mail|e-?mail|confirmation))*\s+(?:from|with|at)\s+(.+?)[.!]?\s*$/i);
   if(m) return { candidate: m[1].trim(), company: cleanCompany(m[2]) };
   // "X got selected in/at/by Y" / "X has been selected by Y" / "X is
   // selected by Y"
@@ -4483,7 +4483,7 @@ function matchClosureLine(line){
 // glued onto the same line as the offer itself.
 function extractSalaryFromText(text){
   const m = text.match(/\bsalary\s*:?\s*(.+)$/i);
-  return m ? m[1].replace(/\*/g, '').trim() : '';
+  return m ? m[1].replace(/\*/g, '').trim().replace(/(?<=[A-Za-z])\.$/, '') : '';
 }
 // Parses a pasted closure/job-offer message into { candidate, company,
 // salary, raw } entries — same overall shape as parseRescheduleText:
@@ -4511,6 +4511,16 @@ function parseClosureText(text){
     const full = blockLines.join(' ')
       .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '')  // strip a leading list number
       .replace(/^\s*sir\s*[,:]?\s+/i, '');   // strip a leading "Sir," greeting
+    // Labelled form: "Student : Name" / "Company : Name" / "Gross Salary : ..." on
+    // separate lines (no sentence at all) — a real message used exactly this.
+    const labelOf = re => { for(const l of blockLines){ const mm = l.match(re); if(mm) return mm[1].replace(/\*/g,'').trim(); } return ''; };
+    const labCand = labelOf(/^\s*(?:student|candidate|name)\s*[:\-\u2013]\s*(.+?)\s*$/i);
+    const labComp = labelOf(/^\s*(?:company|client|organi[sz]ation|employer)\s*[:\-\u2013]\s*(.+?)\s*$/i);
+    if(labCand && labComp){
+      let labSal = labelOf(/\b(?:gross\s+|annual\s+|base\s+)?(?:salary|ctc|package|compensation)\s*[:\-\u2013]?\s*(.+?)\s*$/i).replace(/(?<=[A-Za-z])\.$/, '');
+      results.push({ candidate: labCand, company: labComp, salary: labSal, raw: full });
+      return;
+    }
     const closureMatch = matchClosureLine(full);
     if(closureMatch && closureMatch.candidate && closureMatch.company){
       // Salary glued onto this same block, whatever currency/format it's
