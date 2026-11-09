@@ -4211,7 +4211,8 @@ function parseRescheduleText(text){
     if(!looksLikeRescheduleLine(full)) return; // not a reschedule/cancel/no-response message — skip
 
     const timeLine = (blockLines.find(l=>timeRe.test(l)) || full)
-      .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, ''); // strip a leading list number ("89. Name ...")
+      .replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '')
+      .replace(/^\s*sir\s*[,:]?\s+/i, ''); // strip a leading list number ("89. Name ...") and a "Sir," greeting after it
     // Handles a name followed directly by a dash-time ("Name - 7:30 PM"),
     // a name with a parenthetical country tag before the dash
     // ("Name (UK) - 7:30 PM"), or a name followed by a possessive time
@@ -4239,6 +4240,7 @@ function parseRescheduleText(text){
     let company = null;
     const companyMatch = full.match(/Interview\s*[–\-]\s*([^–\-]+?)\s*[–\-]/i);
     if(companyMatch) company = companyMatch[1].trim();
+    else if((function(){ const cm3 = timeLine.match(/\)\s*[–\-]\s*([^–\-]{3,80}?)\s*[–\-]\s*\d{1,2}[:.]\d{2}/); if(cm3 && !/^(?:interview|call)\b/i.test(cm3[1])){ company = cm3[1].trim(); return true; } return false; })()){ /* "Name (UK) - Company - 4:30 PM" */ }
     else { const cm2 = full.match(/Interview\s*[–\-]\s*([^–\-\n]+?)(?:\s{2,}|\s+(?:There|The|Sir|@)\b|$)/i); if(cm2) company = cm2[1].trim(); }
 
     // Same phrasing set as hasNoInviteWord in looksLikeRescheduleLine()
@@ -4277,7 +4279,8 @@ function parseRescheduleText(text){
     else if(status === 'no_invite') reason = 'Didn’t receive the invitation link'; // real messages for this case rarely use "due to..." phrasing, so default it directly rather than leaving it blank
     else {
       const toMatch = full.match(/reschedul\w*\s+to\s+([^.@]+?)(?:\s+sir\.?)?(?:\s*@|$)/i);
-      if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
+      if(/reschedul\w*\s+to\s+tomorrow\s+(?:at\s+)?the\s+same\s+time/i.test(full)) reason = 'Rescheduled to tomorrow, same time' + (side ? ' — ' + side : '');
+      else if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
     }
 
     if(!candidate || !status) return;
