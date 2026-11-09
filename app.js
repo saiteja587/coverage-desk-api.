@@ -4229,7 +4229,8 @@ function parseRescheduleText(text){
       const NOT_NAME = /^(?:the|this|that|his|her|their|our|my|all|both|candidate|interview|today|call|calls|sir|madam|a|an)$/i;
       const lead = '^(?:@[\\w\\s]+?[,:]?\\s*)?(?:sir[,:]?\\s*)?';
       let fm = timeLine.match(new RegExp(lead + '([A-Za-z][A-Za-z .]*?)\\s*\\(\\s*\\d{1,2}(?:[:.]\\d{2})?\\s*(?:[AaPp][Mm])?\\s*(?:IST)?\\s*\\)', 'i'))
-        || timeLine.match(new RegExp(lead + "([A-Za-z][A-Za-z .]*?)(?:['\\u2019]s)?\\s+calls?\\s+(?:(?:has|have|was|were|is|got|been|has\\s+been|have\\s+been)\\s+)?(?:reschedul|cancel|not\\s+respon|didn)", 'i'));
+        || timeLine.match(new RegExp(lead + "([A-Za-z][A-Za-z .]*?)(?:['\\u2019]s)?\\s+calls?\\s+(?:(?:has|have|was|were|is|got|been|has\\s+been|have\\s+been)\\s+)?(?:reschedul|cancel|not\\s+respon|didn)", 'i'))
+        || timeLine.match(new RegExp(lead + "([A-Za-z][A-Za-z .]*?)(?:['\\u2019]s)?\\s+calls?\\s+(?:is\\s+|was\\s+)?(?:scheduled|booked|set)\\s+(?:at|for)\\s+\\d", 'i'));
       if(fm){
         const words = fm[1].trim().split(/\s+/).filter(Boolean);
         while(words.length && NOT_NAME.test(words[0])) words.shift();
@@ -4283,6 +4284,7 @@ function parseRescheduleText(text){
       else if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
     }
 
+    if(status === 'not_responded' && !reason){ const nr = full.match(/(?:not|no)\s+(?:\w+\s+){0,2}respon\w*\s+(?:to|on)\s+([^.@]+?)(?:\s+sir)?\s*\.?\s*(?:@.*)?$/i); if(nr) reason = 'Not responding to ' + nr[1].trim(); }
     if(!candidate || !status) return;
 
     // Moved from one time to another ("Call Rescheduled to 5:00 PM IST Today"): remember the NEW time so
