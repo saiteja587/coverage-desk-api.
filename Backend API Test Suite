@@ -44,7 +44,7 @@ Module._load = function (request, ...rest) {
   return originalLoad.call(this, request, ...rest);
 };
 
-const handler = require('./data.js');
+const handler = require('../api/data.js');
 
 let pass = 0, fail = 0;
 const failures = [];
