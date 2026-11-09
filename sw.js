@@ -10,15 +10,13 @@
 // Bump CACHE whenever you want to force every device to drop old cached
 // files (rare — the network-first strategy already means this normally
 // isn't needed).
-const CACHE = 'coverage-desk-v8';
+const CACHE = 'coverage-desk-v9';
 const APP_SHELL = [
   './',
   './index.html',
   './app.js',
   './ui.js',
   './style.css',
-  './ui.css',
-  './glass.css',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
