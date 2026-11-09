@@ -3106,7 +3106,7 @@ html[data-look="glass"] .banner,html[data-look="glass"] .alert-banner,html[data-
   border-radius:var(--g-r-md);-webkit-backdrop-filter:var(--g-blur);backdrop-filter:var(--g-blur);
 }
 /* floating buttons & orb */
-html[data-look="glass"] #liveFeedBell,html[data-look="glass"] #scrollToTopBtn,html[data-look="glass"] .scroll-to-top-btn{
+html[data-look="glass"] #liveFeedBell{
   background:var(--g-pop);-webkit-backdrop-filter:var(--g-blur);backdrop-filter:var(--g-blur);border:1px solid var(--g-line);box-shadow:var(--g-hl),var(--shadow-sm);
 }
 @media(max-width:759px){html[data-look="glass"] .bottom-nav{background:color-mix(in srgb,var(--g-pop) 100%,transparent)}}
@@ -3121,3 +3121,6 @@ html[data-look="glass"] .d43-smart{border-radius:var(--g-r-md);-webkit-backdrop-
 html[data-look="glass"] #d44Dock,html[data-look="glass"] .d44-cm,html[data-look="glass"] #d44Drop,html[data-look="glass"] #d44Fz>div{background:var(--g-pop);-webkit-backdrop-filter:var(--g-blur-lg);backdrop-filter:var(--g-blur-lg);border-color:var(--g-line);box-shadow:var(--g-hl),var(--shadow-md)}
 html[data-look="glass"] .d44-facts span,html[data-look="glass"] .d44-dp{background:var(--g-card);border-color:var(--g-line)}
 html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
+
+/* scroll-to-top: keep classic teal look in glass and sit above the live-feed bell (desktop) */
+@media (min-width:761px){.scroll-to-top-btn{bottom:72px;z-index:9310}body.has-install-banner .scroll-to-top-btn{bottom:124px}}
