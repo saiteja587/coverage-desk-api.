@@ -3124,3 +3124,6 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 
 /* scroll-to-top: keep classic teal look in glass and sit above the live-feed bell (desktop) */
 @media (min-width:761px){.scroll-to-top-btn{bottom:72px;z-index:9310}body.has-install-banner .scroll-to-top-btn{bottom:124px}}
+
+/* full-width desktop: details/table use the whole screen instead of a 1180px centered column */
+@media (min-width:1200px){.app{max-width:none;padding-left:28px;padding-right:28px}}
