@@ -1083,6 +1083,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
       ['Navigate',[['1 – 5','Switch tabs'],['Alt + K','Command bar'],['Ctrl + K','Quick search'],['?','This shortcut map']]],
       ['Desk tools',[['T','Open Tools'],['N','Prep the next call'],['/','Quick search'],['Esc','Close any sheet']]],
       ['Work',[['Alt + T','Timeline'],['Alt + H','Shift handover'],['Alt + S','Suggest assignments'],['Alt + P','Print day sheet'],['Alt + Z','Undo last change'],['Ctrl + S','Save changes']]],
+      ['Call list',[['J / K','Move down / up the list'],['Enter','Open call card'],['A','Pick who takes it'],['C','Mark confirmed'],['R','Reschedule helper'],['X','Tick the row (bulk)'],['Ctrl/Shift + click','Select several calls'],['Ctrl + A','Select all shown'],['D','Details dock on / off'],['Alt + ← / →','Previous / next day'],['Alt + V','Clipboard history']]],
       ['Import',[['Alt + N','Import new calls'],['Alt + R','Import reschedules'],['Alt + A','Add assessments'],['Alt + O','Onsite interviews']]]
     ];
     keysEl = document.createElement('div'); keysEl.id='d3Keys'; keysEl.className='d3-overlay';
@@ -4358,7 +4359,7 @@ window.cdOwnerOf = function(r){
 /* ===== d27: Coverage Desk V2 — version badge, changelog, welcome tour, splash, Command Center ===== */
 ;(function(){
   if(window.__d27) return; window.__d27 = true;
-  var VERSION = 'V3.5', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
+  var VERSION = 'V3.6', SEEN_KEY = 'cd.v2.seen'; window.__cdVer = VERSION;
   var esc = function(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
   var LS = { g:function(k,d){ try{ var v=localStorage.getItem(k); return v==null?d:v; }catch(e){ return d; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
   var auto = !!navigator.webdriver;                      /* automated test browsers skip splash + tour */
@@ -4369,6 +4370,14 @@ window.cdOwnerOf = function(r){
   var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
 
   var LOG = [
+    ['V3.6','2026-11-06','Windows desktop',[
+      '⌨️ J / K to move through calls, Enter / A / C / R / X act on the row, Alt+← → changes day (full list under ?)',
+      '🪟 Details dock: split view that follows the selected call (D)',
+      '🖱 Ctrl / Shift-click and Ctrl+A to select many calls; bulk bar can mark Confirmed / No reply / copy messages',
+      '🎯 Drag a call grip and drop it on a suggested person; drop a .txt / .csv file anywhere to import',
+      '🔴 Taskbar badge shows calls that still need an owner (installed app)',
+      '📋 Clipboard history (Alt+V) · 💾 Backup folder · right-click a person name for a menu'
+    ]],
     ['V3.5','2026-11-06','Focus modes + edge panel',[
       '🎯 Tools → Focus modes: My calls / Needs owner, do-not-disturb timer',
       '▮ Edge panel on the right edge: next calls + shortcuts',
@@ -5075,7 +5084,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC']];
     window.d29T = T;
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
@@ -7681,4 +7690,301 @@ window.cdOwnerOf = function(r){
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='focus'){ openFocus(); return true; } if(k==='ics'){ openIcs(); return true; } return typeof prev==='function' ? prev(k) : false; };
   edgeSync();
+})();
+
+/* ===== d44: V3.6 — desktop: row keys, details dock, Ctrl/Shift multi-select, drag-to-person, file drop, taskbar badge, clipboard history, backup folder ===== */
+(function(){
+  'use strict';
+  if(window.__d44) return; window.__d44 = true;
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function LSg(k,d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+  function LSs(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  function wide(){ return window.innerWidth >= 760; }
+  function admin(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } }
+  function canImport(){ try{ return CURRENT_ROLE!=='user' && CURRENT_ROLE!=='team_lead'; }catch(e){ return true; } }
+  function toast(m){ try{ if(window.d2Toast) window.d2Toast(m); }catch(e){} }
+  function rowById(id){ return (state.rows||[]).filter(function(r){ return String(r.id)===String(id); })[0]; }
+  function owner(r){ try{ return window.cdOwnerOf ? window.cdOwnerOf(r) : null; }catch(e){ return null; } }
+  function typing(t){ return t && (/^(input|textarea|select)$/i.test(t.tagName) || t.isContentEditable); }
+  function overlay(){ return document.querySelector('.d27-ov,.d15-ov,.d3-overlay,#d2Cmd,.d2-pop,.my-name-picker-overlay,#quickJumpOverlay'); }
+  function visRows(){ return Array.prototype.slice.call(document.querySelectorAll('#tableScrollMain tbody tr[data-id]')).filter(function(tr){ return !tr.classList.contains('d2-grp') && tr.offsetParent !== null; }); }
+
+  /* ---------- row cursor + keyboard ---------- */
+  var curId = null;
+  function markCursor(scroll){
+    document.querySelectorAll('tr.d44-cur').forEach(function(x){ x.classList.remove('d44-cur'); });
+    if(!curId) return; var tr = document.querySelector('#tableScrollMain tbody tr[data-id="'+String(curId).replace(/"/g,'')+'"]');
+    if(tr){ tr.classList.add('d44-cur'); if(scroll) tr.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+  }
+  function setCursor(id, scroll){ curId = id; markCursor(scroll); dockPaint(); }
+  function move(dir){
+    var L = visRows(); if(!L.length) return;
+    var i = L.findIndex(function(tr){ return tr.getAttribute('data-id')===String(curId); });
+    i = i<0 ? (dir>0 ? 0 : L.length-1) : Math.max(0, Math.min(L.length-1, i+dir));
+    setCursor(L[i].getAttribute('data-id'), true);
+  }
+  document.addEventListener('keydown', function(e){
+    if(!wide() || e.defaultPrevented || typeof state==='undefined' || state.needsLogin) return;
+    if(typing(e.target) && !(e.key==='Escape' && (function(t){ var b = t.getBoundingClientRect(); return b.width < 6 || b.height < 6 || getComputedStyle(t).visibility==='hidden' || (t.tagName==='TEXTAREA' && !t.value); })(e.target))) return;
+    var k = e.key;
+    if(e.altKey && !e.ctrlKey && !e.metaKey && (k==='ArrowLeft' || k==='ArrowRight')){
+      var b = document.getElementById(k==='ArrowLeft' ? 'prevDay' : 'nextDay'); if(b){ e.preventDefault(); b.click(); } return;
+    }
+    if(k==='Escape' && !e.ctrlKey && !e.altKey && !e.metaKey){ if(!document.querySelector('.d27-ov,.d15-ov,.d3-overlay,#d2Cmd,#quickJumpOverlay,.my-name-picker-overlay') && state.selectedIds && state.selectedIds.size){ state.selectedIds.clear(); try{ render(); }catch(x){} } return; }
+    if(overlay()) return;
+    if((e.ctrlKey||e.metaKey) && !e.altKey && (k==='a' || k==='A')){
+      var L = visRows(); if(!L.length || !admin()) return; e.preventDefault();
+      L.forEach(function(tr){ state.selectedIds.add(tr.getAttribute('data-id')); }); try{ render(); }catch(x){} toast(L.length+' calls selected · Esc to clear'); return;
+    }
+    if(e.ctrlKey || e.metaKey || e.altKey) return;
+    if(k==='j' || k==='J' || k==='ArrowDown' && e.shiftKey){ e.preventDefault(); move(1); return; }
+    if(k==='k' || k==='K' || k==='ArrowUp' && e.shiftKey){ e.preventDefault(); move(-1); return; }
+    if(k==='d' || k==='D'){ e.preventDefault(); dockToggle(); return; }
+    var r = curId ? rowById(curId) : null;
+    if(!r) return;
+    if(k==='Enter'){ e.preventDefault(); if(window.d41Call) window.d41Call(r.id); }
+    else if(k==='x' || k==='X'){ e.preventDefault(); if(!admin()) return; if(state.selectedIds.has(r.id)) state.selectedIds.delete(r.id); else state.selectedIds.add(r.id); try{ render(); }catch(x){} }
+    else if(k==='a' || k==='A'){ if(!admin()) return; var s = document.querySelector('tr[data-id="'+r.id+'"] select.driving-person-select') || document.querySelector('tr[data-id="'+r.id+'"] select[data-field="assignee"]'); if(s){ e.preventDefault(); s.focus(); try{ s.showPicker(); }catch(x){} } }
+    else if(k==='c' || k==='C'){ if(!admin() || r.woi || !window.d39SetConf) return; e.preventDefault(); window.d39SetConf(r.id, 'confirmed'); try{ render(); }catch(x){} toast((window.d39Conf()[r.id]==='confirmed'?'Confirmed ✓ ':'Confirmation cleared ')+(r.candidate||'')); }
+    else if(k==='r' || k==='R'){ if(!window.d29OpenTool) return; e.preventDefault(); window.d29OpenTool('resched'); setTimeout(function(){ var b = document.querySelector('[data-d29rspick="'+r.id+'"]'); if(b) b.click(); }, 450); }
+  });
+  document.addEventListener('click', function(e){
+    if(!wide()) return; var tr = e.target.closest && e.target.closest('#tableScrollMain tbody tr[data-id]');
+    if(!tr || tr.classList.contains('d2-grp')) return;
+    var id = tr.getAttribute('data-id'), interactive = e.target.closest('input,select,textarea,button,a,label,.cell-input');
+    if((e.ctrlKey || e.metaKey || e.shiftKey) && !interactive && admin()){
+      e.preventDefault(); e.stopPropagation();
+      var L = visRows().map(function(x){ return x.getAttribute('data-id'); });
+      if(e.shiftKey && curId && L.indexOf(String(curId))>=0){
+        var a = L.indexOf(String(curId)), b = L.indexOf(id), lo = Math.min(a,b), hi = Math.max(a,b);
+        L.slice(lo, hi+1).forEach(function(x){ state.selectedIds.add(x); });
+      } else { if(state.selectedIds.has(id)) state.selectedIds.delete(id); else state.selectedIds.add(id); }
+      curId = id; try{ render(); }catch(x){} return;
+    }
+    if(!interactive) setCursor(id, false);
+  }, true);
+  document.addEventListener('mousedown', function(e){ if(e.shiftKey && e.target.closest && e.target.closest('#tableScrollMain tbody tr[data-id]') && !typing(e.target)) e.preventDefault(); }, true);
+
+  /* ---------- bulk bar extras ---------- */
+  function bulkExtras(){
+    var bar = document.querySelector('.bulk-bar'); if(!bar || bar.querySelector('.d44-bx')) return;
+    var s = document.createElement('span'); s.className = 'd44-bx';
+    s.innerHTML = '<button type="button" class="btn" data-d44b="confirmed">✅ Confirmed</button><button type="button" class="btn" data-d44b="noreply">🔕 No reply</button><button type="button" class="btn" data-d44b="copy">💬 Copy messages</button><button type="button" class="btn" data-d44b="clear">✕ Clear</button>';
+    bar.appendChild(s);
+  }
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d44b]'); if(!b) return;
+    var k = b.getAttribute('data-d44b'), ids = Array.from(state.selectedIds), R = ids.map(rowById).filter(Boolean);
+    if(k==='clear'){ state.selectedIds.clear(); try{ render(); }catch(x){} return; }
+    if(k==='copy'){
+      var t = R.map(function(r){ return window.d29ChaseMsg ? window.d29ChaseMsg(r) : (r.candidate||'')+' – '+(r.time||''); }).join('\n\n');
+      try{ navigator.clipboard.writeText(t); toast('Copied '+R.length+' message'+(R.length>1?'s':'')); }catch(x){ toast('Could not copy'); } return;
+    }
+    if(!window.d39SetConf) return; var C = window.d39Conf(), n = 0;
+    R.forEach(function(r){ if(!r.woi && C[r.id]!==k){ window.d39SetConf(r.id, k); n++; } });
+    state.selectedIds.clear(); try{ render(); }catch(x){} toast(n+' marked '+(k==='confirmed'?'confirmed':'no reply'));
+  });
+
+  /* ---------- details dock (split view) ---------- */
+  var dock = null, KDK = 'cd.dock';
+  function dockOn(){ return !!LSg(KDK,false); }
+  function dockToggle(){ LSs(KDK, !dockOn()); dockSync(); if(dockOn() && !curId){ var L = visRows(); if(L.length) setCursor(L[0].getAttribute('data-id'), false); } toast('Details dock '+(dockOn()?'on · J / K to move':'off')); }
+  function strip(html, sel){ var d = document.createElement('div'); d.innerHTML = html; var f = d.firstElementChild; if(f && f.matches(sel)) f.remove(); return d.innerHTML; }
+  function dockPaint(){
+    if(!dock || !dockOn()) return;
+    var r = curId ? rowById(curId) : null;
+    if(!r){ dock.innerHTML = '<div class="d44-dh"><b>Details</b><button type="button" data-d44dx aria-label="Close">✕</button></div><div class="d44-db"><p class="d29-p">Click a call, or press <kbd>J</kbd> / <kbd>K</kbd>, to see its details here.</p></div>'; return; }
+    var o = owner(r), cf = ''; try{ cf = window.d39Conf()[r.id] || ''; }catch(e){}
+    var prep = ''; try{ prep = strip(window.d34PrepHtml ? window.d34PrepHtml(r) : '', '.d29-rsh'); }catch(e){}
+    var hist = ''; try{ hist = strip(window.d39HistoryHtml ? window.d39HistoryHtml(r) : '', '.d36-hd'); }catch(e){}
+    dock.innerHTML = '<div class="d44-dh"><div><b>'+esc(r.candidate||'Call')+'</b><small>'+esc([r.time, r.company, r.round].filter(Boolean).join(' · '))+'</small></div><button type="button" data-d44dx aria-label="Close dock">✕</button></div>'
+      + '<div class="d44-db"><div class="d44-facts"><span>Role<b>'+esc(r.role||'—')+'</b></span><span>With<b>'+esc(o?o.name:(r.assignee||'no owner yet'))+'</b></span><span>Status<b>'+esc(r.woi?'waiting for invite':(r.status?String(r.status).replace(/_/g,' '):(cf||'live')))+'</b></span><span>Country<b>'+esc(r.country||'—')+'</b></span></div>'
+      + '<div class="d44-acts"><button type="button" class="d27-btn" data-d44a="card">Call card</button><button type="button" class="d27-btn" data-d44a="stu">Student</button>'+(o?'<button type="button" class="d27-btn" data-d44a="person">'+esc(o.name)+'</button>':'')+'<button type="button" class="d27-btn" data-d44a="resched">Reschedule</button></div>'
+      + (prep?'<div class="d44-sec">Prep</div>'+prep:'') + (hist?'<div class="d44-sec">History</div>'+hist:'') + '</div>';
+  }
+  function dockSync(){
+    var on = dockOn() && wide();
+    if(on && !dock){ dock = document.createElement('aside'); dock.id = 'd44Dock'; document.body.appendChild(dock); }
+    if(!on && dock){ dock.remove(); dock = null; }
+    document.body.classList.toggle('d44-dock-on', !!on);
+    if(on) dockPaint();
+  }
+  document.addEventListener('click', function(e){
+    if(e.target.closest && e.target.closest('[data-d44dx]')){ LSs(KDK,false); dockSync(); return; }
+    var a = e.target.closest && e.target.closest('[data-d44a]'); if(!a) return;
+    var r = rowById(curId); if(!r) return; var k = a.getAttribute('data-d44a');
+    if(k==='card' && window.d41Call) window.d41Call(r.id);
+    else if(k==='stu' && window.d42Profile) window.d42Profile(r.candidate, r.company);
+    else if(k==='person'){ var o = owner(r); if(o && window.d40Open) window.d40Open(o.name); }
+    else if(k==='resched' && window.d29OpenTool){ window.d29OpenTool('resched'); setTimeout(function(){ var b = document.querySelector('[data-d29rspick="'+r.id+'"]'); if(b) b.click(); }, 450); }
+  });
+
+  /* ---------- render hook: cursor, dock, bulk extras, taskbar badge ---------- */
+  var lastBadge = -1;
+  function badge(){
+    try{
+      if(!navigator.setAppBadge) return;
+      var n = 0; if(!state.needsLogin && admin()) n = (state.rows||[]).filter(function(r){ return !r.woi && !r.status && !r.assignee; }).length;
+      if(n===lastBadge) return; lastBadge = n;
+      if(n>0) navigator.setAppBadge(n); else navigator.clearAppBadge();
+    }catch(e){}
+  }
+  var oR = window.render;
+  window.render = function(){ var r = oR.apply(this, arguments); try{ markCursor(false); bulkExtras(); dockSync(); badge(); }catch(e){} return r; };
+  window.addEventListener('resize', dockSync);
+
+  /* ---------- drag a call onto a person ---------- */
+  var dd = null;
+  document.addEventListener('dragstart', function(e){
+    var g = e.target.closest && e.target.closest('.d3-grip'); if(!g || !admin()) return;
+    var tr = g.closest('tr[data-id]'); var r = tr && rowById(tr.getAttribute('data-id')); if(!r) return;
+    var list = []; try{ list = window.d2Rank ? window.d2Rank(r) : []; }catch(x){}
+    var tn = null; try{ tn = getTeamNames(); }catch(x){}
+    var ppl = list.filter(function(h){ return !h.isTeam && !(tn && tn.has(h.name)); }).slice(0, 8);
+    if(!ppl.length) return;
+    clearDrop(); dd = document.createElement('div'); dd.id = 'd44Drop';
+    dd.innerHTML = '<small>Drop on a person to assign</small><div>'+ppl.map(function(h){ return '<span class="d44-dp'+(h.absent||h.clash?' bad':'')+'" data-d44p="'+esc(h.name)+'">'+esc(h.name)+(h.absent?' · away':(h.clash?' · clash':''))+'</span>'; }).join('')+'</div>';
+    document.body.appendChild(dd);
+  });
+  function clearDrop(){ if(dd){ dd.remove(); dd = null; } }
+  document.addEventListener('dragend', clearDrop);
+  document.addEventListener('dragover', function(e){ var c = e.target.closest && e.target.closest('[data-d44p]'); if(c && e.dataTransfer && e.dataTransfer.types.indexOf('text/d3row')>=0){ e.preventDefault(); document.querySelectorAll('.d44-dp.over').forEach(function(x){ if(x!==c) x.classList.remove('over'); }); c.classList.add('over'); } });
+  document.addEventListener('drop', function(e){
+    var c = e.target.closest && e.target.closest('[data-d44p]'); if(!c) return;
+    var id = e.dataTransfer.getData('text/d3row'); if(!id) return; e.preventDefault();
+    var name = c.getAttribute('data-d44p'); clearDrop();
+    if(window.d2AssignTo){ window.d2AssignTo(id, name); toast('Assigned to '+name+' · Alt+Z to undo'); }
+  });
+
+  /* ---------- drop a text file to import ---------- */
+  var fz = null, fzN = 0;
+  function hasFiles(e){ return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types||[], 'Files') >= 0; }
+  document.addEventListener('dragenter', function(e){
+    if(!wide() || !hasFiles(e) || !canImport() || state.needsLogin) return; fzN++;
+    if(!fz){ fz = document.createElement('div'); fz.id = 'd44Fz'; fz.innerHTML = '<div><b>Drop to import</b><small>.txt · .csv · .tsv with your call list</small></div>'; document.body.appendChild(fz); }
+  });
+  document.addEventListener('dragleave', function(e){ if(!fz) return; fzN = Math.max(0, fzN-1); if(!fzN || !e.relatedTarget){ fz.remove(); fz = null; fzN = 0; } });
+  document.addEventListener('dragover', function(e){ if(hasFiles(e) && canImport() && !(e.target.closest && e.target.closest('input[type=file]'))) e.preventDefault(); });
+  document.addEventListener('drop', function(e){
+    if(fz){ fz.remove(); fz = null; fzN = 0; }
+    if(!hasFiles(e) || !canImport() || (e.target.closest && e.target.closest('input[type=file]'))) return;
+    e.preventDefault();
+    var f = e.dataTransfer.files && e.dataTransfer.files[0]; if(!f) return;
+    if(!/\.(txt|csv|tsv|text)$/i.test(f.name) && !/^text\//.test(f.type)){ toast('Drop a .txt / .csv / .tsv file — or paste the text into Import'); return; }
+    var fr = new FileReader();
+    fr.onload = function(){
+      try{ closeAllPanels(); state.showImport = true; state.showRescheduleImport = false; render(); }catch(x){}
+      setTimeout(function(){ var ta = document.getElementById('importText'); if(ta){ ta.value = String(fr.result||'').replace(/\t/g,' – '); ta.dispatchEvent(new Event('input',{bubbles:true})); toast('Loaded '+f.name+' — check it, then Import'); } }, 350);
+    };
+    fr.readAsText(f);
+  });
+
+  /* ---------- right-click on person names ---------- */
+  var cm = null;
+  function closeCm(){ if(cm){ cm.remove(); cm = null; } }
+  document.addEventListener('contextmenu', function(e){
+    if(!wide()) return; var el = e.target.closest && e.target.closest('[data-d40p]'); if(!el) return;
+    var name = el.getAttribute('data-d40p'); if(!name) return; e.preventDefault(); closeCm();
+    cm = document.createElement('div'); cm.id = 'd44Cm'; cm.className = 'd44-cm';
+    var it = [['card','👤','Person card'],['filter','🎯','Show only '+name+'’s calls'],['copy','⧉','Copy name']];
+    cm.innerHTML = it.map(function(i){ return '<button type="button" data-d44m="'+i[0]+'" data-n="'+esc(name)+'"><span>'+i[1]+'</span>'+esc(i[2])+'</button>'; }).join('');
+    document.body.appendChild(cm);
+    var w = cm.offsetWidth, h = cm.offsetHeight; cm.style.left = Math.min(e.clientX, innerWidth-w-8)+'px'; cm.style.top = Math.min(e.clientY, innerHeight-h-8)+'px';
+  });
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d44m]');
+    if(b){ var k = b.getAttribute('data-d44m'), n = b.getAttribute('data-n'); closeCm();
+      if(k==='card' && window.d40Open) window.d40Open(n);
+      else if(k==='filter'){ try{ document.querySelectorAll('.d27-ov').forEach(function(x){ x.remove(); }); document.body.classList.remove('d27-open'); state.assigneeFilter = n; state.filter = 'all'; render(); }catch(x){} }
+      else if(k==='copy'){ try{ navigator.clipboard.writeText(n); toast('Copied'); }catch(x){} }
+      return; }
+    if(cm && !e.target.closest('#d44Cm')) closeCm();
+  }, true);
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeCm(); });
+  window.addEventListener('scroll', closeCm, true);
+
+  /* ---------- clipboard history ---------- */
+  var KC = 'cd.clip';
+  (function(){
+    try{
+      var cb = navigator.clipboard; if(!cb || !cb.writeText || cb.__d44) return;
+      var o = cb.writeText.bind(cb);
+      cb.writeText = function(t){ try{ var s = String(t==null?'':t); if(s.trim() && s.length < 6000){ var A = LSg(KC,[]).filter(function(x){ return x.t !== s; }); A.unshift({t:s, at:Date.now()}); LSs(KC, A.slice(0,10)); } }catch(e){} return o(t); };
+      cb.__d44 = true;
+    }catch(e){}
+  })();
+  function ago(ms){ var m = Math.round((Date.now()-ms)/60000); return m<1?'just now':(m<60?m+' min ago':Math.round(m/60)+' h ago'); }
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d43-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d44c aria-label="Close">✕</button></div><div class="d29-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d44c]'))){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); } });
+    return el;
+  }
+  function openClip(){
+    var A = LSg(KC,[]);
+    var el = ov('d44Clip', 'Clipboard history', 'THE LAST 10 THINGS YOU COPIED FROM THE DESK',
+      A.length ? '<div class="d27-list">'+A.map(function(c,i){ return '<button type="button" class="d27-row d44-clip" data-d44cp="'+i+'"><span><b>'+esc(c.t.split('\n')[0].slice(0,90))+'</b><small>'+(c.t.split('\n').length>1?c.t.split('\n').length+' lines · ':'')+ago(c.at)+'</small></span><em>Copy again</em></button>'; }).join('')+'</div><div class="d27-actions"><button type="button" class="d27-btn ghost" data-d44cc>Clear history</button></div>'
+        : '<div class="d27-empty">Nothing yet. Messages you copy from the app (chase messages, replies, reports) are kept here for re-use.</div>');
+    el.addEventListener('click', function(e){
+      var b = e.target.closest('[data-d44cp]');
+      if(b){ var c = LSg(KC,[])[+b.getAttribute('data-d44cp')]; if(c){ try{ navigator.clipboard.writeText(c.t); toast('Copied again'); }catch(x){} } return; }
+      if(e.target.closest('[data-d44cc]')){ LSs(KC,[]); el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); toast('History cleared'); }
+    });
+  }
+  window.d44Clip = openClip;
+  document.addEventListener('keydown', function(e){ if(e.altKey && !e.ctrlKey && !e.metaKey && (e.key==='v'||e.key==='V') && !typing(e.target) && wide()){ e.preventDefault(); openClip(); } });
+
+  /* ---------- backup folder (File System Access) ---------- */
+  var DB = 'cd-fs', ST = 'h';
+  function idb(){ return new Promise(function(res, rej){ var q = indexedDB.open(DB,1); q.onupgradeneeded = function(){ q.result.createObjectStore(ST); }; q.onsuccess = function(){ res(q.result); }; q.onerror = function(){ rej(q.error); }; }); }
+  function hGet(){ return idb().then(function(d){ return new Promise(function(res){ var r = d.transaction(ST).objectStore(ST).get('dir'); r.onsuccess = function(){ res(r.result||null); }; r.onerror = function(){ res(null); }; }); }).catch(function(){ return null; }); }
+  function hSet(h){ return idb().then(function(d){ return new Promise(function(res){ var t = d.transaction(ST,'readwrite'); t.objectStore(ST).put(h,'dir'); t.oncomplete = function(){ res(); }; t.onerror = function(){ res(); }; }); }); }
+  function writeBackup(h){
+    return backupAllData().then(function(b){
+      var name = 'coverage-desk-backup-'+state.date+'.json';
+      return h.getFileHandle(name, {create:true}).then(function(fh){ return fh.createWritable(); }).then(function(w){ return w.write(JSON.stringify(b,null,2)).then(function(){ return w.close(); }); }).then(function(){ LSs('cd.fsb.last', new Date().toISOString().slice(0,10)); return name; });
+    });
+  }
+  function openFsb(){
+    var ok = typeof window.showDirectoryPicker==='function';
+    var el = ov('d44Fsb', 'Backup folder', 'SAVE A DAILY BACKUP STRAIGHT INTO A FOLDER ON THIS PC',
+      ok ? '<p class="d29-p">Pick a folder once (for example <b>Documents\\Coverage Desk backups</b>). Back up now, or let it save automatically the first time you open the desk each day. <span id="d44fsbs"></span></p><div class="d27-actions"><button type="button" class="d27-btn" id="d44fsbPick">Choose folder…</button><button type="button" class="d27-btn" id="d44fsbNow">Back up now</button></div><div id="d44fsbm" class="d29-p"></div>'
+         : '<div class="d27-empty">This browser can’t write to folders. Use Edge or Chrome on a computer. (Tools → Backup still downloads a file.)</div>');
+    if(!ok) return;
+    var m = el.querySelector('#d44fsbm'), s = el.querySelector('#d44fsbs');
+    hGet().then(function(h){ s.textContent = h ? 'Folder: '+h.name+'. Last backup: '+(LSg('cd.fsb.last','')||'never')+'.' : 'No folder chosen yet.'; });
+    el.querySelector('#d44fsbPick').addEventListener('click', function(){
+      window.showDirectoryPicker({mode:'readwrite'}).then(function(h){ return hSet(h).then(function(){ s.textContent = 'Folder: '+h.name+'.'; m.textContent = 'Folder saved.'; }); }).catch(function(){});
+    });
+    el.querySelector('#d44fsbNow').addEventListener('click', function(){
+      m.textContent = 'Backing up…';
+      hGet().then(function(h){
+        if(!h){ m.textContent = 'Choose a folder first.'; return; }
+        return Promise.resolve(h.requestPermission ? h.requestPermission({mode:'readwrite'}) : 'granted').then(function(p){
+          if(p!=='granted'){ m.textContent = 'Permission was not given.'; return; }
+          return writeBackup(h).then(function(n){ m.textContent = 'Saved '+n+'.'; s.textContent = 'Folder: '+h.name+'. Last backup: today.'; });
+        });
+      }).catch(function(err){ m.textContent = 'Could not save: '+(err && err.message || err); });
+    });
+  }
+  window.d44Fsb = openFsb;
+  setTimeout(function(){
+    try{
+      if(typeof window.showDirectoryPicker!=='function' || !wide() || !admin() || state.needsLogin) return;
+      if(LSg('cd.fsb.last','') === new Date().toISOString().slice(0,10)) return;
+      hGet().then(function(h){ if(!h || !h.queryPermission) return; return h.queryPermission({mode:'readwrite'}).then(function(p){ if(p==='granted') return writeBackup(h).then(function(){ toast('Daily backup saved to '+h.name); }); }); }).catch(function(){});
+    }catch(e){}
+  }, 25000);
+
+  /* ---------- hub hooks ---------- */
+  var prev = window.d35Open;
+  window.d35Open = function(k){
+    if(k==='dock'){ dockToggle(); return true; }
+    if(k==='clip'){ openClip(); return true; }
+    if(k==='fsb'){ openFsb(); return true; }
+    return typeof prev==='function' ? prev(k) : false;
+  };
+  dockSync(); markCursor(false);
 })();
