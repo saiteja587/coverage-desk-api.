@@ -17448,8 +17448,8 @@ function computeSmartAlerts(allRows, today, opts){
   }
 
   function ago(ts){
-    const m = Math.round((Date.now() - ts) / 60000);
-    if(m < 1) return 'just now'; if(m < 60) return m + 'm ago';
+    const m = Math.round((Date.now() - Number(ts)) / 60000);
+    if(!isFinite(m) || m < 1) return 'just now'; if(m < 60) return m + 'm ago';
     const h = Math.round(m / 60); if(h < 24) return h + 'h ago';
     return Math.round(h / 24) + 'd ago';
   }
