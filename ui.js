@@ -7823,10 +7823,9 @@ window.cdOwnerOf = function(r){
   var lastBadge = -1;
   function badge(){
     try{
-      if(!navigator.setAppBadge) return;
-      var n = 0; if(!state.needsLogin && admin()) n = (state.rows||[]).filter(function(r){ return !r.woi && !r.status && !r.assignee; }).length;
-      if(n===lastBadge) return; lastBadge = n;
-      if(n>0) navigator.setAppBadge(n); else navigator.clearAppBadge();
+      /* taskbar/app-icon count removed on request — only clear any old badge once */
+      if(lastBadge===0) return; lastBadge = 0;
+      if(navigator.clearAppBadge) navigator.clearAppBadge();
     }catch(e){}
   }
   var oR = window.render;
