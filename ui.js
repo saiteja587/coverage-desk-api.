@@ -7987,3 +7987,13 @@ window.cdOwnerOf = function(r){
   };
   dockSync(); markCursor(false);
 })();
+
+/* ===== V3.7 (d45): keep full-width note rows readable while the table is scrolled sideways ===== */
+(function(){
+  var raf = 0;
+  document.addEventListener('scroll', function(e){
+    var t = e.target; if(!t || t.id !== 'tableScrollMain') return;
+    if(raf) return;
+    raf = requestAnimationFrame(function(){ raf = 0; try{ t.style.setProperty('--d45sl', Math.round(t.scrollLeft) + 'px'); }catch(x){} });
+  }, true);
+})();
