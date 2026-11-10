@@ -3580,6 +3580,7 @@ function parseImportText(text, baseDate, defaultRound){
   let currentDefault = null;
   let currentTargetDate = null; // null = whatever date the import panel targets
   let headerLineCount = 0; // team/person/date-section headers — not actual call records
+  const narrDone = new Set();
   for(const line of lines){
     const dateHeader = parseDateSectionHeader(line, baseDate || state.date);
     if(dateHeader){ currentTargetDate = dateHeader; headerLineCount++; continue; }
@@ -3634,6 +3635,23 @@ function parseImportText(text, baseDate, defaultRound){
       detailed._targetDate = currentTargetDate;
       out.push(detailed);
       continue;
+    }
+
+    // Explanatory sentence after a block of "Name – time" lines (e.g. "Sir, both
+    // candidates have interviews with the same company, PFH Technology Group.
+    // However, it is only a team meeting through chat ..."): it is not a call.
+    // Apply the company it names to the rows just above and keep the remark as
+    // an info note on them; counted like a header so nothing else is affected.
+    if(/^(sir|hi|hello|dear|team)\b[\s,]/i.test(line) && /\b(both|these|all)\s+(the\s+)?candidates?\b|\bsame company\b/i.test(line) && out.length){
+      const cm = line.match(/\b(?:same\s+company|company)\s*[,:\-–]?\s+([A-Z][A-Za-z0-9&.'’\- ]{1,60}?)(?=\s*(?:[.,;]|\bHowever\b|\bbut\b|\band\b|$))/);
+      const comp = cm ? cm[1].trim() : '';
+      const chat = /\b(chat|message|text)\b/i.test(line) && /\bteam meeting|only a\b/i.test(line);
+      for(let i = out.length - 1; i >= 0 && !narrDone.has(out[i]); i--){
+        const r = out[i]; narrDone.add(r);
+        if(comp && !r.company){ r.company = comp; r.doubts = (r.doubts||[]).filter(d=>d.indexOf('No company detected')!==0); }
+        if(chat){ r.doubts = (r.doubts||[]).concat(['ℹ️ Chat-only team meeting (not a video/phone interview) — per the message: "'+line.slice(0,160)+'"']); }
+      }
+      headerLineCount++; continue;
     }
 
     // Fallback: this line didn't match any known format, but it's clearly
