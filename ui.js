@@ -1590,7 +1590,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     var rank = []; try{ rank = (window.d2Rank ? window.d2Rank(r) : []); }catch(e){}
     var people = rank.filter(function(h){ return !h.isTeam; }).slice(0,6), teams = rank.filter(function(h){ return h.isTeam; });
     var chip = function(h){ var cur = (r.assignee||'')===h.name; return '<button class="d5-pick'+(cur?' cur':'')+(h.clash||h.absent?' warn':'')+'" data-d5-assign="'+esc(h.name)+'" title="'+esc(h.name+(h.isTeam?' (team)':'')+' — '+h.load+' call'+(h.load===1?'':'s')+(h.clash?' · clashes with '+(h.clash.time||'another call'):'')+(h.absent?' · absent':'')+(h.prior?' · handled this '+h.prior+' before':''))+'"><span class="d5-av'+(h.isTeam?' team':'')+'">'+(h.isTeam?'◆':esc(h.name.charAt(0).toUpperCase()))+'</span><span>'+esc(h.name)+'</span>'+(h.prior?'<i title="handled before">↻</i>':'')+(h.clash?'<em>⚠</em>':h.absent?'<em>absent</em>':'')+'</button>'; };
-    var assign = '<section><h4>Assigned to</h4><div class="d5-cur">'+(r.woi?'<span class="d5-muted">Waiting for invite — no owner yet</span>':(r.assignee?'<span class="d5-av big">'+esc(r.assignee.charAt(0).toUpperCase())+'</span><b>'+esc(r.assignee)+'</b>':'<span class="d5-un">Nobody assigned</span>'))+'</div>'
+    var assign = '<section><h4>Assigned to</h4>'+(window.d48Line?window.d48Line(r):'')+'<div class="d5-cur">'+(r.woi?'<span class="d5-muted">Waiting for invite — no owner yet</span>':(r.assignee?'<span class="d5-av big">'+esc(r.assignee.charAt(0).toUpperCase())+'</span><b>'+esc(r.assignee)+'</b>':'<span class="d5-un">Nobody assigned</span>'))+'</div>'
       +(ad && !r.woi ? '<div class="d5-picks">'+people.map(chip).join('')+'</div><div class="d5-picks teams">'+teams.map(chip).join('')+'</div><div class="d5-row-btns"><button class="btn ghost" data-d5="more-assign">All handlers…</button>'+(r.assignee?'<button class="btn ghost danger" data-d5-assign="">Unassign</button>':'')+'</div>' : '')+'</section>';
     // facts
     var facts = [['Time',r.time||'—'],['Round',r.round||'—'],['Duration',r.duration||'—'],['Country',r.country||'—'],['Driving person',r.drivingPerson||'—']];
@@ -5084,7 +5084,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
     window.d29T = T;
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
@@ -5830,7 +5830,7 @@ window.cdOwnerOf = function(r){
     var last = ''; var H = hist(); if(H){ var p = H.filter(function(x){ return x && x._date && x._date<state.date && nk(x.candidate)===nk(r.candidate) && sameCo(x.company, r.company); }).sort(function(a,b){ return b._date.localeCompare(a._date); })[0]; if(p) last = short(p._date)+' · '+(p.round||'')+(p.status&&ST[p.status]?' · '+ST[p.status][1]:''); }
     var m = bd(r.time)-n;
     banner('d33Next', '<div class="d33-nx"><div><small>'+(m<=0?'STARTING NOW':'IN '+m+' MIN')+'</small><b>'+esc(r.candidate)+'</b><span>'+esc([r.time,r.company,r.round].filter(Boolean).join(' · '))+'</span>'
-      + (rule?'<em>📌 '+esc(rule)+'</em>':'')+(ho?'<em>📝 '+esc(ho)+'</em>':'')+(last?'<em>Last time: '+esc(last)+'</em>':'')+(rel&&rel.bad>=2?'<em>🚩 '+rel.bad+' earlier no-shows / reschedules</em>':'')
+      + (rule?'<em>📌 '+esc(rule)+'</em>':'')+(ho?'<em>📝 '+esc(ho)+'</em>':'')+(last?'<em>Last time: '+esc(last)+'</em>':'')+(rel&&rel.bad>=2?'<em>🚩 '+rel.bad+' earlier no-shows / reschedules</em>':'')+(window.d48Next?window.d48Next(r):'')
       + '</div><div class="d33-nxb"><button type="button" data-d34prep="'+esc(r.id)+'">🧭 Prep</button><button type="button" data-d33chase="'+esc(r.id)+'">📋 Chase msg</button><button type="button" data-d33open="'+esc(r.id)+'">Open</button><button type="button" data-d33bx>✕</button></div></div>', 120000);
     try{ if(window.d26fx) window.d26fx.buzz(18); }catch(e){}
   }
@@ -6287,6 +6287,7 @@ window.cdOwnerOf = function(r){
     var al = function(a,b){ try{ return rolesAlike(a,b); }catch(e){ return false; } };
     var same = r.role ? P.filter(function(x){ return x.candidate && nk(x.candidate)!==me && sameCo(x.company, r.company) && al(x.role, r.role); }) : [];
     if(same.length){ var who = {}; same.forEach(function(x){ var w = (x.drivingPerson||x.assignee||'').trim(); if(w && !isTeam(w)) who[w] = (who[w]||0)+1; }); var top = Object.keys(who).sort(function(a,b){ return who[b]-who[a]; })[0]; h += '<p class="d29-p">'+same.length+' other candidate'+(same.length===1?'':'s')+' interviewed for this role here'+(top?' — mostly handled by <b>'+esc(top)+'</b>':'')+'.</p>'; }
+    h += window.d48Block ? window.d48Block(r.candidate,'d27-sec') : '';
     var rel = window.d33Rel ? window.d33Rel(r.candidate) : null; if(rel && rel.bad>=2) h += '<div class="d33-relnote">🚩 '+rel.bad+' of '+rel.n+' earlier calls were no-shows or candidate-side reschedules — confirm early.</div>';
     return h;
   }
@@ -7421,6 +7422,7 @@ window.cdOwnerOf = function(r){
     h += '<div class="d42-sec"><b>Details</b></div>';
     h += si ? '<div class="d42-kv"><div><small>'+(si.exact?'Name in master':'Closest match in master (check)')+'</small><div>'+esc(si.student.name||name)+'</div></div>'+d.map(function(x){ return '<div><small>'+esc(x[0])+'</small><div>'+esc(x[1])+'</div></div>'; }).join('')+'</div>' : '<div class="d42-empty">Not found in Students Master.</div>';
     // by client
+    h += window.d48Block ? window.d48Block(name,'d42-sec') : '';
     h += '<div class="d42-sec"><b>Calls by client</b><span>'+groups.length+'</span></div>';
     if(!groups.length) h += '<div class="d42-empty">No calls on file.</div>';
     groups.forEach(function(g){
@@ -8019,7 +8021,7 @@ window.cdOwnerOf = function(r){
     else if(i>=0) state.notes.splice(i,1);
     try{ markDirty(); }catch(e){}
   }
-  function setFb(rid, text){ var m = getFb(); if(text && String(text).trim()) m[rid] = {t:String(text).trim(), at:Date.now()}; else delete m[rid]; putFb(m); }
+  function setFb(rid, text){ var m = getFb(), r = rowById(rid) || {}; if(text && String(text).trim()) m[rid] = {t:String(text).trim(), at:Date.now(), c:r.candidate||'', co:r.company||'', rd:r.round||'', a:r.assignee||'', p:r.drivingPerson||''}; else delete m[rid]; putFb(m); try{ if(window.d48Changed) window.d48Changed(); }catch(e){} }
 
   /* ---------- parser ---------- */
   function parse(text){
@@ -8121,6 +8123,7 @@ window.cdOwnerOf = function(r){
 
   /* ---------- badge on the call row + viewer ---------- */
   function badges(){
+    if(window.d48Badges) return window.d48Badges();
     try{
       document.querySelectorAll('.d46-fb').forEach(function(b){ b.remove(); });
       var m = getFb(); if(!Object.keys(m).length) return;
@@ -8144,7 +8147,7 @@ window.cdOwnerOf = function(r){
       else if(e.target.closest('#d46Del')){ setFb(rid, ''); close(el); badges(); toast('Feedback removed'); }
     });
   }
-  document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d46v]'); if(b){ e.stopPropagation(); e.preventDefault(); openView(b.getAttribute('data-d46v')); } }, true);
+  document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d46v]'); if(b){ e.stopPropagation(); e.preventDefault(); (window.d48View||openView)(b.getAttribute('data-d46v')); } }, true);
 
   var oR = window.render, tm = 0;
   window.render = function(){ var r = oR.apply(this, arguments); clearTimeout(tm); tm = setTimeout(badges, 150); return r; };
@@ -8235,4 +8238,250 @@ window.cdOwnerOf = function(r){
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='xlr'){ open(); return true; } return typeof prev==='function' ? prev(k) : false; };
   window.d47Test = {pickRows:pickRows};
+})();
+
+/* ===== V4.0 (d48): feedback intelligence — history per candidate, tags, heads-up pop-up, prep list, pending chase, summary ===== */
+(function(){
+  'use strict';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var rows = function(){ return (typeof state!=='undefined' && state.rows) || []; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0]; };
+  var nk = function(n){ try{ return normalizeNameKey(n); }catch(e){ return String(n||'').toLowerCase().replace(/[^a-z]/g,''); } };
+  var bd = function(t){ try{ return businessDayMinutes(t); }catch(e){ return 9999; } };
+  var nowBd = function(){ var d = new Date(); return (d.getHours()*60+d.getMinutes()+720)%1440; };
+  var sd = function(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }catch(e){ return d||''; } };
+  var snip = function(t,n){ t = String(t||'').replace(/\s+/g,' ').trim(); return t.length>n ? t.slice(0,n-1)+'…' : t; };
+  function toast(t){ try{ if(window.d2Toast) return window.d2Toast(t,{ms:2200}); }catch(e){} }
+  function copy(t){ try{ navigator.clipboard.writeText(t); toast('Copied'); }catch(e){ try{ var a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); toast('Copied'); }catch(x){} } }
+
+  /* ---------- tags ---------- */
+  var TAGS = [
+    ['good','Went well','good',/\b(went well|managed (it |the call |this )?(very )?well|handled (the call |it )?(very )?well|did well|good (call|performance)|looking forward)\b/i],
+    ['prep','Needs prep','warn',/\b(needs? (more )?(prep|preps|preparation|practice|to practice|mock)|mock interviews?|practice more|prep needed|need preps?)\b/i],
+    ['comm','Communication','warn',/\b(pace|speaking|fluen\w*|pronounc\w*|nervous\w*|panic\w*|confidence|reading out|time gap|slow down|unclear)\b/i],
+    ['tech','Technical gap','warn',/\b(basic questions|technical terms|couldn.?t answer|could not answer|struggl\w*|lack of knowledge|weak in)\b/i],
+    ['tool','Tool / connection','warn',/\b(tool (was )?slow|our tool|power cut|network|connection|audio|internet|lag(ging)?|another ai tool)\b/i],
+    ['noshow','Cancelled / no-show','info',/\b(cancel+ed|no[- ]?show|not responding|did not join|didn.?t join|left the meeting)\b/i],
+    ['client','Client side','info',/\b(client (is )?(looking|asked|wants)|gc holders?|\bopt\b|h1b|visa|check with (their|the) team|group meeting)\b/i]
+  ];
+  function tagsOf(t){ return TAGS.filter(function(g){ return g[3].test(t||''); }).map(function(g){ return {k:g[0], l:g[1], c:g[2]}; }); }
+  function sevOf(list){ var any = {good:0,warn:0,info:0}; list.forEach(function(e){ tagsOf(e.t).forEach(function(g){ any[g.c]++; }); }); return any.warn ? 'warn' : any.good ? 'good' : 'info'; }
+  function chips(list){ var seen = {}, h = ''; list.forEach(function(e){ tagsOf(e.t).forEach(function(g){ if(!seen[g.k]){ seen[g.k] = 1; h += '<span class="d48-chip '+g.c+'">'+esc(g.l)+'</span>'; } }); }); return h; }
+  function weak(e){ return tagsOf(e.t).some(function(g){ return g.c==='warn'; }); }
+
+  /* ---------- data: every feedback note across days ---------- */
+  var cache = null, loading = null, lastDate = null;
+  function parseNote(d, text){
+    var o; try{ o = JSON.parse(text)||{}; }catch(e){ return []; }
+    return Object.keys(o).map(function(rid){ var e = o[rid]||{}; return {d:d, rid:rid, t:e.t||'', at:e.at||0, c:e.c||'', co:e.co||'', rd:e.rd||'', a:e.a||'', p:e.p||''}; });
+  }
+  function fill(e){ if(e.c) return; var r = e.d===state.date ? rowById(e.rid) : null; if(r){ e.c = r.candidate||''; e.co = r.company||''; e.rd = r.round||''; e.a = r.assignee||''; e.p = r.drivingPerson||''; } }
+  function entries(){
+    var base = (cache||[]).filter(function(e){ return e.d!==state.date; });
+    var n = ((state.notes)||[]).filter(function(x){ return x && x.id===state.date+'-feedback'; })[0];
+    var loc = n ? parseNote(state.date, n.text) : []; loc.forEach(fill);
+    return base.concat(loc).filter(function(e){ return e.t && e.c; });
+  }
+  function forCand(name){ var k = nk(name); if(!k) return []; return entries().filter(function(e){ return nk(e.c)===k; }).sort(function(a,b){ return (b.d+String(b.at)).localeCompare(a.d+String(a.at)); }); }
+  function load(force){
+    if(loading && !force) return loading;
+    loading = Promise.resolve().then(function(){ return apiCall('notes', {qs:'suffix=feedback'}); }).then(function(res){
+      var out = []; ((res&&res.rows)||[]).forEach(function(n){ out = out.concat(parseNote(n.d, n.text)); });
+      if(out.some(function(e){ return !e.c; })){
+        return fetchAllRowsAcrossDates(false).then(function(all){ var m = {}; (all||[]).forEach(function(r){ m[r._date+'|'+r.id] = r; });
+          out.forEach(function(e){ if(!e.c){ var r = m[e.d+'|'+e.rid]; if(r){ e.c = r.candidate||''; e.co = r.company||''; e.rd = r.round||''; e.a = r.assignee||''; e.p = r.drivingPerson||''; } } }); return out; }).catch(function(){ return out; });
+      }
+      return out;
+    }).catch(function(){ return []; }).then(function(out){ cache = out; try{ badges(); }catch(e){} return out; });
+    return loading;
+  }
+  window.d48Changed = function(){ setTimeout(function(){ badges(); }, 50); };
+
+  /* ---------- blocks ---------- */
+  var who = function(e){ var w = (e.p||e.a||'').trim(); return w ? 'call taken by <b>'+esc(w)+'</b>' : ''; };
+  function entryHtml(e, own){
+    return '<div class="d48-en'+(own?' own':'')+'"><div class="d48-meta"><b>'+esc(sd(e.d))+'</b> · '+esc([e.co,e.rd].filter(Boolean).join(' · '))+(who(e)?' · '+who(e):'')+(e.at?' · <span>added '+esc(new Date(e.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))+'</span>':'')+'</div>'
+      +'<div class="d48-tx">'+esc(e.t)+'</div><div class="d48-tg">'+chips([e])+'</div></div>';
+  }
+  window.d48Block = function(name, cls){
+    var L = forCand(name); if(!L.length) return '';
+    return '<div class="'+(cls||'d27-sec')+'"><b>💬 Feedback on earlier calls</b><span>'+L.length+'</span></div><div class="d48-chips">'+chips(L)+'</div>'+L.slice(0,4).map(function(e){ return entryHtml(e); }).join('');
+  };
+  window.d48Next = function(r){
+    var L = forCand(r.candidate).filter(function(e){ return !(e.d===state.date && String(e.rid)===String(r.id)); }); if(!L.length) return '';
+    var e = L[0]; return '<em class="d48-em '+sevOf([e])+'">💬 '+esc(sd(e.d))+(who(e)?' · '+who(e).replace(/<[^>]+>/g,''):'')+': '+esc(snip(e.t,140))+'</em>';
+  };
+  window.d48Line = function(r){
+    var L = forCand(r.candidate); if(!L.length) return '';
+    var e = L[0]; return '<div class="d48-line '+sevOf(L)+'"><b>💬 Last feedback</b> · '+esc(sd(e.d))+(who(e)?' · '+who(e):'')+'<span>'+esc(snip(e.t,170))+'</span><div class="d48-tg">'+chips(L.slice(0,3))+'</div></div>';
+  };
+
+  /* ---------- badges on call rows ---------- */
+  function badges(){
+    try{
+      document.querySelectorAll('.d46-fb').forEach(function(b){ b.remove(); });
+      var all = entries(); if(!all.length) return;
+      var by = {}; all.forEach(function(e){ (by[nk(e.c)] = by[nk(e.c)] || []).push(e); });
+      document.querySelectorAll('tr[data-id]').forEach(function(tr){
+        var r = rowById(tr.getAttribute('data-id')); if(!r) return;
+        var L = by[nk(r.candidate)]; if(!L || !L.length) return;
+        var td = tr.children[2] || tr.children[0]; if(!td) return;
+        L = L.slice().sort(function(a,b){ return (b.d+String(b.at)).localeCompare(a.d+String(a.at)); });
+        var own = L.some(function(e){ return e.d===state.date && String(e.rid)===String(r.id); }), sv = sevOf(L);
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'd46-fb sev-'+sv+(own?'':' prior'); b.setAttribute('data-d46v', r.id);
+        b.title = (own?'Feedback on this call':'Earlier feedback')+' — '+sd(L[0].d)+(L[0].co?' · '+L[0].co:'')+': '+L[0].t; b.textContent = '💬'+(L.length>1?L.length:'');
+        td.appendChild(b);
+      });
+    }catch(e){}
+  }
+  window.d48Badges = badges;
+
+  /* ---------- viewer (history + edit this call's feedback) ---------- */
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d43-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d48c aria-label="Close">✕</button></div><div class="d29-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d48c]'))) shut(el); });
+    return el;
+  }
+  function shut(el){ if(el) el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  window.d48View = function(rid){
+    var r = rowById(rid); if(!r) return; var L = forCand(r.candidate); if(!L.length) return;
+    var mine = L.filter(function(e){ return e.d===state.date && String(e.rid)===String(rid); })[0];
+    var body = '<div class="d48-chips">'+chips(L)+'</div>'
+      +(mine ? '<div class="d48-sec">This call</div><div class="d48-meta">'+esc(sd(mine.d))+' · '+esc([mine.co,mine.rd].filter(Boolean).join(' · '))+(who(mine)?' · '+who(mine):'')+'</div><textarea id="d48Edit" class="d46-ta" rows="5"'+(admin()?'':' readonly')+'>'+esc(mine.t)+'</textarea><div class="d46-bar"><button type="button" class="d27-btn" id="d48Copy">Copy</button>'+(admin()?'<button type="button" class="d27-btn d46-go" id="d48Save">Save</button><button type="button" class="d27-btn" id="d48Del">Remove</button>':'')+'</div>' : '')
+      +(L.filter(function(e){ return e!==mine; }).length ? '<div class="d48-sec">'+(mine?'Earlier feedback':'Feedback on earlier calls')+'</div>'+L.filter(function(e){ return e!==mine; }).map(function(e){ return entryHtml(e); }).join('') : '');
+    var el = ov('d46View','Feedback',(r.candidate||'').toUpperCase(), body);
+    el.addEventListener('click', function(e){
+      if(e.target.closest('#d48Copy')) copy(el.querySelector('#d48Edit').value);
+      else if(e.target.closest('#d48Save')){ var f = window.d46Test; f.setFb(rid, el.querySelector('#d48Edit').value); shut(el); badges(); toast('Saved'); }
+      else if(e.target.closest('#d48Del')){ window.d46Test.setFb(rid, ''); shut(el); badges(); toast('Feedback removed'); }
+    });
+  };
+
+  /* ---------- heads-up pop-up before a call ---------- */
+  var shown = {};
+  function pop(){
+    try{
+      if(document.hidden || typeof state==='undefined' || state.needsLogin || state.date!==todayDateString() || document.getElementById('d48Pop')) return;
+      var me = ''; try{ me = getMyAssigneeName(); }catch(e){}
+      var n = nowBd();
+      var r = rows().filter(function(x){ var m = bd(x.time)-n; return x.candidate && !x.woi && !x.status && m<=15 && m>=-2 && !shown[state.date+x.id] && forCand(x.candidate).filter(function(e){ return !(e.d===state.date && String(e.rid)===String(x.id)); }).length; })
+        .sort(function(a,b){ return bd(a.time)-bd(b.time); })[0];
+      if(!r) return;
+      var o = ''; try{ o = window.cdOwnerOf ? window.cdOwnerOf(r) : (r.drivingPerson||r.assignee||''); }catch(e){}
+      if(me && o===me && document.getElementById('d33Next')) return;
+      shown[state.date+r.id] = 1;
+      var L = forCand(r.candidate).filter(function(e){ return !(e.d===state.date && String(e.rid)===String(r.id)); }), e = L[0], m = bd(r.time)-n;
+      var el = document.createElement('div'); el.id = 'd48Pop'; el.className = 'd48-pop '+sevOf(L);
+      el.innerHTML = '<div class="d48-ph"><small>💬 HEADS-UP · '+(m<=0?'STARTING NOW':'IN '+m+' MIN')+'</small><button type="button" data-d48x aria-label="Dismiss">✕</button></div>'
+        +'<b>'+esc(r.candidate)+'</b><span class="d48-ps">'+esc([r.time,r.company,r.round].filter(Boolean).join(' · '))+(o?' · '+esc(o):'')+'</span>'
+        +'<div class="d48-tg">'+chips(L.slice(0,3))+'</div>'
+        +'<div class="d48-pt"><small>'+esc(sd(e.d))+(who(e)?' · '+who(e):'')+'</small>'+esc(snip(e.t,230))+'</div>'
+        +'<div class="d48-pb"><button type="button" data-d48p="'+esc(r.id)+'">🧭 Prep</button><button type="button" data-d48o="'+esc(r.id)+'">All feedback</button></div>';
+      document.body.appendChild(el);
+      el.addEventListener('click', function(ev){
+        if(ev.target.closest('[data-d48x]')) el.remove();
+        else if(ev.target.closest('[data-d48p]')){ el.remove(); if(window.d34Prep) window.d34Prep(r.id); }
+        else if(ev.target.closest('[data-d48o]')){ el.remove(); window.d48View(r.id); }
+      });
+      setTimeout(function(){ if(el.isConnected) el.remove(); }, 90000);
+    }catch(e){}
+  }
+
+  /* ---------- tools ---------- */
+  var ADV = {prep:'practise with a few mock interviews', comm:'speak slowly and clearly and keep a steady pace', tech:'revise the core and basic technical questions', tool:'check your internet, audio and tools before the call'};
+  function msgFor(r, e){
+    var first = String(r.candidate||'').split(/\s+/)[0] || 'there', ks = tagsOf(e.t).filter(function(g){ return ADV[g.k]; }).map(function(g){ return ADV[g.k]; });
+    return 'Hi '+first+', quick prep note before your '+(r.company||'')+' call ('+(r.time||'')+' IST). Feedback from your earlier call: '+snip(e.t,300)+(ks.length?' Please focus on: '+ks.join('; ')+'.':'')+' All the best!';
+  }
+  function prepListHtml(){
+    var L = rows().filter(function(r){ return r.candidate && !r.woi && !r.status; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }), out = [];
+    L.forEach(function(r){ var F = forCand(r.candidate).filter(function(e){ return !(e.d===state.date && String(e.rid)===String(r.id)); }); var w = F.filter(weak)[0]; if(w) out.push({r:r, e:w, F:F}); });
+    if(!out.length) return '<div class="d27-empty">Nobody on '+esc(state.date)+' has earlier feedback saying they need prep.</div>';
+    return '<div class="d46-bar"><button type="button" class="d27-btn d46-go" data-d48a="all">Copy all messages</button><span class="d46-sum">'+out.length+' candidate'+(out.length===1?'':'s')+' · '+esc(state.date)+'</span></div>'
+      +out.map(function(x,i){ return '<div class="d48-card"><div class="d48-meta"><b>'+esc(x.r.time||'')+'</b> · <b>'+esc(x.r.candidate)+'</b> · '+esc(x.r.company||'')+'</div><div class="d48-tg">'+chips(x.F.slice(0,3))+'</div><div class="d48-tx">'+esc(snip(x.e.t,200))+'</div><div class="d48-meta">'+esc(sd(x.e.d))+(who(x.e)?' · '+who(x.e):'')+'</div><button type="button" class="d27-btn" data-d48m="'+i+'">Copy message</button></div>'; }).join('');
+  }
+  function pendingData(range, firstOnly){
+    var t = todayDateString(), a = t, b = t;
+    if(range==='yesterday'){ a = b = deskDateAdd(t,-1); } else if(range==='3'){ a = deskDateAdd(t,-2); }
+    return fetchAllRowsAcrossDates(false).then(function(all){
+      var have = {}, haveCo = {}; entries().forEach(function(e){ have[e.d+'|'+e.rid] = 1; haveCo[e.d+'|'+nk(e.c)] = 1; });
+      return (all||[]).filter(function(r){ var d = r._date||''; return d>=a && d<=b && r.candidate && !r.woi && !r.status && (!firstOnly || /^(1st|first)/i.test(r.round||'')) && !have[d+'|'+r.id] && !haveCo[d+'|'+nk(r.candidate)]; })
+        .sort(function(x,y){ return x._date===y._date ? bd(x.time)-bd(y.time) : (x._date<y._date?-1:1); });
+    });
+  }
+  function pendingHtml(list, range, firstOnly){
+    var chipsH = '<div class="d29-seg wrap">'+[['yesterday','Yesterday'],['today','Today'],['3','Last 3 days']].map(function(x){ return '<button type="button" class="'+(range===x[0]?'on':'')+'" data-d48r="'+x[0]+'">'+x[1]+'</button>'; }).join('')+'<button type="button" class="'+(firstOnly?'on':'')+'" data-d48f="1">1st rounds only</button></div>';
+    if(!list) return chipsH+'<div class="d27-empty">Reading every saved day…</div>';
+    if(!list.length) return chipsH+'<div class="d27-empty">✅ Every call in this range has feedback.</div>';
+    var g = {}; list.forEach(function(r){ var w = (r.drivingPerson||r.assignee||'Unassigned').trim()||'Unassigned'; (g[w] = g[w]||[]).push(r); });
+    var names = Object.keys(g).sort(function(a,b){ return g[b].length-g[a].length; });
+    return chipsH+'<div class="d46-bar"><button type="button" class="d27-btn d46-go" data-d48a="chase">Copy all chase messages</button><span class="d46-sum">'+list.length+' without feedback · '+names.length+' people</span></div>'
+      +names.map(function(w,i){ return '<div class="d48-card"><div class="d48-meta"><b>'+esc(w)+'</b> · '+g[w].length+'</div>'+g[w].map(function(r){ return '<div class="d48-tx">'+esc(sd(r._date))+' · '+esc(r.time||'')+' · '+esc(r.candidate)+' · '+esc(r.company||'')+'</div>'; }).join('')+'<button type="button" class="d27-btn" data-d48c2="'+i+'">Copy chase message</button></div>'; }).join('');
+  }
+  function chaseMsg(w, L){ return 'Hi '+(w==='Unassigned'?'team':w.split(/\s+/)[0])+', please share the feedback for these calls:\n'+L.map(function(r,i){ return (i+1)+'. '+sd(r._date)+' '+(r.time||'')+' – '+r.candidate+' ('+(r.company||'')+')'; }).join('\n')+'\nThank you!'; }
+  function summaryHtml(period, data){
+    var chipsH = '<div class="d29-seg wrap">'+[['week','This week'],['7','Last 7 days'],['month','This month'],['all','All']].map(function(x){ return '<button type="button" class="'+(period===x[0]?'on':'')+'" data-d48s="'+x[0]+'">'+x[1]+'</button>'; }).join('')+'</div>';
+    if(!data.n) return chipsH+'<div class="d27-empty">No feedback in this period.</div>';
+    var bar = function(l,n,c){ return '<div class="d48-bar"><span>'+esc(l)+'</span><i class="'+c+'" style="width:'+Math.max(4,Math.round(100*n/data.n))+'%"></i><b>'+n+'</b></div>'; };
+    return chipsH+'<div class="d46-bar"><button type="button" class="d27-btn d46-go" data-d48a="sum">Copy summary</button><span class="d46-sum">'+data.n+' feedbacks · '+data.good+' went well · '+data.weak+' need work</span></div>'
+      +'<div class="d27-sec"><b>By tag</b></div>'+TAGS.map(function(g){ return data.tag[g[0]] ? bar(g[1], data.tag[g[0]], g[2]) : ''; }).join('')
+      +'<div class="d27-sec"><b>By client</b><span>top 8</span></div>'+data.co.slice(0,8).map(function(x){ return '<div class="d48-row"><b>'+esc(x[0])+'</b><span>'+x[1].n+' feedback'+(x[1].n===1?'':'s')+(x[1].w?' · <em class="warn">'+x[1].w+' need work</em>':'')+'</span></div>'; }).join('')
+      +'<div class="d27-sec"><b>By person who took the call</b></div>'+data.pe.slice(0,10).map(function(x){ return '<div class="d48-row"><b>'+esc(x[0])+'</b><span>'+x[1].n+' feedback'+(x[1].n===1?'':'s')+(x[1].w?' · <em class="warn">'+x[1].w+' need work</em>':'')+'</span></div>'; }).join('');
+  }
+  function summaryData(period){
+    var t = todayDateString(), a = '0000-00-00';
+    if(period==='week') a = deskMonday(t); else if(period==='7') a = deskDateAdd(t,-6); else if(period==='month') a = t.slice(0,8)+'01';
+    var L = entries().filter(function(e){ return e.d>=a; }), D = {n:L.length, good:0, weak:0, tag:{}, co:{}, pe:{}};
+    L.forEach(function(e){ var ts = tagsOf(e.t), w = ts.some(function(g){ return g.c==='warn'; }); if(ts.some(function(g){ return g.k==='good'; })) D.good++; if(w) D.weak++;
+      ts.forEach(function(g){ D.tag[g.k] = (D.tag[g.k]||0)+1; });
+      var c = e.co||'—', p = (e.p||e.a||'—'); (D.co[c] = D.co[c]||{n:0,w:0}).n++; if(w) D.co[c].w++; (D.pe[p] = D.pe[p]||{n:0,w:0}).n++; if(w) D.pe[p].w++; });
+    var srt = function(o){ return Object.keys(o).map(function(k){ return [k,o[k]]; }).sort(function(x,y){ return y[1].n-x[1].n; }); };
+    D.co = srt(D.co); D.pe = srt(D.pe); return D;
+  }
+  function openTool(k){
+    var el;
+    if(k==='fbp'){
+      el = ov('d48T','Prep list','TODAY’S CANDIDATES WHO NEED PREP','<div class="d27-empty">Loading feedback…</div>');
+      var paint = function(){ if(!el.isConnected) return; el.querySelector('.d29-body').innerHTML = prepListHtml(); };
+      paint(); load().then(paint);
+      el.addEventListener('click', function(e){
+        var out = []; rows().filter(function(r){ return r.candidate && !r.woi && !r.status; }).sort(function(a,b){ return bd(a.time)-bd(b.time); }).forEach(function(r){ var F = forCand(r.candidate).filter(function(x){ return !(x.d===state.date && String(x.rid)===String(r.id)); }); var w = F.filter(weak)[0]; if(w) out.push({r:r,e:w}); });
+        var m = e.target.closest('[data-d48m]'); if(m){ var x = out[+m.getAttribute('data-d48m')]; if(x) copy(msgFor(x.r,x.e)); return; }
+        if(e.target.closest('[data-d48a="all"]')) copy(out.map(function(x){ return x.r.candidate+':\n'+msgFor(x.r,x.e); }).join('\n\n'));
+      });
+    } else if(k==='fbm'){
+      var st = {range:'yesterday', first:true, list:null, groups:[]}; el = ov('d48T','Feedback pending','CALLS WITH NO FEEDBACK YET', pendingHtml(null,st.range,st.first));
+      var run = function(){ st.list = null; el.querySelector('.d29-body').innerHTML = pendingHtml(null,st.range,st.first);
+        Promise.all([load(), pendingData(st.range, st.first)]).then(function(res){ if(!el.isConnected) return; st.list = res[1]; var g = {}; st.list.forEach(function(r){ var w = (r.drivingPerson||r.assignee||'Unassigned').trim()||'Unassigned'; (g[w] = g[w]||[]).push(r); }); st.groups = Object.keys(g).sort(function(a,b){ return g[b].length-g[a].length; }).map(function(w){ return [w,g[w]]; }); el.querySelector('.d29-body').innerHTML = pendingHtml(st.list,st.range,st.first); })
+          .catch(function(){ if(el.isConnected) el.querySelector('.d29-body').innerHTML = '<div class="d27-empty">Could not load calls — check your connection.</div>'; }); };
+      run();
+      el.addEventListener('click', function(e){
+        var r = e.target.closest('[data-d48r]'); if(r){ st.range = r.getAttribute('data-d48r'); run(); return; }
+        if(e.target.closest('[data-d48f]')){ st.first = !st.first; run(); return; }
+        var c = e.target.closest('[data-d48c2]'); if(c){ var g = st.groups[+c.getAttribute('data-d48c2')]; if(g) copy(chaseMsg(g[0],g[1])); return; }
+        if(e.target.closest('[data-d48a="chase"]')) copy(st.groups.map(function(g){ return chaseMsg(g[0],g[1]); }).join('\n\n'));
+      });
+    } else if(k==='fbs'){
+      var per = 'week'; el = ov('d48T','Feedback summary','WHAT THE FEEDBACK SAYS','<div class="d27-empty">Loading…</div>');
+      var show = function(){ if(el.isConnected) el.querySelector('.d29-body').innerHTML = summaryHtml(per, summaryData(per)); };
+      show(); load().then(show);
+      el.addEventListener('click', function(e){
+        var s = e.target.closest('[data-d48s]'); if(s){ per = s.getAttribute('data-d48s'); show(); return; }
+        if(e.target.closest('[data-d48a="sum"]')){ var D = summaryData(per); copy('Feedback summary ('+per+'): '+D.n+' feedbacks · '+D.good+' went well · '+D.weak+' need work\n'+TAGS.filter(function(g){ return D.tag[g[0]]; }).map(function(g){ return '• '+g[1]+': '+D.tag[g[0]]; }).join('\n')+'\nTop clients: '+D.co.slice(0,5).map(function(x){ return x[0]+' ('+x[1].n+')'; }).join(', ')); }
+      });
+    } else return false;
+    return true;
+  }
+  window.d48Open = openTool;
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='fbp'||k==='fbm'||k==='fbs'){ openTool(k); return true; } return typeof prev==='function' ? prev(k) : false; };
+
+  var oR = window.render, tm = 0;
+  window.render = function(){ var r = oR.apply(this, arguments); clearTimeout(tm); tm = setTimeout(function(){ if(state.date!==lastDate){ lastDate = state.date; load(true); } badges(); }, 160); return r; };
+  setTimeout(function(){ load(); }, 2500); setInterval(pop, 60000); setTimeout(pop, 5000);
+  window.d48Test = {tagsOf:tagsOf, entries:entries, load:load, forCand:forCand, pop:pop};
 })();
