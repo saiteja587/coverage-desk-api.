@@ -5086,7 +5086,13 @@ window.cdOwnerOf = function(r){
     var hd = heads();
     var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
     window.d29T = T;
-    return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
+    var GR = [['Daily work',['paste','chase','resched','quick','reply','email','carry','wrap']],['Before a call',['prep','fbp','rules','learn']],['Feedback',['fbk','fbm','fbs']],['Reports',['insights','week','dtrend','score','fair','dcmp','incent','ttop','xlr','scrum']],['People',['person','handler']],['Safety',['changes','backup','fsb']],['Look & settings',['look','focus','dock','ics','clip','notif']]], used = {};
+    var tile = function(t, g){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'" data-d29g="'+esc(g)+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; };
+    var byK = {}; T.forEach(function(t){ byK[t[0]] = t; });
+    var secs = GR.map(function(g){ var L = g[1].filter(function(k){ return byK[k]; }); L.forEach(function(k){ used[k] = 1; }); return L.length ? '<section class="d29-grp"><div class="d29-gh">'+esc(g[0])+'<span>'+L.length+'</span></div><div class="d29-grid">'+L.map(function(k){ return tile(byK[k], g[0]); }).join('')+'</div></section>' : ''; }).join('');
+    var rest = T.filter(function(t){ return !used[t[0]]; });
+    if(rest.length) secs += '<section class="d29-grp"><div class="d29-gh">More<span>'+rest.length+'</span></div><div class="d29-grid">'+rest.map(function(t){ return tile(t,'More'); }).join('')+'</div></section>';
+    return '<div class="d29-groups">'+secs+'</div><div id="d29None" class="d27-empty" hidden>No tool matches that.</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
   }
   var tool = null;
@@ -6392,25 +6398,29 @@ window.cdOwnerOf = function(r){
   function decorate(hub){
     var body = hub.querySelector('.d29-body'); if(!body) return;
     var grid = body.querySelector('.d29-grid'); if(!grid || body.querySelector('.d35-q')) return;
+    var grid0 = grid, groups = body.querySelector('.d29-groups'), anchor = groups || grid;
     var fav = LSg(FAV,[]), rec = LSg(REC,[]);
-    var tiles = Array.prototype.slice.call(grid.querySelectorAll('.d29-tile'));
-    var by = {}; tiles.forEach(function(t){ by[t.getAttribute('data-d29t')] = t;
+    var tiles = Array.prototype.slice.call(body.querySelectorAll('.d29-tile'));
+    var pinSec = null, pinGrid = null;
+    if(groups){ pinSec = document.createElement('section'); pinSec.className = 'd29-grp d35-pinsec'; pinSec.innerHTML = '<div class="d29-gh">★ Pinned<span></span></div><div class="d29-grid"></div>'; pinGrid = pinSec.querySelector('.d29-grid'); groups.insertBefore(pinSec, groups.firstChild); }
+    var by = {}; tiles.forEach(function(t){ t.__home = t.parentNode; by[t.getAttribute('data-d29t')] = t;
       var s = document.createElement('i'); s.className = 'd35-star'; s.setAttribute('data-d35star', t.getAttribute('data-d29t')); s.setAttribute('role','button'); s.setAttribute('aria-label','Pin to top'); s.textContent = '☆'; t.appendChild(s); });
     var bar = document.createElement('div'); bar.className = 'd35-bar';
     bar.innerHTML = '<input class="d35-q" type="search" placeholder="Search tools…  (Enter opens the first)" autocomplete="off"><div class="d35-chips"></div>';
-    body.insertBefore(bar, grid);
+    body.insertBefore(bar, anchor);
     var chips = bar.querySelector('.d35-chips');
     function name(k){ var t = by[k]; return t ? t.querySelector('b').textContent : ''; }
     function order(){
       fav = LSg(FAV,[]);
-      fav.slice().reverse().forEach(function(k){ if(by[k]) grid.insertBefore(by[k], grid.firstChild); });
+      if(groups){ tiles.forEach(function(t){ if(fav.indexOf(t.getAttribute('data-d29t'))<0) t.__home.appendChild(t); }); fav.forEach(function(k){ if(by[k]) pinGrid.appendChild(by[k]); }); pinSec.style.display = pinGrid.children.length ? '' : 'none'; pinSec.querySelector('.d29-gh span').textContent = pinGrid.children.length; }
+      else fav.slice().reverse().forEach(function(k){ if(by[k]) grid.insertBefore(by[k], grid.firstChild); });
       tiles.forEach(function(t){ var k = t.getAttribute('data-d29t'), on = fav.indexOf(k)>=0; t.classList.toggle('d35-fav', on); t.querySelector('.d35-star').textContent = on ? '★' : '☆'; });
       var r = LSg(REC,[]).filter(function(k){ return by[k]; }).slice(0,3);
       chips.innerHTML = r.length ? '<small>Recent</small>'+r.map(function(k,i){ return '<button type="button" class="d35-chip" data-d29t="'+k+'">'+(i===0?'↩ ':'')+esc(name(k))+'</button>'; }).join('') : '';
     }
     order();
     var q = bar.querySelector('.d35-q');
-    function filt(){ var v = q.value.trim().toLowerCase(); tiles.forEach(function(t){ t.style.display = (!v || t.innerText.toLowerCase().indexOf(v)>=0) ? '' : 'none'; }); chips.style.display = v ? 'none' : ''; }
+    function filt(){ var v = q.value.trim().toLowerCase(); tiles.forEach(function(t){ t.style.display = (!v || (t.innerText+' '+(t.getAttribute('data-d29g')||'')).toLowerCase().indexOf(v)>=0) ? '' : 'none'; }); chips.style.display = v ? 'none' : ''; var any = false; body.querySelectorAll('.d29-grp').forEach(function(g){ var nv = Array.prototype.filter.call(g.querySelectorAll('.d29-tile'), function(t){ return t.style.display!=='none'; }).length, vis = nv>0, cs = g.querySelector('.d29-gh span'); if(cs) cs.textContent = nv; g.style.display = (vis && !(g===pinSec && !pinGrid.children.length)) ? '' : 'none'; if(vis) any = true; }); var nn = document.getElementById('d29None'); if(nn) nn.hidden = any || !v; }
     q.addEventListener('input', filt);
     q.addEventListener('keydown', function(e){ if(e.key==='Enter'){ var f = tiles.filter(function(t){ return t.style.display!=='none'; })[0]; if(f) f.click(); } });
     hub.addEventListener('click', function(e){ var s = e.target.closest && e.target.closest('[data-d35star]'); if(!s) return; e.stopPropagation(); e.preventDefault();
