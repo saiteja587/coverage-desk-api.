@@ -941,6 +941,14 @@ async function handleRoster(req, res, db) {
 async function handleNotes(req, res, db) {
   if (req.method === 'GET') {
     const { date } = req.query;
+    // Cross-day read of one kind of note (e.g. suffix=feedback -> every "<date>-feedback" note),
+    // used by the candidate feedback history. Suffix is letters/digits/dashes only.
+    if (!date && req.query.suffix) {
+      const suf = String(req.query.suffix).replace(/[^a-z0-9-]/gi, '').slice(0, 30);
+      if (!suf) return res.status(400).json({ error: 'bad suffix' });
+      const [srows] = await db.query("SELECT id, DATE_FORMAT(note_date, '%Y-%m-%d') AS d, note_text AS text FROM notes WHERE id LIKE ? ORDER BY note_date", ['%-' + suf]);
+      return res.status(200).json({ rows: srows });
+    }
     if (!date) return res.status(400).json({ error: 'date query param required' });
     const [rows] = await db.query('SELECT id, note_text AS text FROM notes WHERE note_date = ? ORDER BY created_at', [date]);
     return res.status(200).json({ rows });
