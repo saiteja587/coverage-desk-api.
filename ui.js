@@ -5084,7 +5084,7 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client']];
     window.d29T = T;
     return '<div class="d29-grid">'+T.map(function(t){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; }).join('')+'</div>'
       + '<div class="d27-sec"><b>Heads-up</b><span>'+hd.length+'</span></div><div class="d27-list">'+(hd.length? hd.slice(0,8).map(function(x){ return '<button type="button" class="d27-row" data-d29open="'+esc(x.id)+'"><span class="t">'+x.ic+'</span><span class="n"><b>'+esc(x.t)+'</b><small>'+esc(x.s)+'</small></span><span class="o">›</span></button>'; }).join('') : '<div class="d27-empty">✓ No overloads, duplicates or missing replies.</div>')+'</div>';
@@ -7996,4 +7996,159 @@ window.cdOwnerOf = function(r){
     if(raf) return;
     raf = requestAnimationFrame(function(){ raf = 0; try{ t.style.setProperty('--d45sl', Math.round(t.scrollLeft) + 'px'); }catch(x){} });
   }, true);
+})();
+
+/* ===== V3.8 (d46): feedback import — paste "Name / Client / Feedback" blocks, attach to each call ===== */
+(function(){
+  'use strict';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var rows = function(){ return (typeof state!=='undefined' && state.rows) || []; };
+  var rowById = function(id){ return rows().filter(function(r){ return String(r.id)===String(id); })[0]; };
+  var admin = function(){ try{ return CURRENT_ROLE==='admin'; }catch(e){ return true; } };
+  function toast(t){ try{ if(window.d2Toast) return window.d2Toast(t); }catch(e){} var b = document.getElementById('d39Toast'); if(!b){ b = document.createElement('div'); b.id = 'd39Toast'; document.body.appendChild(b); } b.textContent = t; b.classList.add('on'); clearTimeout(b._t); b._t = setTimeout(function(){ b.classList.remove('on'); }, 2200); }
+  function noteId(){ return state.date + '-feedback'; }
+  function getFb(){
+    var e = ((state.notes)||[]).filter(function(n){ return n && n.id===noteId(); })[0];
+    try{ return e ? (JSON.parse(e.text)||{}) : {}; }catch(x){ return {}; }
+  }
+  function putFb(m){
+    state.notes = state.notes || []; var id = noteId();
+    var i = state.notes.findIndex(function(n){ return n && n.id===id; }), keys = Object.keys(m);
+    if(keys.length){ var tx = JSON.stringify(m); if(i>=0) state.notes[i].text = tx; else state.notes.push({id:id, text:tx}); }
+    else if(i>=0) state.notes.splice(i,1);
+    try{ markDirty(); }catch(e){}
+  }
+  function setFb(rid, text){ var m = getFb(); if(text && String(text).trim()) m[rid] = {t:String(text).trim(), at:Date.now()}; else delete m[rid]; putFb(m); }
+
+  /* ---------- parser ---------- */
+  function parse(text){
+    var recs = [], cur = null;
+    String(text||'').replace(/\r/g,'').split('\n').forEach(function(L){
+      var s = L.trim(), m = s.match(/^name\s*[:\-–]\s*(.*)$/i);
+      if(m){ cur = {name:m[1].trim(), client:'', lines:[]}; recs.push(cur); return; }
+      if(!cur) return;
+      var c = s.match(/^(?:client|company)\s*[:\-–]\s*(.*)$/i);
+      if(c && !cur.client){ cur.client = c[1].trim(); return; }
+      if(s) cur.lines.push(s);
+    });
+    return recs.map(function(r){
+      var fb = r.lines.join('\n').replace(/^feedback\s*[:\-–]\s*/i,'').trim();
+      return {name:r.name, client:r.client, fb:fb};
+    }).filter(function(r){ return r.name; });
+  }
+
+  /* ---------- matching ---------- */
+  function toks(n){ return String(n||'').toLowerCase().replace(/[^a-z ]/g,' ').split(/\s+/).filter(function(t){ return t.length>1; }); }
+  function nameScore(a, b){
+    var ka = normalizeNameKey(a), kb = normalizeNameKey(b); if(!ka || !kb) return 0;
+    if(ka===kb) return 3;
+    var ta = toks(a), tb = toks(b), shared = ta.filter(function(t){ return tb.indexOf(t)>=0; }).length;
+    if(shared>=2 || (shared>=1 && Math.min(ta.length,tb.length)===1)) return 2;
+    if(Math.min(ka.length,kb.length)>=6 && (ka.indexOf(kb)>=0 || kb.indexOf(ka)>=0)) return 2;
+    try{ if(levenshteinDistance(ka,kb)<=2) return 2; }catch(e){}
+    return 0;
+  }
+  function coMatch(a, b){ try{ return !!a && !!b && assessCompanyMatch(a, b); }catch(e){ return false; } }
+  function firstRound(r){ return /^(1st|first)/i.test(String(r.round||'')); }
+  function pick(list){ return list.filter(firstRound)[0] || list[0]; }
+  function match(rec){
+    var all = rows(), best = null, byName = [], byCo = [];
+    all.forEach(function(r){
+      var n = nameScore(rec.name, r.candidate), c = coMatch(rec.client, r.company);
+      if(n>=2 && c) byName.push({r:r, k:'exact', s:n+2});
+      else if(n>=2) byName.push({r:r, k:'name', s:n});
+      else if(c) byCo.push(r);
+    });
+    var ex = byName.filter(function(x){ return x.k==='exact'; });
+    if(ex.length) return {row:pick(ex.map(function(x){ return x.r; })), kind:'exact'};
+    if(byName.length) return {row:pick(byName.map(function(x){ return x.r; })), kind:'name'};
+    if(byCo.length===1) return {row:byCo[0], kind:'client'};
+    if(byCo.length>1){ var f = byCo.filter(firstRound); if(f.length===1) return {row:f[0], kind:'client'}; }
+    return null;
+  }
+
+  /* ---------- overlay helper ---------- */
+  function ov(id, title, kicker, body){
+    var old = document.getElementById(id); if(old) old.remove();
+    var el = document.createElement('div'); el.id = id; el.className = 'd27-ov d43-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d46c aria-label="Close">✕</button></div><div class="d29-body">'+body+'</div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){ if(e.target===el || (e.target.closest && e.target.closest('[data-d46c]'))) close(el); });
+    return el;
+  }
+  function close(el){ if(el) el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+
+  /* ---------- import tool ---------- */
+  var R = [];
+  function chip(k){ return k==='exact' ? '<span class="d46-chip ok">name + client</span>' : k==='name' ? '<span class="d46-chip mid">name only</span>' : '<span class="d46-chip low">client only — check</span>'; }
+  function list(el){
+    var box = el.querySelector('#d46List'); if(!box) return;
+    var fb = getFb();
+    if(!R.length){ box.innerHTML = ''; el.querySelector('#d46Go').disabled = true; return; }
+    box.innerHTML = R.map(function(x,i){
+      var r = x.m && x.m.row, had = r && fb[r.id];
+      return '<label class="d46-it'+(r?'':' off')+'"><input type="checkbox" data-d46i="'+i+'"'+(x.on?' checked':'')+(r?'':' disabled')+'><span class="d46-main"><b>'+esc(x.name)+'</b> <small>'+esc(x.client||'—')+'</small>'
+        +'<span class="d46-fbt">'+esc(x.fb||'(no feedback text)')+'</span>'
+        +(r ? '<span class="d46-to">→ '+esc(r.time||'')+' · '+esc(r.candidate)+' · '+esc(r.company||'')+(r.round?' · '+esc(r.round):'')+' '+chip(x.m.kind)+(had?' <span class="d46-chip low">replaces earlier feedback</span>':'')+'</span>' : '<span class="d46-to miss">No call found on '+esc(state.date)+' for this name / client</span>')
+        +'</span></label>';
+    }).join('');
+    var n = R.filter(function(x){ return x.on && x.m && x.fb; }).length;
+    var go = el.querySelector('#d46Go'); go.disabled = !n; go.textContent = 'Add feedback to '+n+' call'+(n===1?'':'s');
+  }
+  function openImport(){
+    var el = ov('d46Imp', 'Feedback import', 'PASTE NAME / CLIENT / FEEDBACK BLOCKS · MATCHED TO CALLS ON '+state.date,
+      '<textarea id="d46Txt" class="d46-ta" rows="8" placeholder="Name: …&#10;Client: …&#10;Feedback: …&#10;&#10;Name: …"></textarea>'
+      +'<div class="d46-bar"><button type="button" class="d27-btn" id="d46Match">Match to calls</button><span id="d46Sum" class="d46-sum"></span></div>'
+      +'<div id="d46List" class="d46-list"></div>'
+      +'<div class="d46-bar"><button type="button" class="d27-btn d46-go" id="d46Go" disabled>Add feedback</button></div>');
+    R = [];
+    el.addEventListener('click', function(e){
+      if(e.target.closest('#d46Match')){
+        var recs = parse(el.querySelector('#d46Txt').value);
+        R = recs.map(function(r){ var m = match(r); return {name:r.name, client:r.client, fb:r.fb, m:m, on: !!(m && r.fb && m.kind!=='client')}; });
+        el.querySelector('#d46Sum').textContent = R.length ? (R.filter(function(x){ return x.m; }).length+' of '+R.length+' matched') : 'No "Name:" lines found';
+        list(el); return;
+      }
+      if(e.target.closest('#d46Go')){
+        var n = 0; R.forEach(function(x){ if(x.on && x.m && x.fb){ setFb(x.m.row.id, x.fb); n++; } });
+        close(el); try{ render(); }catch(x){} setTimeout(badges, 200); toast('Feedback added to '+n+' call'+(n===1?'':'s')); return;
+      }
+    });
+    el.addEventListener('change', function(e){ var c = e.target.closest('[data-d46i]'); if(c){ R[+c.getAttribute('data-d46i')].on = c.checked; list(el); } });
+  }
+  window.d46Open = openImport;
+
+  /* ---------- badge on the call row + viewer ---------- */
+  function badges(){
+    try{
+      document.querySelectorAll('.d46-fb').forEach(function(b){ b.remove(); });
+      var m = getFb(); if(!Object.keys(m).length) return;
+      document.querySelectorAll('tr[data-id]').forEach(function(tr){
+        var f = m[tr.getAttribute('data-id')]; if(!f) return;
+        var td = tr.children[2] || tr.children[0]; if(!td) return;
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'd46-fb'; b.setAttribute('data-d46v', tr.getAttribute('data-id'));
+        b.title = 'Feedback: '+f.t; b.textContent = '💬'; td.appendChild(b);
+      });
+    }catch(e){}
+  }
+  function openView(rid){
+    var r = rowById(rid), f = getFb()[rid]; if(!f) return;
+    var el = ov('d46View', 'Feedback', (r ? (r.candidate||'')+' · '+(r.company||'') : 'CALL').toUpperCase(),
+      '<textarea id="d46Edit" class="d46-ta" rows="6"'+(admin()?'':' readonly')+'>'+esc(f.t)+'</textarea>'
+      +'<div class="d46-bar"><button type="button" class="d27-btn" id="d46Copy">Copy</button>'
+      +(admin()?'<button type="button" class="d27-btn d46-go" id="d46Save">Save</button><button type="button" class="d27-btn" id="d46Del">Remove</button>':'')+'</div>');
+    el.addEventListener('click', function(e){
+      if(e.target.closest('#d46Copy')){ try{ navigator.clipboard.writeText(el.querySelector('#d46Edit').value); toast('Copied'); }catch(x){} }
+      else if(e.target.closest('#d46Save')){ setFb(rid, el.querySelector('#d46Edit').value); close(el); badges(); toast('Saved'); }
+      else if(e.target.closest('#d46Del')){ setFb(rid, ''); close(el); badges(); toast('Feedback removed'); }
+    });
+  }
+  document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('[data-d46v]'); if(b){ e.stopPropagation(); e.preventDefault(); openView(b.getAttribute('data-d46v')); } }, true);
+
+  var oR = window.render, tm = 0;
+  window.render = function(){ var r = oR.apply(this, arguments); clearTimeout(tm); tm = setTimeout(badges, 150); return r; };
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='fbk'){ openImport(); return true; } return typeof prev==='function' ? prev(k) : false; };
+  setTimeout(badges, 600);
+  window.d46Test = {parse:parse, match:match, getFb:getFb, setFb:setFb};
 })();
