@@ -1081,7 +1081,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     if(keysEl) return closeKeys();
     var G = [
       ['Navigate',[['1 – 5','Switch tabs'],['Alt + K','Command bar'],['Ctrl + K','Quick search'],['?','This shortcut map']]],
-      ['Desk tools',[['T','Open Tools'],['N','Prep the next call'],['/','Quick search'],['Esc','Close any sheet']]],
+      ['Desk tools',[['T','Open Tools'],['F','Feedback import'],['N','Prep the next call'],['/','Quick search'],['Esc','Close any sheet']]],
       ['Work',[['Alt + T','Timeline'],['Alt + H','Shift handover'],['Alt + S','Suggest assignments'],['Alt + P','Print day sheet'],['Alt + Z','Undo last change'],['Ctrl + S','Save changes']]],
       ['Call list',[['J / K','Move down / up the list'],['Enter','Open call card'],['A','Pick who takes it'],['C','Mark confirmed'],['R','Reschedule helper'],['X','Tick the row (bulk)'],['Ctrl/Shift + click','Select several calls'],['Ctrl + A','Select all shown'],['D','Details dock on / off'],['Alt + ← / →','Previous / next day'],['Alt + V','Clipboard history']]],
       ['Import',[['Alt + N','Import new calls'],['Alt + R','Import reschedules'],['Alt + A','Add assessments'],['Alt + O','Onsite interviews']]]
@@ -6431,6 +6431,7 @@ window.cdOwnerOf = function(r){
     if(document.querySelector('.d27-ov,.d15-ov,.d3-overlay,#d2Cmd,.d2-pop,.my-name-picker-overlay')) return;
     var k = e.key;
     if(k==='t' || k==='T'){ if(window.d29OpenTools){ e.preventDefault(); window.d29OpenTools(); } }
+    else if(k==='f' || k==='F'){ if(window.d46Open){ e.preventDefault(); window.d46Open(); } }
     else if(k==='n' || k==='N'){ var b = document.querySelector('#d33Next [data-d34prep]'); if(b){ e.preventDefault(); b.click(); } else if(window.d2Toast) window.d2Toast('No call coming up soon',{ms:2500}); }
     else if(k==='/'){ e.preventDefault(); try{ document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true})); }catch(x){} }
   });
