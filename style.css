@@ -3281,3 +3281,25 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 
 /* full-width note rows (reason / reschedule reply / doubts) keep their text at the visible left edge while the table is scrolled sideways */
 #tableScrollMain tbody tr:not(.d2-grp) > td[colspan]{padding-left:calc(var(--d45sl,0px) + 12px)}
+
+/* ===== V3.8 feedback import (d46) ===== */
+.d46-ta{width:100%;box-sizing:border-box;min-height:120px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:13px/1.45 var(--body,inherit);resize:vertical}
+.d46-bar{display:flex;align-items:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+.d46-sum{font-size:12px;color:var(--text-muted)}
+.d46-list{display:flex;flex-direction:column;gap:8px;max-height:48vh;overflow:auto}
+.d46-it{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);cursor:pointer}
+.d46-it.off{opacity:.65;cursor:default}
+.d46-it input{margin-top:3px;flex:0 0 auto}
+.d46-main{display:flex;flex-direction:column;gap:3px;min-width:0;font-size:13px}
+.d46-main small{color:var(--text-muted);font-size:11.5px;margin-left:6px}
+.d46-fbt{font-size:12.5px;color:var(--text);opacity:.9;white-space:pre-line;overflow-wrap:anywhere}
+.d46-to{font-size:11.5px;color:var(--teal)}
+.d46-to.miss{color:var(--amber,#f59e0b)}
+.d46-chip{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:99px;margin-left:4px}
+.d46-chip.ok{background:var(--teal-dim);color:var(--teal)}
+.d46-chip.mid{background:rgba(96,165,250,.16);color:#60a5fa}
+.d46-chip.low{background:var(--amber-dim,rgba(245,158,11,.16));color:var(--amber,#f59e0b)}
+.d46-go:not(:disabled){background:var(--teal-dim);color:var(--teal);border-color:var(--teal)}
+.d46-go:disabled{opacity:.45}
+.d46-fb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:6px;padding:0;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);font-size:12px;cursor:pointer;vertical-align:middle}
+.d46-fb:hover{border-color:var(--teal)}
