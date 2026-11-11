@@ -3352,3 +3352,12 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 .d48-row{display:flex;justify-content:space-between;gap:10px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:12.5px}
 .d48-row span{color:var(--text-muted)}.d48-row em{font-style:normal}.d48-row em.warn{color:#f59e0b}
 @media (max-width:760px){.d48-pop{left:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 140px)}.d48-bar{grid-template-columns:100px 1fr 24px}}
+
+/* ===== Tools hub: groups + search ===== */
+.d29-find{margin:0 0 10px}
+.d29-find input{width:100%;box-sizing:border-box;padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:14px var(--body,inherit)}
+.d29-find input:focus{outline:none;border-color:var(--teal)}
+.d29-grp{margin:0 0 14px}
+.d29-grp[hidden],.d29-tile[hidden],#d29None[hidden]{display:none!important}
+.d29-gh{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin:2px 2px 6px}
+.d29-gh span{font-weight:600;opacity:.7}
