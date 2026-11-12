@@ -8495,3 +8495,42 @@ window.cdOwnerOf = function(r){
   setTimeout(function(){ load(); }, 2500); setInterval(pop, 60000); setTimeout(pop, 5000);
   window.d48Test = {tagsOf:tagsOf, entries:entries, load:load, forCand:forCand, pop:pop};
 })();
+
+/* ===== V4.1 (d49): always-reachable horizontal scrollbar for the calls table (mouse) + phone search sheet follows the keyboard ===== */
+(function(){
+  'use strict';
+  var bar = null, inner = null, main = null, lock = 0, raf = 0;
+  var fine = false; try{ fine = window.matchMedia && matchMedia('(hover:hover) and (pointer:fine)').matches; }catch(e){}
+  function ensure(){
+    main = document.getElementById('tableScrollMain'); if(!main) return false;
+    if(!bar){
+      bar = document.createElement('div'); bar.id = 'd49Hs'; bar.setAttribute('aria-hidden','true'); bar.innerHTML = '<div></div>'; inner = bar.firstChild; document.body.appendChild(bar);
+      bar.addEventListener('scroll', function(){ if(lock){ lock = 0; return; } if(main && Math.abs(main.scrollLeft-bar.scrollLeft)>1){ lock = 1; main.scrollLeft = bar.scrollLeft; } });
+    }
+    if(!main.__d49){ main.__d49 = 1; main.addEventListener('scroll', function(){ if(!bar) return; if(lock){ lock = 0; return; } if(Math.abs(bar.scrollLeft-main.scrollLeft)>1){ lock = 1; bar.scrollLeft = main.scrollLeft; } }, {passive:true}); }
+    return true;
+  }
+  function update(){
+    raf = 0;
+    if(!fine){ return; }
+    if(!ensure() || !main.offsetParent){ if(bar) bar.style.display = 'none'; return; }
+    var r = main.getBoundingClientRect(), scrollable = main.scrollWidth > main.clientWidth + 2, vh = window.innerHeight;
+    var show = scrollable && r.top < vh - 70 && r.bottom > vh - 2 && !document.body.classList.contains('d27-open');
+    if(!show){ bar.style.display = 'none'; return; }
+    bar.style.display = 'block'; bar.style.left = Math.round(r.left)+'px'; bar.style.width = Math.round(r.width)+'px';
+    inner.style.width = main.scrollWidth+'px';
+    if(Math.abs(bar.scrollLeft-main.scrollLeft)>1) bar.scrollLeft = main.scrollLeft;
+  }
+  function sched(){ if(!raf) raf = requestAnimationFrame(update); }
+  window.addEventListener('scroll', sched, {passive:true}); window.addEventListener('resize', sched);
+  try{ new MutationObserver(sched).observe(document.body, {childList:true, subtree:true}); }catch(e){}
+  setInterval(sched, 1500);
+
+  /* phone / tablet: Search-everything sheet shrinks and moves with the on-screen keyboard (so results never hide behind it) */
+  function vv(){
+    var el = document.getElementById('d12'), v = window.visualViewport; if(!el || !v) return;
+    el.style.top = Math.round(v.offsetTop)+'px'; el.style.height = Math.round(v.height)+'px'; el.style.bottom = 'auto';
+  }
+  if(window.visualViewport){ visualViewport.addEventListener('resize', vv); visualViewport.addEventListener('scroll', vv); }
+  try{ new MutationObserver(function(){ if(document.getElementById('d12')) vv(); }).observe(document.body, {childList:true}); }catch(e){}
+})();
