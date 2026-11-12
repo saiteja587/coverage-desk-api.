@@ -5682,7 +5682,7 @@ window.cdOwnerOf = function(r){
   var IC_SEL = '.d22-cn, .d22-cs, td.m-sum .m-l1, td.m-sum .m-l2', ihit = null;
   function icHit(t, x){
     if(!t || !t.closest || !window.matchMedia('(max-width:759px)').matches) return null;
-    var n = t.closest(IC_SEL); if(!n) return null; if(n.classList.contains('m-l2') || n.classList.contains('d22-cs')) return null; /* V4.2: one ⓘ per card (candidate) */
+    var n = t.closest(IC_SEL); if(!n) return null;
     var card = n.closest('[data-d22open]'), tr = n.closest('tr[data-id]'); if(!card && !tr) return null;
     var r = n.getBoundingClientRect(); if(x < r.right - 40) return null;
     if(n.classList.contains('m-l2') && !n.textContent.trim()) return null;
