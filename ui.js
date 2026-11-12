@@ -4643,7 +4643,7 @@ window.cdOwnerOf = function(r){
     var header = document.querySelector('#app .header'); if(!header) return;
     var box = document.getElementById('d27Box');
     if(!box){ box = document.createElement('div'); box.id = 'd27Box';
-      box.innerHTML = '<button type="button" class="d27-cmd" data-d27cmd>⌘ Command</button><button type="button" class="d27-ver-b" data-d27log title="What’s new">'+VERSION+'</button>'; }
+      box.innerHTML = '<button type="button" class="d27-cmd" data-d27cmd><span class="d27-ic">⌘</span><span class="d27-tx"> Command</span></button><button type="button" class="d27-ver-b" data-d27log title="What’s new">'+VERSION+'</button>'; }
     var brand = header.querySelector('.pz-brand') || header.firstElementChild;
     if(brand && box.parentNode !== header) header.insertBefore(box, brand.nextSibling);
   }
@@ -5188,7 +5188,7 @@ window.cdOwnerOf = function(r){
 
   /* ---------- buttons in header box + command center ---------- */
   function mountBtn(){
-    var box = document.getElementById('d27Box'); if(box && !box.querySelector('[data-d29hub]')){ var b = document.createElement('button'); b.type = 'button'; b.className = 'd27-cmd d29-hb'; b.setAttribute('data-d29hub',''); b.textContent = '🧰 Tools'; box.insertBefore(b, box.firstChild.nextSibling); }
+    var box = document.getElementById('d27Box'); if(box && !box.querySelector('[data-d29hub]')){ var b = document.createElement('button'); b.type = 'button'; b.className = 'd27-cmd d29-hb'; b.setAttribute('data-d29hub',''); b.innerHTML = '<span class="d27-ic">🧰</span><span class="d27-tx"> Tools</span>'; box.insertBefore(b, box.firstChild.nextSibling); }
     var act = document.querySelector('#d27CC .d27-actions'); if(act && !act.querySelector('[data-d29hub]')){ var c = document.createElement('button'); c.type = 'button'; c.className = 'd27-btn ghost'; c.setAttribute('data-d29hub',''); c.textContent = '🧰 More tools'; act.appendChild(c); }
   }
   var rt = 0;
@@ -5682,7 +5682,7 @@ window.cdOwnerOf = function(r){
   var IC_SEL = '.d22-cn, .d22-cs, td.m-sum .m-l1, td.m-sum .m-l2', ihit = null;
   function icHit(t, x){
     if(!t || !t.closest || !window.matchMedia('(max-width:759px)').matches) return null;
-    var n = t.closest(IC_SEL); if(!n) return null;
+    var n = t.closest(IC_SEL); if(!n) return null; if(n.classList.contains('m-l2') || n.classList.contains('d22-cs')) return null; /* V4.2: one ⓘ per card (candidate) */
     var card = n.closest('[data-d22open]'), tr = n.closest('tr[data-id]'); if(!card && !tr) return null;
     var r = n.getBoundingClientRect(); if(x < r.right - 40) return null;
     if(n.classList.contains('m-l2') && !n.textContent.trim()) return null;
