@@ -13,6 +13,8 @@ const mysql = require('mysql2/promise');
 // Ask Desk chat is optional: if its file is missing or broken, ONLY the chat is unavailable — calls, roster, closures etc. must keep working.
 let handleChat = null;
 try { ({ handleChat } = require('./_lib/ask-desk-chat')); } catch (e) { console.error('Ask Desk chat module not loaded:', e && e.message); }
+let handleAiAssist = null;
+try { ({ handleAiAssist } = require('./_lib/ai-assist')); } catch (e) { console.error('AI assist module not loaded:', e && e.message); }
 const crypto = require('crypto');
 
 // Passwords used to be hashed with plain unsalted SHA-256 — fast by
@@ -410,6 +412,10 @@ module.exports = async (req, res) => {
     if (resource === 'gdoc_inbox') return await handleGdocInbox(req, res, db, auth);
     if (resource === 'portal_sync') return await handlePortalSync(req, res);
     if (resource === 'users') return await handleUsers(req, res, db);
+    if (resource === 'ai_assist') {
+      if (!handleAiAssist) return res.status(503).json({ error: 'AI assist is not installed on the server yet (api/_lib/ai-assist.js is missing).', code: 'not_configured' });
+      return await handleAiAssist(req, res, db, auth);
+    }
     if (resource === 'chat') {
       if (!handleChat) return res.status(503).json({ error: 'Ask Desk is not installed on the server yet (api/_lib/ask-desk-chat.js is missing).', code: 'not_configured' });
       return await handleChat(req, res, db, auth);
