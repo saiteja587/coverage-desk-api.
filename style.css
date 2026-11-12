@@ -3423,3 +3423,12 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
   .header .date-row .more-menu-wrap{flex:none!important;width:34px!important}
   .header .date-row #toggleMoreMenu{width:34px!important;min-width:0!important;padding:0!important;height:38px!important;min-height:0!important}
 }
+
+/* ===== V4.3 missing-feedback reminder ===== */
+.d50-ov{z-index:9600}
+.d50-note{font-size:13px;color:var(--text-muted,#9aa7b4);margin:0 0 10px}
+.d50-r{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border)}
+.d50-r .t{flex:none;min-width:86px;font:600 12px var(--mono,monospace);color:var(--accent,#2dd4bf);padding-top:2px}
+.d50-r .n{display:flex;flex-direction:column;min-width:0}.d50-r .n b{font-size:14px}.d50-r .n small{font-size:12px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.d50-more{padding:8px 0;font-size:12px;opacity:.7}
+.d50-bar{display:flex;gap:8px;margin-top:12px}.d50-bar .d27-btn{flex:1}.d50-bar.sm .d27-btn{font-size:12px;opacity:.85}
