@@ -8130,7 +8130,7 @@ window.cdOwnerOf = function(r){
   function openImport(){
     var el = ov('d46Imp', 'Feedback import', 'PASTE NAME / CLIENT / FEEDBACK BLOCKS · MATCHED TO CALLS ON '+state.date,
       '<textarea id="d46Txt" class="d46-ta" rows="8" placeholder="Name: …&#10;Client: …&#10;Feedback: …&#10;&#10;Name: …"></textarea>'
-      +'<div class="d46-bar"><button type="button" class="d27-btn" id="d46Match">Match to calls</button><span id="d46Sum" class="d46-sum"></span></div>'
+      +'<div class="d46-bar"><button type="button" class="d27-btn d51-b" data-d51="sort">✨ Sort notes with AI</button><button type="button" class="d27-btn" id="d46Match">Match to calls</button><span id="d46Sum" class="d46-sum"></span></div>'
       +'<div id="d46List" class="d46-list"></div>'
       +'<div class="d46-bar"><button type="button" class="d27-btn d46-go" id="d46Go" disabled>Add feedback</button></div>');
     R = [];
@@ -8334,7 +8334,7 @@ window.cdOwnerOf = function(r){
   }
   window.d48Block = function(name, cls){
     var L = forCand(name); if(!L.length) return '';
-    return '<div class="'+(cls||'d27-sec')+'"><b>💬 Feedback on earlier calls</b><span>'+L.length+'</span></div><div class="d48-chips">'+chips(L)+'</div>'+L.slice(0,4).map(function(e){ return entryHtml(e); }).join('');
+    return '<div class="'+(cls||'d27-sec')+'"><b>💬 Feedback on earlier calls</b><span>'+L.length+'</span></div><div class="d48-chips">'+chips(L)+'</div>'+L.slice(0,4).map(function(e){ return entryHtml(e); }).join('')+'<div class="d51-wrap"><button type="button" class="d51-b" data-d51="prep" data-d51n="'+esc(name)+'">✨ Suggest how to prep</button><div class="d51-out"></div></div>';
   };
   window.d48Next = function(r){
     var L = forCand(r.candidate).filter(function(e){ return !(e.d===state.date && String(e.rid)===String(r.id)); }); if(!L.length) return '';
@@ -8342,7 +8342,7 @@ window.cdOwnerOf = function(r){
   };
   window.d48Line = function(r){
     var L = forCand(r.candidate); if(!L.length) return '';
-    var e = L[0]; return '<div class="d48-line '+sevOf(L)+'"><b>💬 Last feedback</b> · '+esc(sd(e.d))+(who(e)?' · '+who(e):'')+'<span>'+esc(snip(e.t,170))+'</span><div class="d48-tg">'+chips(L.slice(0,3))+'</div></div>';
+    var e = L[0]; return '<div class="d48-line '+sevOf(L)+'"><b>💬 Last feedback</b> · '+esc(sd(e.d))+(who(e)?' · '+who(e):'')+'<span>'+esc(snip(e.t,170))+'</span><div class="d48-tg">'+chips(L.slice(0,3))+'</div><div class="d51-wrap"><button type="button" class="d51-b" data-d51="prep" data-d51n="'+esc(r.candidate)+'">✨ Suggest how to prep</button><div class="d51-out"></div></div></div>';
   };
 
   /* ---------- badges on call rows ---------- */
@@ -8448,7 +8448,7 @@ window.cdOwnerOf = function(r){
     if(!list.length) return chipsH+'<div class="d27-empty">✅ Every call in this range has feedback.</div>';
     var g = {}; list.forEach(function(r){ var w = (r.drivingPerson||r.assignee||'Unassigned').trim()||'Unassigned'; (g[w] = g[w]||[]).push(r); });
     var names = Object.keys(g).sort(function(a,b){ return g[b].length-g[a].length; });
-    return chipsH+'<div class="d46-bar"><button type="button" class="d27-btn d46-go" data-d48a="chase">Copy all chase messages</button><span class="d46-sum">'+list.length+' without feedback · '+names.length+' people</span></div>'
+    return chipsH+'<div class="d46-bar"><button type="button" class="d27-btn d46-go" data-d48a="chase">Copy all chase messages</button><button type="button" class="d27-btn d51-b" data-d51="chase">✨ AI-write</button><span class="d46-sum">'+list.length+' without feedback · '+names.length+' people</span></div>'
       +names.map(function(w,i){ return '<div class="d48-card"><div class="d48-meta"><b>'+esc(w)+'</b> · '+g[w].length+'</div>'+g[w].map(function(r){ return '<div class="d48-tx">'+esc(sd(r._date))+' · '+esc(r.time||'')+' · '+esc(r.candidate)+' · '+esc(r.company||'')+'</div>'; }).join('')+'<button type="button" class="d27-btn" data-d48c2="'+i+'">Copy chase message</button></div>'; }).join('');
   }
   function chaseMsg(w, L){ return 'Hi '+(w==='Unassigned'?'team':w.split(/\s+/)[0])+', please share the feedback for these calls:\n'+L.map(function(r,i){ return (i+1)+'. '+sd(r._date)+' '+(r.time||'')+' – '+r.candidate+' ('+(r.company||'')+')'; }).join('\n')+'\nThank you!'; }
@@ -8492,6 +8492,7 @@ window.cdOwnerOf = function(r){
         var r = e.target.closest('[data-d48r]'); if(r){ st.range = r.getAttribute('data-d48r'); run(); return; }
         if(e.target.closest('[data-d48f]')){ st.first = !st.first; run(); return; }
         var c = e.target.closest('[data-d48c2]'); if(c){ var g = st.groups[+c.getAttribute('data-d48c2')]; if(g) copy(chaseMsg(g[0],g[1])); return; }
+        if(e.target.closest('[data-d51="chase"]')){ window.d51Groups = st.groups; return; }
         if(e.target.closest('[data-d48a="chase"]')) copy(st.groups.map(function(g){ return chaseMsg(g[0],g[1]); }).join('\n\n'));
       });
     } else if(k==='fbs'){
@@ -8610,4 +8611,96 @@ window.cdOwnerOf = function(r){
   window.d50Check = check; window.d50Missing = missing;
   setTimeout(check, 9000); setInterval(check, 15*60000);
   document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') setTimeout(check, 1500); });
+})();
+
+
+/* ===== V4.4 (d51): Groq AI helpers — chase messages, alert digest, prep suggestions, sort scrum notes into feedback ===== */
+(function(){
+  'use strict';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var sd = function(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }catch(e){ return d||''; } };
+  function toast(t){ try{ if(window.d2Toast) window.d2Toast(t,{ms:2400}); }catch(e){} }
+  function copy(t){ try{ navigator.clipboard.writeText(t); toast('Copied'); }catch(e){ try{ var a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); toast('Copied'); }catch(x){} } }
+  function ai(task, input){
+    return apiCall('ai_assist', {method:'POST', body:{task:task, input:input}, timeoutMs:16000}).then(function(r){
+      if(!r || !r.text) throw new Error('empty'); return r.text;
+    });
+  }
+  function why(e){
+    var c = e && e.code, m = (e && e.message) || '';
+    if(c==='not_configured' || /not configured|GROQ_API_KEY|not installed/i.test(m)) return 'AI is not set up yet (upload api/data.js + api/_lib/ai-assist.js and add GROQ_API_KEY in Vercel).';
+    if(c==='daily_limit' || /limit/i.test(m)) return 'Daily AI limit reached.';
+    if(c==='busy' || /busy|429/.test(m)) return 'AI is busy — try again in a minute.';
+    return 'AI is unavailable right now.';
+  }
+  function busy(b, on){ if(!b) return; if(on){ b.setAttribute('data-t', b.textContent); b.textContent = '✨ Thinking…'; b.disabled = true; } else { b.textContent = b.getAttribute('data-t') || b.textContent; b.disabled = false; } }
+
+  /* 1 — chase messages (per person) */
+  function chase(btn){
+    var G = window.d51Groups || []; if(!G.length){ toast('Nothing to chase'); return; }
+    var input = {groups: G.map(function(g){ return {person:g[0], calls:g[1].map(function(r){ return {date:sd(r._date), time:r.time||'', candidate:r.candidate, company:r.company||''}; })}; })};
+    busy(btn,true);
+    ai('chase', input).then(function(t){ busy(btn,false); showText('AI chase messages', 'EDIT, THEN COPY', t); })
+      .catch(function(e){ busy(btn,false); toast(why(e)); });
+  }
+  function showText(title, kicker, text){
+    var old = document.getElementById('d51Txt'); if(old) old.remove();
+    var el = document.createElement('div'); el.id = 'd51Txt'; el.className = 'd27-ov d51-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+esc(kicker)+'</small><h2>'+esc(title)+'</h2></div><button type="button" class="d27-x" data-d51="x">✕</button></div><div class="d29-body"><textarea class="d46-ta" rows="12" id="d51Ta">'+esc(text)+'</textarea></div><div class="d50-bar"><button type="button" class="d27-btn d46-go" data-d51="cp">Copy all</button></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+  }
+
+  /* 2 — alert digest in the Live Feed panel */
+  function digest(btn){
+    var items = [].slice.call(document.querySelectorAll('.lf-panel .lf-list .lf-item')).map(function(n){ return (n.classList.contains('unread')?'[new] ':'')+n.textContent.replace(/\s+/g,' ').trim(); }).filter(Boolean);
+    if(!items.length){ toast('No alerts to summarise'); return; }
+    busy(btn,true);
+    ai('digest', {items:items}).then(function(t){
+      busy(btn,false); var l = document.querySelector('.lf-panel .lf-list'); if(!l) return;
+      var o = document.getElementById('d51Dig'); if(o) o.remove();
+      o = document.createElement('div'); o.id = 'd51Dig'; o.className = 'd51-dig'; o.innerHTML = '<b>✨ Digest</b><div>'+esc(t).replace(/\n/g,'<br>')+'</div>';
+      l.parentNode.insertBefore(o, l);
+    }).catch(function(e){ busy(btn,false); toast(why(e)); });
+  }
+  function injectDigestBtn(){
+    var h = document.querySelector('.lf-panel-head .lf-head-btns'); if(!h || h.querySelector('[data-d51="dig"]')) return;
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'lf-link'; b.setAttribute('data-d51','dig'); b.textContent = '✨ Digest'; h.insertBefore(b, h.firstChild);
+  }
+  new MutationObserver(function(){ injectDigestBtn(); }).observe(document.body, {childList:true, subtree:true});
+
+  /* 3 — prep suggestions from saved feedback */
+  function prep(btn){
+    var name = btn.getAttribute('data-d51n'), T = window.d48Test; if(!T) return;
+    var L = T.forCand(name); if(!L.length){ toast('No feedback saved for this candidate'); return; }
+    var wrap = btn.closest('.d51-wrap'), out = wrap && wrap.querySelector('.d51-out');
+    var nxt = (state.rows||[]).filter(function(r){ return r.candidate && String(r.candidate).toLowerCase()===String(name).toLowerCase(); })[0];
+    busy(btn,true);
+    ai('prep', {candidate:name, next: nxt ? [nxt.time, nxt.company, nxt.role, nxt.round].filter(Boolean).join(' · ') : '', history:L.slice(0,6).map(function(e){ return {date:e.d, company:e.co, text:e.t}; })})
+      .then(function(t){ busy(btn,false); if(out) out.innerHTML = '<div class="d51-res">'+esc(t).replace(/\n/g,'<br>')+'</div>'; })
+      .catch(function(e){ busy(btn,false); if(out) out.innerHTML = '<div class="d51-res err">'+esc(why(e))+'</div>'; });
+  }
+
+  /* 4 — sort scrum / chat notes into Name / Client / Feedback */
+  function sort(btn){
+    var ta = document.getElementById('d46Txt'); if(!ta || !ta.value.trim()){ toast('Paste the notes first'); return; }
+    var names = (state.rows||[]).map(function(r){ return r.candidate; }).filter(Boolean).filter(function(n,i,a){ return a.indexOf(n)===i; });
+    busy(btn,true);
+    ai('sort', {text:ta.value, names:names}).then(function(t){
+      busy(btn,false);
+      if(/^\s*NONE\s*$/i.test(t)){ toast('No call feedback found in these notes'); return; }
+      ta.value = t; var m = document.getElementById('d46Match'); if(m) m.click(); toast('Sorted — check the matches, then Add feedback');
+    }).catch(function(e){ busy(btn,false); toast(why(e)); });
+  }
+
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-d51]'); if(!b) return;
+    var k = b.getAttribute('data-d51');
+    if(k==='chase') setTimeout(function(){ chase(b); }, 0);   /* d48's own handler (bubbling) sets the groups first */
+    else if(k==='dig') digest(b);
+    else if(k==='prep') prep(b);
+    else if(k==='sort') sort(b);
+    else if(k==='x'){ var o = document.getElementById('d51Txt'); if(o) o.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+    else if(k==='cp'){ var t = document.getElementById('d51Ta'); if(t) copy(t.value); }
+  }, false);
+  window.d51 = {ai:ai, why:why};
 })();
