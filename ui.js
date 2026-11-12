@@ -3151,11 +3151,30 @@ document.addEventListener('click', function(e){
     var r = t.closest('[data-d12r]'); if(r){ var p = r.dataset.d12r.split(':'), L = last && last[p[0]]; if(L && L[+p[1]]) act(L[+p[1]].act); }
   }, true);
   var timer = null;
-  document.addEventListener('input', function(e){ if(!el || !e.target.classList || !e.target.classList.contains('d12-q')) return; if(e.isComposing) return; q = e.target.value; clearTimeout(timer); timer = setTimeout(paint, (window.innerWidth<760 ? 160 : 100)); });
+  /* Search-everything input: update on every input (including while a phone keyboard is still "composing" a word),
+     on compositionend / search / change, and make the keyboard's Search / Enter key open the best match. */
+  function syncQ(e, now){
+    if(!el || !e.target || !e.target.classList || !e.target.classList.contains('d12-q')) return false;
+    q = e.target.value; clearTimeout(timer);
+    if(now) paint(); else timer = setTimeout(paint, (window.innerWidth<760 ? 120 : 100));
+    return true;
+  }
+  document.addEventListener('input', function(e){ syncQ(e, false); });
+  document.addEventListener('compositionend', function(e){ syncQ(e, true); }, true);
+  document.addEventListener('change', function(e){ syncQ(e, true); });
+  document.addEventListener('search', function(e){ if(syncQ(e, true)) openBest(); }, true);
+  function openBest(){
+    if(!last) return;
+    var f = ['quick','cand','calls','client','people','asm','tools'].map(function(k){ return last[k] && last[k][0]; }).filter(Boolean)[0];
+    if(f) act(f.act);
+  }
   document.addEventListener('keydown', function(e){
     if(!el) return;
-    if(e.key==='Escape'){ closeS(); }
-    else if(e.key==='Enter' && e.target.classList && e.target.classList.contains('d12-q') && last){ var f = ['quick','cand','calls','client','people','asm','tools'].map(function(k){ return last[k] && last[k][0]; }).filter(Boolean)[0]; if(f) act(f.act); }
+    if(e.key==='Escape'){ closeS(); return; }
+    if((e.key==='Enter' || e.keyCode===13) && e.target.classList && e.target.classList.contains('d12-q')){
+      e.preventDefault(); q = e.target.value; clearTimeout(timer); paint(); openBest();
+      try{ e.target.blur(); }catch(x){}
+    }
   });
 
   function injectNav(){
