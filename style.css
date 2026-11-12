@@ -3432,3 +3432,13 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 .d50-r .n{display:flex;flex-direction:column;min-width:0}.d50-r .n b{font-size:14px}.d50-r .n small{font-size:12px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .d50-more{padding:8px 0;font-size:12px;opacity:.7}
 .d50-bar{display:flex;gap:8px;margin-top:12px}.d50-bar .d27-btn{flex:1}.d50-bar.sm .d27-btn{font-size:12px;opacity:.85}
+
+/* ===== V4.4 AI helpers (✨) ===== */
+.d51-ov{z-index:9700}
+.d51-b{font-size:12.5px}
+.d51-wrap{margin-top:8px}.d51-wrap>.d51-b{background:transparent;border:1px dashed var(--accent,#2dd4bf);color:var(--accent,#2dd4bf);border-radius:12px;padding:6px 12px;cursor:pointer}
+.d51-res{margin-top:8px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent,#2dd4bf) 10%,transparent);font-size:13px;line-height:1.45}
+.d51-res.err{background:rgba(248,113,113,.12);color:#f87171}
+.d51-dig{margin:8px 12px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent,#2dd4bf) 10%,transparent);font-size:13px;line-height:1.45}
+.d51-dig b{display:block;margin-bottom:4px;font-size:12px;opacity:.8}
+@media(min-width:760px){ body.has-install-banner .lf-bell{bottom:130px} }
