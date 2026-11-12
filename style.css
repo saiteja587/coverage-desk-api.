@@ -3361,3 +3361,16 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 .d29-grp[hidden],.d29-tile[hidden],#d29None[hidden]{display:none!important}
 .d29-gh{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);margin:2px 2px 6px}
 .d29-gh span{font-weight:600;opacity:.7}
+
+/* ===== V4.1 floating horizontal scrollbar + search sheet over everything ===== */
+#d49Hs{position:fixed;bottom:0;height:16px;overflow-x:scroll;overflow-y:hidden;z-index:60;display:none;background:var(--surface);border-top:1px solid var(--border);scrollbar-width:auto;scrollbar-color:var(--teal) var(--surface-2)}
+#d49Hs>div{height:1px}
+#d49Hs::-webkit-scrollbar{height:14px}
+#d49Hs::-webkit-scrollbar-track{background:var(--surface-2)}
+#d49Hs::-webkit-scrollbar-thumb{background:var(--teal);border-radius:8px;border:3px solid var(--surface-2)}
+.table-scroll-top{min-height:14px}
+.table-scroll-top::-webkit-scrollbar{height:12px}
+#d12{z-index:9500}
+#d12 .d12-sheet{max-height:100%}
+.table-scroll-top{height:14px;opacity:.75}
+.table-scroll-top::-webkit-scrollbar-thumb{background:var(--teal);opacity:.8}
