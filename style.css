@@ -3411,9 +3411,9 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
   .d22-hero .d22-name{font-size:20px!important}
   .d22-hero .d22-time{font-size:17px!important}
   /* one ⓘ per call card (on the candidate); client details are inside it */
-  td.m-sum .m-l2{padding-right:0!important;min-height:0!important}
-  td.m-sum .m-l2::after{display:none!important}
-  td.m-sum .m-l1::after{width:26px!important;height:26px!important;font-size:14px!important;background:none!important;opacity:.55!important}
+  /* both ⓘ stay (candidate + client) but small and quiet */
+  td.m-sum .m-l1,td.m-sum .m-l2{min-height:26px!important;padding-right:34px!important}
+  td.m-sum .m-l1::after,td.m-sum .m-l2:not(:empty)::after{width:24px!important;height:24px!important;font-size:14px!important;opacity:.8!important}
   /* floating clutter */
   #liveFeedBell,#d30Orb{display:none!important}
   .scroll-to-top-btn{width:38px!important;height:38px!important;right:10px!important;bottom:76px!important;opacity:.8;background:color-mix(in srgb,var(--surface) 88%,transparent)!important}
