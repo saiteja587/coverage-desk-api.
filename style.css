@@ -3374,3 +3374,52 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 #d12 .d12-sheet{max-height:100%}
 .table-scroll-top{height:14px;opacity:.75}
 .table-scroll-top::-webkit-scrollbar-thumb{background:var(--teal);opacity:.8}
+
+/* ===== V4.2 phone declutter (phone only — desktop untouched) ===== */
+@media(max-width:759px){
+  /* alerts: one slim toast, never a stack over the header */
+  .lf-toasts{top:6px;gap:6px}
+  .lf-toasts>*:nth-child(n+2){display:none!important}
+  .lf-toasts>*{padding:8px 12px!important;border-radius:14px!important;min-height:0!important}
+  .lf-toasts>* small,.lf-toasts>* .lf-t-sub{display:none!important}
+  /* header: one brand row (icons at right) + one date row */
+  .header{position:relative;display:flex!important;flex-wrap:wrap;align-items:center;gap:6px 8px;padding-bottom:8px!important}
+  .header .pz-brand{flex:1 1 0;min-width:0;gap:8px}
+  .header .pz-brand h1{font-size:20px!important;white-space:nowrap}
+  #d27Box{flex:none!important;display:flex!important;gap:6px;margin:0 56px 0 0!important;padding:0!important;width:auto!important}
+  #d27Box .d27-ver-b{display:none!important}
+  #d27Box .d27-cmd{width:38px;height:38px;min-height:0;padding:0!important;border-radius:12px;display:flex;align-items:center;justify-content:center}
+  #d27Box .d27-tx{display:none}
+  #d27Box .d27-ic{font-size:17px;line-height:1}
+  #toggleThemeBtn{position:absolute!important;top:14px;right:12px;width:38px!important;height:38px!important;min-height:0!important;padding:0!important}
+  .header .date-row{flex:1 0 100%;display:flex!important;flex-wrap:nowrap!important;align-items:center;gap:6px;min-width:0}
+  .header .date-row #datePicker{flex:1 1 0!important;min-width:0!important;width:0!important;font-size:12.5px!important;text-align:center}
+  .header .date-row #datePicker::-webkit-calendar-picker-indicator{display:none}
+  .header .date-row{gap:5px!important}
+  .header .date-row .arrow-btn,.header .date-row .btn.pz-icon-only{flex:none;width:36px!important;min-width:0;height:38px!important;min-height:0!important;padding:0!important}
+  #toggleQuickSearch{display:none!important}
+  .header .date-row #saveAllBtn{flex:none;width:36px!important;min-width:0!important;height:38px!important;min-height:0!important;padding:0!important}
+  .header .date-row #datePicker{padding:0 2px!important;letter-spacing:-.2px}
+  /* actions: one slim row */
+  .toolbar{display:flex!important;gap:8px;flex-wrap:nowrap}
+  .toolbar #finalizeBtn,.toolbar #toggleConflicts{flex:1 1 0;min-height:38px!important;height:38px;padding:0 10px!important;font-size:13px!important;box-shadow:none!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* duplicates removed: "Next:" strip + "Needs an owner" carousel (chip + hero already cover them) */
+  .d43-smart[data-d43s="next"],.d43-smart[data-d43s="need"]{display:none!important}
+  .d22-sh,.d22-strip{display:none!important}
+  /* calmer hero */
+  .d22-hero{padding:14px 16px!important}
+  .d22-hero .d22-name{font-size:20px!important}
+  .d22-hero .d22-time{font-size:17px!important}
+  /* one ⓘ per call card (on the candidate); client details are inside it */
+  td.m-sum .m-l2{padding-right:0!important;min-height:0!important}
+  td.m-sum .m-l2::after{display:none!important}
+  td.m-sum .m-l1::after{width:26px!important;height:26px!important;font-size:14px!important;background:none!important;opacity:.55!important}
+  /* floating clutter */
+  #liveFeedBell,#d30Orb{display:none!important}
+  .scroll-to-top-btn{width:38px!important;height:38px!important;right:10px!important;bottom:76px!important;opacity:.8;background:color-mix(in srgb,var(--surface) 88%,transparent)!important}
+}
+@media(max-width:759px){
+  .header .date-row #prevDay,.header .date-row #nextDay,.header .date-row #toggleClosures,.header .date-row #toggleExpectedClosures,.header .date-row #saveAllBtn{flex:none!important;width:34px!important;min-width:0!important;max-width:34px!important;height:38px!important;min-height:0!important;padding:0!important}
+  .header .date-row .more-menu-wrap{flex:none!important;width:34px!important}
+  .header .date-row #toggleMoreMenu{width:34px!important;min-width:0!important;padding:0!important;height:38px!important;min-height:0!important}
+}
