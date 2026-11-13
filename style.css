@@ -3442,3 +3442,7 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 .d51-dig{margin:8px 12px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent,#2dd4bf) 10%,transparent);font-size:13px;line-height:1.45}
 .d51-dig b{display:block;margin-bottom:4px;font-size:12px;opacity:.8}
 @media(min-width:760px){ body.has-install-banner .lf-bell{bottom:130px} }
+
+/* V4.5b: one empty state only — the richer d2 card replaces the plain one */
+.d2-empty ~ .empty-state,.d2-empty + * .empty-state{display:none!important}
+body:has(.d2-empty) .empty-state{display:none!important}
