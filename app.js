@@ -2703,6 +2703,7 @@ async function saveRowsToOtherDate(targetDateKey, newRows){
   if(API_BASE_URL){
     const existing = await apiCall('calls', {qs:'date='+targetDateKey}).catch(()=>({rows:[]}));
     const existingRows = existing.rows || [];
+    try{ await createBackup('pre-import', targetDateKey, existingRows); }catch(e){}
     const routed = await autoRouteRows(newRows, existingRows);
     const merged = existingRows.concat(routed);
     await apiCall('calls', {method:'POST', body:{date: targetDateKey, rows: merged}});
@@ -13778,6 +13779,20 @@ function attachHandlers(conflictIds){
     parsedAll.filter(r => r._targetDate && r._targetDate !== state.date).forEach(r=>{
       (otherDateRowsByDate[r._targetDate] = otherDateRowsByDate[r._targetDate] || []).push(r);
     });
+    // Safety (added 2026-11-13): a header like "Call's for tomorrow (13th Oct)" that points far from the date
+    // being imported is almost always a typo or an old forwarded message. Never silently file dozens of calls
+    // into some other month — ask, and default to keeping them on the date being imported.
+    for(const dk of Object.keys(otherDateRowsByDate)){
+      const diffDays = Math.round((new Date(dk+'T00:00:00') - new Date(state.date+'T00:00:00')) / 86400000);
+      if(Math.abs(diffDays) > 3){
+        const n = otherDateRowsByDate[dk].length;
+        const keepHere = confirm('The paste has a date heading for ' + dk + ' (' + Math.abs(diffDays) + ' days ' + (diffDays<0?'before':'after') + ' ' + state.date + '), which looks like a typo or an old message.\n\n' + n + ' call(s) would be saved to ' + dk + '.\n\nOK = add these ' + n + ' call(s) to ' + state.date + ' instead (recommended)\nCancel = save them to ' + dk + ' anyway');
+        if(keepHere){
+          otherDateRowsByDate[dk].forEach(r => { delete r._targetDate; currentDateRaw.push(r); });
+          delete otherDateRowsByDate[dk];
+        }
+      }
+    }
     const parsed = await autoRouteRows(currentDateRaw, state.rows);
 
     // Detects reschedule/cancel messages mixed into the SAME pasted text.
@@ -13927,6 +13942,13 @@ function attachHandlers(conflictIds){
 
     if(otherDateSummaries.length){
       alert('Some calls in this paste were for other dates:\n' + otherDateSummaries.join('\n'));
+      // Added 2026-11-13: those calls are NOT on the open date, so they won't appear in this list — offer to jump there.
+      const jumpDates = Object.keys(otherDateRowsByDate);
+      if(jumpDates.length === 1 && confirm('Those calls were saved to ' + jumpDates[0] + ', not to ' + state.date + ', so you will not see them in this list.\n\nOpen ' + jumpDates[0] + ' now?')){
+        try{ if(state.dirty) await saveAllChanges(); }catch(e){}
+        const dp = document.getElementById('datePicker');
+        if(dp){ dp.value = jumpDates[0]; dp.dispatchEvent(new Event('change', {bubbles:true})); dp.dispatchEvent(new Event('input', {bubbles:true})); }
+      }
     }
     if(rescheduleMsgs.length){
       // Persist the reschedule/cancel tags to their own dedicated table
