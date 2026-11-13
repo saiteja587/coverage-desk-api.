@@ -8741,3 +8741,80 @@ window.cdOwnerOf = function(r){
   }
   document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('#d52Rm'); if(!b) return; run().catch(function(err){ alert('Could not remove: ' + (err && err.message || err)); }); });
 })();
+
+/* ===== V4.6 (d53): date filter OFF — main search looks through ALL dates ===== */
+(function(){
+  'use strict';
+  var KEY = 'cd.dateFilterOff';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var off = false; try{ off = localStorage.getItem(KEY)==='1'; }catch(e){}
+  var seq = 0, shown = 200;
+  function set(v){ off = !!v; try{ localStorage.setItem(KEY, off?'1':'0'); }catch(e){} shown = 200; if(typeof render==='function') render(); }
+  function q(){ return String((typeof state!=='undefined' && state.search) || '').trim().toLowerCase(); }
+  function active(){ return off && q().length>0; }
+  function sd(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'}); }catch(e){ return d||''; } }
+  function inject(){
+    var sr = document.querySelector('.search-row'); if(!sr) return;
+    var b = document.getElementById('d53Tg');
+    if(!b){ b = document.createElement('button'); b.type = 'button'; b.id = 'd53Tg'; sr.appendChild(b); }
+    b.className = 'd53-tg' + (off?' on':'');
+    b.textContent = off ? '📅 Date filter OFF · all dates' : '📅 Date filter ON';
+    b.title = off ? 'Searching every saved date. Click to search only the open date.' : 'Searching only the open date. Click to search all dates.';
+    var box = document.getElementById('searchBox'); if(box) box.placeholder = off ? 'Search all dates: candidate, client, role, person…' : 'Search candidate, client or role…';
+    document.body.classList.toggle('d53-all', active());
+  }
+  function matches(rows){
+    var s = q();
+    return rows.filter(function(r){
+      if(!r || !r.candidate) return false;
+      return (r.candidate||'').toLowerCase().indexOf(s)>-1 || (r.company||'').toLowerCase().indexOf(s)>-1 || (r.role||'').toLowerCase().indexOf(s)>-1 || (r.assignee||'').toLowerCase().indexOf(s)>-1 || (r.drivingPerson||'').toLowerCase().indexOf(s)>-1 || (r.country||'').toLowerCase().indexOf(s)>-1;
+    }).sort(function(a,b){ return String(b._date).localeCompare(String(a._date)) || ((window.businessDayMinutes?businessDayMinutes(a.time):0)-(window.businessDayMinutes?businessDayMinutes(b.time):0)); });
+  }
+  function panel(){
+    var p = document.getElementById('d53Res');
+    if(!p){ var sr = document.querySelector('.search-row'); if(!sr) return null; p = document.createElement('div'); p.id = 'd53Res'; p.className = 'd53-res'; sr.parentNode.insertBefore(p, sr.nextSibling); }
+    return p;
+  }
+  function paint(){
+    inject();
+    var p = document.getElementById('d53Res');
+    if(!active()){ if(p) p.remove(); return; }
+    p = panel(); if(!p) return;
+    var my = ++seq;
+    if(!p.getAttribute('data-q') || p.getAttribute('data-q')!==q()) p.innerHTML = '<div class="d53-note">Searching all dates…</div>';
+    p.setAttribute('data-q', q());
+    Promise.resolve(fetchAllRowsAcrossDates(false)).then(function(all){
+      if(my!==seq || !active()) return;
+      var rows = (all||[]).slice();
+      // the open date may have unsaved edits — trust the on-screen rows for it
+      if(state.date && Array.isArray(state.rows)){ rows = rows.filter(function(r){ return r._date !== state.date; }).concat(state.rows.map(function(r){ var c = Object.assign({}, r); c._date = state.date; return c; })); }
+      var m = matches(rows), dates = {}; m.forEach(function(r){ dates[r._date] = 1; });
+      var list = m.slice(0, shown);
+      p.innerHTML = '<div class="d53-hd"><b>'+m.length+' call'+(m.length===1?'':'s')+'</b> across '+Object.keys(dates).length+' date'+(Object.keys(dates).length===1?'':'s')+' <span>for “'+esc(state.search)+'” · tap a call to open its date</span></div>'
+        + (list.length ? list.map(function(r){
+            var st = r.woi ? 'WOI' : (r.status || '');
+            return '<div class="d53-r" data-d53="'+esc(r._date)+'"><span class="d">'+esc(sd(r._date))+(r._date===state.date?' <i>open</i>':'')+'</span><span class="t">'+esc(r.time||'—')+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc([r.company, r.role].filter(Boolean).join(' · '))+'</small></span><span class="a">'+esc(r.assignee||'Unassigned')+'</span><span class="g">'+esc([r.round, st].filter(Boolean).join(' · '))+'</span></div>';
+          }).join('') : '<div class="d53-note">Nothing found on any date.</div>')
+        + (m.length>shown ? '<button type="button" class="d53-more" data-d53more="1">Show '+Math.min(200,m.length-shown)+' more</button>' : '');
+    }).catch(function(){ if(my===seq) p.innerHTML = '<div class="d53-note">Could not search all dates right now.</div>'; });
+  }
+  function gotoDate(d){
+    off = false; try{ localStorage.setItem(KEY,'0'); }catch(e){}
+    if(d===state.date){ render(); return; }
+    var dp = document.getElementById('datePicker');
+    if(dp){ dp.value = d; dp.dispatchEvent(new Event('change',{bubbles:true})); dp.dispatchEvent(new Event('input',{bubbles:true})); }
+  }
+  document.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('#d53Tg'); if(t){ set(!off); return; }
+    var m = e.target.closest && e.target.closest('[data-d53more]'); if(m){ shown += 200; paint(); return; }
+    var r = e.target.closest && e.target.closest('.d53-r'); if(r){ gotoDate(r.getAttribute('data-d53')); }
+  });
+  function install(){
+    if(typeof window.render!=='function'){ return setTimeout(install,50); }
+    var orig = window.render;
+    window.render = function(){ var r = orig.apply(this, arguments); try{ paint(); }catch(e){ console.warn('d53',e); } return r; };
+    try{ paint(); }catch(e){}
+  }
+  install();
+  window.d53 = {isOff:function(){ return off; }, set:set};
+})();
