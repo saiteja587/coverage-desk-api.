@@ -3472,3 +3472,13 @@ body.d53-all #d22Host,body.d53-all .d43-smart{display:none!important}
 
 /* ===== V4.7 performance: no blur on repeated items (rows, cards, buttons) — blur stays on overlays/sheets/header ===== */
 html[data-look] tbody tr,html[data-look] tr.m-card,html[data-look] .d22-card,html[data-look] .d2-tool,html[data-look] .d2-next,html[data-look] .d4-chip,html[data-look] .team-load-cell,html[data-look] .btn,html[data-look] .arrow-btn,html[data-look] button.pz-icon-only,html[data-look] .d4-segs button,html[data-look] .d3-chips *,html[data-look] .d5-chip{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+
+/* V4.9 d56 — parallel calls */
+.d56-chip{border:1px solid color-mix(in srgb,var(--amber,#d9a400) 60%,transparent);background:color-mix(in srgb,var(--amber,#d9a400) 16%,transparent);color:inherit;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700;line-height:18px;cursor:pointer;margin-left:4px;white-space:nowrap}
+.d56-chip.pb{border-color:var(--border,#8884);background:transparent;font-weight:600;opacity:.85}
+@media(max-width:759px){.d56-chip.pb{display:none}}
+.d56-par,.d56-hint{margin:8px 0;padding:8px 10px;border-radius:10px;font-size:13px;line-height:1.45;background:color-mix(in srgb,var(--amber,#d9a400) 12%,transparent)}
+.d56-hint{background:color-mix(in srgb,var(--teal,#14b8a6) 12%,transparent)}
+.d56-g{margin:10px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border,#8883)}
+.d56-gh{font-size:14px;margin-bottom:4px}
+.d56-more{margin-top:6px}
