@@ -8847,6 +8847,13 @@ window.cdOwnerOf = function(r){
       return p;
     };
     try{ new PerformanceObserver(function(l){ l.getEntries().forEach(function(e){ if(e.duration>300) add('freeze', e.duration, ctx()); }); }).observe({entryTypes:['longtask']}); }catch(e){}
+    /* Long-animation-frame entries say WHICH script held the page (Chrome 123+): file, char position, how it was started */
+    try{ new PerformanceObserver(function(l){ l.getEntries().forEach(function(e){
+      if(e.duration<400) return;
+      var sc = (e.scripts||[]).slice().sort(function(a,b){ return b.duration-a.duration; })[0];
+      var d = sc ? ((sc.invoker||'?')+' · '+(sc.sourceFunctionName||'anon')+' · '+String(sc.sourceURL||'').split('/').pop().split('?')[0]+'@'+(sc.sourceCharPosition!=null?sc.sourceCharPosition:'?')+' ('+Math.round(sc.duration)+'ms)') : 'no script (layout/paint)';
+      add('slow frame', e.duration, d+' · blocked '+Math.round(e.blockingDuration||0)+'ms');
+    }); }).observe({type:'long-animation-frame', buffered:true}); }catch(e){}
   }
   install();
   function fmt(t){ try{ return new Date(t).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' '+new Date(t).toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }catch(e){ return ''; } }
@@ -8870,4 +8877,27 @@ window.cdOwnerOf = function(r){
   var prev = window.d35Open;
   window.d35Open = function(k){ if(k==='lag'){ open(); return true; } return typeof prev==='function' ? prev(k) : false; };
   window.d54 = {open:open, add:add};
+})();
+
+
+/* ===== V4.8 (d55): startup render coalescing — the first seconds after opening fire a burst of ~15-20 redraws (every loader calls render()).
+   While the app is starting, a redraw that is NOT caused by a tap/keypress and comes right after another redraw is merged with the
+   others into a single one. The first redraw, and every tap/key redraw, still happens immediately. ===== */
+(function(){
+  'use strict';
+  var T0 = Date.now(), WINDOW = 30000, GAP = 400, timer = null, orig = null, merged = 0, lastEnd = 0;
+  function run(self, args){ var r = orig.apply(self, args); lastEnd = Date.now(); return r; }
+  function install(){
+    if(typeof window.render!=='function' || !window.__d7){ return setTimeout(install,80); }
+    orig = window.render;
+    window.render = function(){
+      var ev = window.event, user = ev && ev.isTrusted, now = Date.now();
+      if(user || now-T0 > WINDOW || (navigator.webdriver && !window.__d55force)){ if(timer){ clearTimeout(timer); timer = null; } return run(this, arguments); }
+      if(!timer && now-lastEnd > GAP) return run(this, arguments);      /* first redraw of a burst: immediately */
+      merged++;
+      if(!timer){ var self = this, args = arguments; timer = setTimeout(function(){ timer = null; try{ run(self, args); }catch(e){ console.warn('render', e); } }, GAP); }
+    };
+    window.d55 = {merged:function(){ return merged; }};
+  }
+  install();
 })();
