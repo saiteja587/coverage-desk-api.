@@ -5104,9 +5104,9 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['lag','⏱','Lag log','Slow redraws and slow server calls',],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['lag','⏱','Lag log','Slow redraws and slow server calls',],['ovl','⚡','Overlaps','Same client + same role in parallel, with history'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
     window.d29T = T;
-    var GR = [['Daily work',['paste','chase','resched','quick','reply','email','carry','wrap']],['Before a call',['prep','fbp','rules','learn']],['Feedback',['fbk','fbm','fbs']],['Reports',['insights','week','dtrend','score','fair','dcmp','incent','ttop','xlr','scrum']],['People',['person','handler']],['Safety',['changes','backup','fsb','lag']],['Look & settings',['look','focus','dock','ics','clip','notif']]], used = {};
+    var GR = [['Daily work',['paste','chase','resched','quick','reply','email','carry','wrap']],['Before a call',['ovl','prep','fbp','rules','learn']],['Feedback',['fbk','fbm','fbs']],['Reports',['insights','week','dtrend','score','fair','dcmp','incent','ttop','xlr','scrum']],['People',['person','handler']],['Safety',['changes','backup','fsb','lag']],['Look & settings',['look','focus','dock','ics','clip','notif']]], used = {};
     var tile = function(t, g){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'" data-d29g="'+esc(g)+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; };
     var byK = {}; T.forEach(function(t){ byK[t[0]] = t; });
     var secs = GR.map(function(g){ var L = g[1].filter(function(k){ return byK[k]; }); L.forEach(function(k){ used[k] = 1; }); return L.length ? '<section class="d29-grp"><div class="d29-gh">'+esc(g[0])+'<span>'+L.length+'</span></div><div class="d29-grid">'+L.map(function(k){ return tile(byK[k], g[0]); }).join('')+'</div></section>' : ''; }).join('');
@@ -8900,4 +8900,207 @@ window.cdOwnerOf = function(r){
     window.d55 = {merged:function(){ return merged; }};
   }
   install();
+})();
+
+/* ===== V4.9 (d56): same client + same role — parallel-calls alert (⚡), playbook card, handler hint, overlaps list, briefing ===== */
+(function(){
+  'use strict';
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  var LS = { g:function(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, s:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  var WIN = 3;                               /* calls count as "in parallel" when within this many days of each other */
+  var AHEAD = 7;                             /* only live calls from today to +7 days */
+  var cache = null, cacheSig = '', busyC = false, lastGroups = [];
+  function sd(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d||''; } }
+  function dayNum(d){ return Math.round(new Date(d+'T00:00:00Z').getTime()/86400000); }
+  function plusDays(d,n){ var t = new Date(d+'T00:00:00Z'); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); }
+  function who(r){ return String(r.drivingPerson||r.assignee||'').trim(); }
+  function roundNo(s){ s = String(s||'').toLowerCase(); var m = s.match(/(\d)/); if(m) return +m[1]; if(/second/.test(s)) return 2; if(/third/.test(s)) return 3; if(/final|last/.test(s)) return 9; if(/onsite|on-site/.test(s)) return 9; return 1; }
+  function roundLbl(s){ return String(s||'').trim() || '1st Round'; }
+  function outcome(r, today){
+    if(r.status && typeof statusBadgeInfo==='function') return statusBadgeInfo(r.status).label;
+    return r._date < today ? 'Done' : 'Upcoming';
+  }
+  function isDead(r){ return r.status==='cancelled' || r.status==='not_responded' || r.status==='no_invite'; }
+
+  /* index every call by client (fuzzy, country-aware) + role (same / contained) */
+  function build(all){
+    var today = todayDateString(), horizon = plusDays(today, AHEAD);
+    var byPrefix = {}, bucketOf = {}, buckets = {};
+    all.forEach(function(r){
+      if(!r || !r.candidate || !r.company || !r.role || !r._date) return;
+      var own = normalizeCompanyKey(r.company); if(!own) return;
+      if(!(own in bucketOf)){
+        var pf = own.slice(0,3), list = byPrefix[pf] || (byPrefix[pf] = []), hit = null;
+        for(var i=0;i<list.length;i++){ if(fuzzyCompanyKeyMatch(list[i], r.company)){ hit = list[i]; break; } }
+        bucketOf[own] = hit || own; if(!hit) list.push(own);
+      }
+      var bk = bucketOf[own]+'|'+canonCountry(r.country);
+      (buckets[bk] || (buckets[bk] = [])).push(r);
+    });
+    var groups = [], idx = {};            /* idx: row id -> {group, peers} */
+    Object.keys(buckets).forEach(function(bk){
+      var rows = buckets[bk], clusters = [];
+      rows.forEach(function(r){
+        var c = null;
+        for(var i=0;i<clusters.length;i++){ if(rolesAlike(clusters[i].role, r.role)){ c = clusters[i]; break; } }
+        if(!c){ c = {role:r.role, rows:[]}; clusters.push(c); }
+        c.rows.push(r);
+      });
+      clusters.forEach(function(c){
+        var cand = {}; c.rows.forEach(function(r){ cand[normalizeNameKey(r.candidate)] = 1; });
+        if(Object.keys(cand).length < 2) return;                   /* nobody else at this client + role */
+        c.rows.sort(function(a,b){ return a._date<b._date?1:a._date>b._date?-1:0; });
+        var company = stripCompanyNoise(c.rows[0].company) || c.rows[0].company;
+        /* live: today..+7, not dead; earliest live call per candidate */
+        var liveBy = {};
+        c.rows.forEach(function(r){ if(r._date>=today && r._date<=horizon && !isDead(r) && !r.woi){ var k = normalizeNameKey(r.candidate); if(!liveBy[k] || r._date<liveBy[k]._date) liveBy[k] = r; } });
+        var live = Object.keys(liveBy).map(function(k){ return liveBy[k]; }).sort(function(a,b){ return a._date<b._date?-1:a._date>b._date?1:0; });
+        var par = live.filter(function(r){ return live.some(function(o){ return o!==r && normalizeNameKey(o.candidate)!==normalizeNameKey(r.candidate) && Math.abs(dayNum(o._date)-dayNum(r._date))<=WIN; }); });
+        var g = { key:bk+'|'+roleKeyOf(c.role), company:company, role:c.role, country:c.rows[0].country||'', rows:c.rows, live:live, parallel:par };
+        c.rows.forEach(function(r){ idx[r.id] = g; });
+        if(par.length>=2) groups.push(g);
+      });
+    });
+    groups.sort(function(a,b){ return a.parallel[0]._date<b.parallel[0]._date?-1:1; });
+    return { groups:groups, idx:idx, today:today };
+  }
+  function get(){
+    if(typeof fetchAllRowsAcrossDates!=='function') return Promise.resolve(null);
+    return fetchAllRowsAcrossDates().then(function(all){
+      var sig = (all||[]).length+'|'+(typeof _allRowsAcrossDatesCacheAt!=='undefined'?_allRowsAcrossDatesCacheAt:'')+'|'+todayDateString();
+      if(cache && sig===cacheSig) return cache;
+      cache = build(all||[]); cacheSig = sig; return cache;
+    }).catch(function(){ return null; });
+  }
+
+  /* who ran this client + role before (done calls only) → suggestion; never assigned automatically */
+  function handlerHint(g, forRow){
+    var cnt = {}, last = {};
+    g.rows.forEach(function(r){ if(r._date<todayDateString() && !isDead(r) && who(r) && (!forRow || normalizeNameKey(r.candidate)!==normalizeNameKey(forRow.candidate))){ var w = who(r); cnt[w] = (cnt[w]||0)+1; if(!last[w] || r._date>last[w]) last[w] = r._date; } });
+    var best = null; Object.keys(cnt).forEach(function(w){ if(!best || cnt[w]>cnt[best] || (cnt[w]===cnt[best] && last[w]>last[best])) best = w; });
+    return best ? {name:best, n:cnt[best], last:last[best]} : null;
+  }
+  function progress(g){
+    var by = {};
+    g.rows.forEach(function(r){ var k = normalizeNameKey(r.candidate); var n = roundNo(r.round); if(!by[k] || n>by[k].n || (n===by[k].n && r._date>by[k].r._date)) by[k] = {n:n, r:r}; });
+    return Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return b.r._date<a.r._date?-1:1; });
+  }
+
+  /* ---------- card ---------- */
+  function close(id){ var e = document.getElementById(id); if(e) e.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+  function briefText(g, row){
+    var today = todayDateString(), h = handlerHint(g, row), L = [];
+    L.push('Client: '+g.company+(g.country?' ('+g.country+')':'')+' · Role: '+g.role);
+    if(row) L.push('This call: '+row.candidate+' — '+sd(row._date)+(row.time?' '+row.time:'')+' · '+roundLbl(row.round)+(who(row)?' · '+who(row):' · no person yet'));
+    var par = g.parallel.filter(function(r){ return !row || r!==row; });
+    if(par.length) L.push('In parallel: '+par.map(function(r){ return r.candidate+' ('+sd(r._date)+(r.time?' '+r.time:'')+(who(r)?', '+who(r):'')+')'; }).join('; '));
+    var before = progress(g).filter(function(p){ return !row || normalizeNameKey(p.r.candidate)!==normalizeNameKey(row.candidate); });
+    if(before.length) L.push('Earlier / other candidates: '+before.map(function(p){ return p.r.candidate+' — '+roundLbl(p.r.round)+', '+outcome(p.r,today).toLowerCase()+' ('+sd(p.r._date)+(who(p.r)?', '+who(p.r):'')+')'; }).join('; '));
+    if(h) L.push('Handled most often by: '+h.name+' ('+h.n+' call'+(h.n===1?'':'s')+', last '+sd(h.last)+')');
+    return L.join('\n');
+  }
+  function card(g, row){
+    close('d56c'); var today = todayDateString(), h = handlerHint(g, row), P = progress(g);
+    var el = document.createElement('div'); el.id = 'd56c'; el.className = 'd27-ov d56-ov';
+    var par = g.parallel.length>=2 ? '<div class="d56-par">⚡ '+g.parallel.length+' in parallel: '+g.parallel.map(function(r){ return '<b>'+esc(r.candidate)+'</b> '+esc(sd(r._date))+(r.time?' '+esc(r.time):'')+(who(r)?' · '+esc(who(r)):' · <i>no person</i>'); }).join('<br>')+'</div>' : '';
+    var hint = h ? '<div class="d56-hint">💡 Suggest: <b>'+esc(h.name)+'</b> — handled '+h.n+' earlier call'+(h.n===1?'':'s')+' at this client and role (last '+esc(sd(h.last))+')'+(row && who(row)===h.name?' · already with them':'')+'. Only a suggestion.</div>' : '';
+    var prog = P.length ? P.map(function(p){ var r = p.r; return '<div class="d50-r"><span class="t">'+esc(sd(r._date))+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc(roundLbl(r.round))+' · '+esc(outcome(r,today))+(who(r)?' · '+esc(who(r)):'')+(p.n>=2 && p.n<9?' · reached round '+p.n:'')+'</small></span></div>'; }).join('') : '';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>SAME CLIENT · SAME ROLE</small><h2>'+esc(g.company)+'</h2></div><button type="button" class="d27-x" data-d56="x">✕</button></div>'
+      +'<div class="d29-body"><div class="d50-note">Role: <b>'+esc(g.role)+'</b>'+(g.country?' · '+esc(g.country):'')+'</div>'+par+hint+'<div class="d27-sec"><b>All candidates here</b><span>'+P.length+'</span></div>'+prog
+      +'<div class="d51-wrap"><div class="d51-out"></div></div></div>'
+      +'<div class="d50-bar"><button type="button" class="d27-btn d46-go" data-d56="cp">Copy briefing</button><button type="button" class="d27-btn" data-d56="ai">✨ AI briefing</button></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){
+      if(e.target===el){ close('d56c'); return; }
+      var b = e.target.closest && e.target.closest('[data-d56]'); if(!b) return; var k = b.getAttribute('data-d56');
+      if(k==='x') close('d56c');
+      else if(k==='cp'){ var t = briefText(g,row); try{ navigator.clipboard.writeText(t).then(function(){ window.d2Toast('Briefing copied',{ms:1800}); }); }catch(x){ window.prompt('Copy:', t); } }
+      else if(k==='ai'){
+        var out = el.querySelector('.d51-out'); b.disabled = true; var old = b.textContent; b.textContent = '…';
+        window.apiCall('ai_assist',{method:'POST',body:{task:'brief',input:{text:briefText(g,row)}},timeoutMs:16000}).then(function(d){ b.disabled = false; b.textContent = old; out.innerHTML = '<div class="d51-res">'+esc(d&&d.text||'').replace(/\n/g,'<br>')+'</div>'; })
+          .catch(function(er){ b.disabled = false; b.textContent = old; out.innerHTML = '<div class="d51-res err">'+esc((er&&er.message)||'AI is not available right now')+'</div>'; });
+      }
+    });
+  }
+
+  /* ---------- chips on the call rows ---------- */
+  function decorate(){
+    if(!cache) return;
+    var rows = {}; try{ (state.rows||[]).forEach(function(r){ rows[r.id] = r; }); }catch(e){ return; }
+    [].forEach.call(document.querySelectorAll('tr[data-id]'), function(tr){
+      if(tr.querySelector('.d56-chip')) return;
+      var r = rows[tr.getAttribute('data-id')], g = r && cache.idx[r.id]; if(!g) return;
+      var n = g.parallel.indexOf(g.parallel.filter(function(p){ return p.id===r.id; })[0])>=0 ? g.parallel.length : 0;
+      var peers = progress(g).length-1;
+      if(!n && peers<1) return;
+      var host = tr.querySelector('.badge-row') || tr.querySelector('td.m-sum') || tr.querySelector('td:nth-child(3)'); if(!host) return;
+      var b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-d56rid', r.id);
+      if(n){ b.className = 'd56-chip par'; b.textContent = '⚡ '+n; b.title = n+' candidates have live calls at this client and role this week — tap'; }
+      else { b.className = 'd56-chip pb'; b.textContent = '📚 '+peers; b.title = peers+' other candidate(s) went through this client and role — tap for the history'; }
+      host.appendChild(b);
+    });
+  }
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('.d56-chip'); if(!b) return;
+    e.preventDefault(); e.stopPropagation();
+    var id = b.getAttribute('data-d56rid'), r = (state.rows||[]).filter(function(x){ return x.id===id; })[0];
+    get().then(function(c){ var g = c && r && c.idx[r.id]; if(g) card(g, r); });
+  }, true);
+  function install(){
+    if(typeof window.render!=='function'){ return setTimeout(install,150); }
+    var r0 = window.render;
+    window.render = function(){ var x = r0.apply(this, arguments); setTimeout(function(){ get().then(decorate); }, 60); return x; };
+    get().then(decorate);
+  }
+  setTimeout(install, 2500);
+
+  /* ---------- pop-up + overlaps list ---------- */
+  function snoozed(){ var t = +LS.g('d56snz')||0; if(Date.now()<t) return true; return LS.g('d56off')===todayDateString(); }
+  function seenSet(){ try{ return JSON.parse(LS.g('d56seen')||'{}'); }catch(e){ return {}; } }
+  function sigOf(g){ return g.key+'|'+g.parallel.map(function(r){ return normalizeNameKey(r.candidate); }).sort().join(','); }
+  function groupHtml(g){
+    var h = handlerHint(g, null);
+    return '<div class="d56-g"><div class="d56-gh">⚡ <b>'+esc(g.company)+'</b> · '+esc(g.role)+'</div>'
+      +g.parallel.map(function(r){ return '<div class="d50-r"><span class="t">'+esc(sd(r._date))+(r.time?' · '+esc(r.time):'')+'</span><span class="n"><b>'+esc(r.candidate)+'</b><small>'+esc(roundLbl(r.round))+(who(r)?' · '+esc(who(r)):' · <i>no person</i>')+'</small></span></div>'; }).join('')
+      +(h?'<div class="d56-hint">💡 Handled before by <b>'+esc(h.name)+'</b> ('+h.n+')</div>':'')
+      +'<button type="button" class="d27-btn d56-more" data-d56g="'+esc(g.key)+'">Open history</button></div>';
+  }
+  function openGroup(key){ var g = lastGroups.filter(function(x){ return x.key===key; })[0]; if(g) card(g, null); }
+  function listOverlay(groups, asPopup){
+    close('d56p');
+    var el = document.createElement('div'); el.id = 'd56p'; el.className = 'd27-ov d56-ov';
+    var shown = groups.slice(0,6), more = groups.length-shown.length;
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>'+(asPopup?'PARALLEL CALLS':'OVERLAPS · NEXT '+AHEAD+' DAYS')+'</small><h2>'+(groups.length?groups.length+' client + role overlap'+(groups.length===1?'':'s'):'No overlaps')+'</h2></div><button type="button" class="d27-x" data-d56="px">✕</button></div>'
+      +'<div class="d29-body"><div class="d50-note">Several candidates have live calls at the same client and role within '+WIN+' days. Make sure each has the right owner and tell owners to share notes.</div>'
+      +(shown.map(groupHtml).join('')||'<div class="d50-note">Nothing in parallel right now.</div>')+(more>0?'<div class="d50-more">+ '+more+' more — see the Overlaps tile in the menu</div>':'')+'</div>'
+      +(asPopup?'<div class="d50-bar"><button type="button" class="d27-btn d46-go" data-d56="ack">Got it</button></div><div class="d50-bar sm"><button type="button" class="d27-btn" data-d56="snz">Remind in 2 hrs</button><button type="button" class="d27-btn" data-d56="off">Not today</button></div>':'')+'</div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(e){
+      if(e.target===el){ close('d56p'); return; }
+      var g = e.target.closest && e.target.closest('[data-d56g]'); if(g){ openGroup(g.getAttribute('data-d56g')); return; }
+      var b = e.target.closest && e.target.closest('[data-d56]'); if(!b) return; var k = b.getAttribute('data-d56');
+      if(k==='px'){ if(asPopup) LS.s('d56snz', String(Date.now()+30*60000)); close('d56p'); }
+      else if(k==='ack'){ var s = seenSet(); groups.forEach(function(x){ s[sigOf(x)] = Date.now(); }); LS.s('d56seen', JSON.stringify(s)); close('d56p'); }
+      else if(k==='snz'){ LS.s('d56snz', String(Date.now()+2*3600000)); close('d56p'); try{ window.d2Toast('Will remind you in 2 hours',{ms:2000}); }catch(x){} }
+      else if(k==='off'){ LS.s('d56off', todayDateString()); close('d56p'); try{ window.d2Toast('No more parallel-call reminders today',{ms:2000}); }catch(x){} }
+    });
+  }
+  function check(force){
+    if(busyC) return; if(!force && snoozed()) return;
+    if(document.querySelector('.d27-ov')) return;
+    if(typeof state==='undefined' || !state.rows || !state.rows.length) return;
+    busyC = true;
+    get().then(function(c){
+      busyC = false; if(!c) return; lastGroups = c.groups;
+      var s = seenSet(), fresh = c.groups.filter(function(g){ return !s[sigOf(g)]; });
+      if(!fresh.length || document.querySelector('.d27-ov')) return;
+      listOverlay(fresh, true);
+    }).catch(function(){ busyC = false; });
+  }
+  window.d56Check = check; window.d56Groups = function(){ return get().then(function(c){ lastGroups = c?c.groups:[]; return lastGroups; }); };
+  setTimeout(check, 16000); setInterval(check, 20*60000);
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') setTimeout(check, 2500); });
+
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='ovl'){ get().then(function(c){ lastGroups = c?c.groups:[]; listOverlay(lastGroups, false); }); return true; } return typeof prev==='function' ? prev(k) : false; };
 })();
