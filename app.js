@@ -1330,7 +1330,7 @@ function assessCompanyMatch(a, b){
   if(companiesAreAliased(a, b)) return true;                     // admin-curated aliases ("TfL" = "Transport for London")
   const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
   if(short.length < long.length && short.every((t, i) => t === long[i])) return true;   // "Zema Global" ⊂ "Zema Global Data"
-  if(ja.length >= 8 && jb.length >= 8 && Math.abs(ja.length - jb.length) <= 2 && levenshteinDistance(ja, jb) <= 2) return true;  // typo
+  if(ja.length >= 8 && jb.length >= 8 && Math.abs(ja.length - jb.length) <= 2 && levWithin(ja, jb, 2)) return true;  // typo
   return false;
 }
 function assessmentsForCandidate(name, company){
@@ -1945,22 +1945,51 @@ function expectedClosuresPendingCount(){
 // normalizeCompanyKey — so a name typed slightly differently in a
 // WhatsApp paste ("Keerththana" vs "Keerthana", extra spacing, etc.)
 // still matches the spreadsheet entry.
+const _nnKeyCache = new Map();
 function normalizeNameKey(name){
-  return (name||'').toLowerCase().replace(/[^a-z]/g,'');
+  const raw = name || '';
+  let v = _nnKeyCache.get(raw);
+  if(v === undefined){
+    v = String(raw).toLowerCase().replace(/[^a-z]/g,'');
+    if(_nnKeyCache.size > 30000) _nnKeyCache.clear();
+    _nnKeyCache.set(raw, v);
+  }
+  return v;
 }
 // Standard edit distance — used only for the bounded typo-tolerance check
 // below, never for anything with real stakes (like Portal handler matching).
+// Bounded check: true when edit distance <= k. Stops as soon as a whole row exceeds k.
+function levWithin(a, b, k){
+  const m = a.length, n = b.length;
+  if(Math.abs(m - n) > k) return false;
+  if(m === 0 || n === 0) return Math.max(m, n) <= k;
+  let prev = new Int32Array(n+1), curr = new Int32Array(n+1);
+  for(let j=0;j<=n;j++) prev[j] = j;
+  for(let i=1;i<=m;i++){
+    curr[0] = i; let rowMin = i;
+    const ai = a.charCodeAt(i-1);
+    for(let j=1;j<=n;j++){
+      let v = prev[j]+1; const w = curr[j-1]+1; if(w<v) v=w; const x = prev[j-1]+(ai === b.charCodeAt(j-1) ? 0 : 1); if(x<v) v=x;
+      curr[j] = v; if(v<rowMin) rowMin=v;
+    }
+    if(rowMin > k) return false;
+    const t = prev; prev = curr; curr = t;
+  }
+  return prev[n] <= k;
+}
 function levenshteinDistance(a, b){
   const m = a.length, n = b.length;
   if(m === 0) return n;
   if(n === 0) return m;
-  let prev = new Array(n+1), curr = new Array(n+1);
+  let prev = new Int32Array(n+1), curr = new Int32Array(n+1);
   for(let j=0;j<=n;j++) prev[j] = j;
   for(let i=1;i<=m;i++){
     curr[0] = i;
+    const ai = a.charCodeAt(i-1);
     for(let j=1;j<=n;j++){
-      const cost = a[i-1] === b[j-1] ? 0 : 1;
-      curr[j] = Math.min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost);
+      const cost = ai === b.charCodeAt(j-1) ? 0 : 1;
+      let v = prev[j]+1; const w = curr[j-1]+1; if(w<v) v=w; const x = prev[j-1]+cost; if(x<v) v=x;
+      curr[j] = v;
     }
     const tmp = prev; prev = curr; curr = tmp;
   }
@@ -2083,7 +2112,7 @@ function computeStudentMasterMatch(candidateName){
     for(const s of state.studentsMaster){
       const sKey = normalizeNameKey(s.name);
       if(Math.abs(sKey.length - key.length) > 2) continue;
-      if(levenshteinDistance(key, sKey) <= 2){
+      if(levWithin(key, sKey, 2)){
         closeMatches.push(s);
         if(closeMatches.length > 1) break; // already ambiguous within this pathway — stop early
       }
@@ -11237,8 +11266,16 @@ function countryConflict(a, b){
   const x = canonCountry(a), y = canonCountry(b);
   return !!x && !!y && x !== y;
 }
+const _ncKeyCache = new Map();
 function normalizeCompanyKey(company){
-  return stripCompanyNoise(company).toLowerCase().replace(/[^a-z0-9]/g,'');
+  const raw = company == null ? '' : String(company);
+  let v = _ncKeyCache.get(raw);
+  if(v === undefined){
+    v = stripCompanyNoise(raw).toLowerCase().replace(/[^a-z0-9]/g,'');
+    if(_ncKeyCache.size > 20000) _ncKeyCache.clear();
+    _ncKeyCache.set(raw, v);
+  }
+  return v;
 }
 // Manually-curated company aliases (2026-09-27) — reported real case: a
 // closure recorded as "LSUHSC-Shreveport" is genuinely the same client as
@@ -11253,21 +11290,26 @@ function normalizeCompanyKey(company){
 // in the generic app_settings store (same one goal targets use) as a JSON
 // array of [nameA, nameB] pairs, so it's shared across the team and
 // survives reloads without needing its own table/migration.
+let _aliasRawSeen = null, _aliasPairsSeen = [], _aliasKeySet = new Set();
 function getCompanyAliasPairs(){
   try{
     const raw = state.appSettings && state.appSettings.company_aliases;
     if(!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(p=>Array.isArray(p) && p.length>=2) : [];
+    if(raw !== _aliasRawSeen){
+      const parsed = JSON.parse(raw);
+      _aliasPairsSeen = Array.isArray(parsed) ? parsed.filter(p=>Array.isArray(p) && p.length>=2) : [];
+      _aliasKeySet = new Set();
+      _aliasPairsSeen.forEach(([x,y])=>{ const kx = normalizeCompanyKey(x), ky = normalizeCompanyKey(y); _aliasKeySet.add(kx+'\u0001'+ky); _aliasKeySet.add(ky+'\u0001'+kx); });
+      _aliasRawSeen = raw;
+    }
+    return _aliasPairsSeen.slice();
   }catch(e){ return []; }
 }
 function companiesAreAliased(companyA, companyB){
   const a = normalizeCompanyKey(companyA), b = normalizeCompanyKey(companyB);
   if(!a || !b) return false;
-  return getCompanyAliasPairs().some(([x,y])=>{
-    const kx = normalizeCompanyKey(x), ky = normalizeCompanyKey(y);
-    return (kx===a && ky===b) || (kx===b && ky===a);
-  });
+  getCompanyAliasPairs();
+  return _aliasKeySet.has(a+'\u0001'+b);
 }
 async function saveCompanyAliasPair(nameA, nameB){
   const pairs = getCompanyAliasPairs();
@@ -11317,7 +11359,7 @@ function firstNameLastInitialFuzzyMatch(nameA, nameB){
     // Typo tolerance only on names long enough that a 1-2 letter edit is
     // clearly a spelling variant rather than a coincidental short-name
     // collision (e.g. never lets "Sam" fuzzy-match "Sid").
-    return shortFirstKey.length >= 5 && fullFirstKey.length >= 5 && levenshteinDistance(shortFirstKey, fullFirstKey) <= 2;
+    return shortFirstKey.length >= 5 && fullFirstKey.length >= 5 && levWithin(shortFirstKey, fullFirstKey, 2);
   }
   return attempt(nameA, nameB) || attempt(nameB, nameA);
 }
@@ -11339,7 +11381,7 @@ function sameCandidateFuzzyMatch(nameA, nameB){
   const keyB = normalizeNameKey(nameB);
   if(!keyA || !keyB || keyA.length < 10 || keyB.length < 10) return false;
   if(Math.abs(keyA.length - keyB.length) > 2) return false;
-  return levenshteinDistance(keyA, keyB) <= 2;
+  return levWithin(keyA, keyB, 2);
 }
 // Same "fuzzy is fine for company names, never for people" allowance the
 // rest of the app already follows (see the team-isolation rule) — a
@@ -11371,7 +11413,7 @@ function fuzzyCompanyKeyMatch(companyA, companyB){
   // Levenshtein-tolerance idea sameCandidateFuzzyMatch() uses for names,
   // just applied to companies, which is the one place this file already
   // says fuzzy matching is safe to use more freely.
-  if(a.length >= 8 && b.length >= 8 && Math.abs(a.length-b.length) <= 3 && levenshteinDistance(a,b) <= 2) return true;
+  if(a.length >= 8 && b.length >= 8 && Math.abs(a.length-b.length) <= 3 && levWithin(a, b, 2)) return true;
   return false;
 }
 // The one shared "does this closure's candidate+company correspond to a
@@ -15876,11 +15918,18 @@ function rolesAlike(a, b){
   return x === y || (x.length >= 5 && y.length >= 5 && (x.startsWith(y) || y.startsWith(x) || x.includes(y) || y.includes(x)));
 }
 // All earlier calls at this client by OTHER candidates, newest first, split by whether the role matches.
+let _cphHist = null, _cphAl = null, _cphMemo = new Map();
 function clientPeerHistory(row){
   if(!row.company || !state.clientHistory) return null;
   const key = normalizeCompanyKey(row.company);
-  const cands = state.clientHistory.filter(n => normalizeCompanyKey(n.company) === key || fuzzyCompanyKeyMatch(n.company, row.company)).filter(n => !countryConflict(n.country, row.country));
-  const entry = cands.find(n => canonCountry(n.country) === canonCountry(row.country)) || cands[0];
+  if(_cphHist !== state.clientHistory || _cphAl !== _aliasRawSeen){ _cphHist = state.clientHistory; _cphAl = _aliasRawSeen; _cphMemo = new Map(); }
+  const mk = key + '|' + canonCountry(row.country);
+  let entry = _cphMemo.get(mk);
+  if(entry === undefined){
+    const cands = state.clientHistory.filter(n => normalizeCompanyKey(n.company) === key || fuzzyCompanyKeyMatch(n.company, row.company)).filter(n => !countryConflict(n.country, row.country));
+    entry = cands.find(n => canonCountry(n.country) === canonCountry(row.country)) || cands[0] || null;
+    _cphMemo.set(mk, entry);
+  }
   if(!entry) return null;
   const me = (row.candidate||'').trim().toLowerCase();
   const others = entry.occurrences.filter(o => (o.candidate||'').trim().toLowerCase() !== me && !countryConflict(o.country, row.country));
@@ -17242,7 +17291,7 @@ function deskTokenNear(a, b){
   if(a === b) return true;
   if(Math.min(a.length, b.length) < 5) return false;
   const lim = Math.max(a.length, b.length) >= 9 ? 2 : 1;
-  return Math.abs(a.length - b.length) <= lim && levenshteinDistance(a, b) <= lim;
+  return Math.abs(a.length - b.length) <= lim && levWithin(a, b, lim);
 }
 function deskTightSameName(a, b){
   const ta = deskNameTokens(a), tb = deskNameTokens(b);
@@ -17467,6 +17516,7 @@ function computeSmartAlerts(allRows, today, opts){
     }catch(e){}
   }
   function save(){
+    try{ const ks = Object.keys(lf.seen); if(ks.length > 3000){ const keep = {}; ks.slice(-2000).forEach(k => { keep[k] = lf.seen[k]; }); lf.seen = keep; } }catch(e){}
     try{ localStorage.setItem(LIVEFEED_STORE_KEY, JSON.stringify({ items: lf.items.slice(0, LIVEFEED_MAX_ITEMS), seen: lf.seen, muted: lf.muted })); }catch(e){}
   }
   load();
