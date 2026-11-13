@@ -8991,8 +8991,9 @@ window.cdOwnerOf = function(r){
   function briefText(g, row){
     var today = todayDateString(), h = handlerHint(g, row), L = [];
     L.push('Client: '+g.company+(g.country?' ('+g.country+')':'')+' · Role: '+g.role);
+    if(row && !row._date) row = Object.assign({}, row, {_date: state.date});
     if(row) L.push('This call: '+row.candidate+' — '+sd(row._date)+(row.time?' '+row.time:'')+' · '+roundLbl(row.round)+(who(row)?' · '+who(row):' · no person yet'));
-    var par = g.parallel.filter(function(r){ return !row || r!==row; });
+    var par = g.parallel.filter(function(r){ return !row || normalizeNameKey(r.candidate)!==normalizeNameKey(row.candidate); });
     if(par.length) L.push('In parallel: '+par.map(function(r){ return r.candidate+' ('+sd(r._date)+(r.time?' '+r.time:'')+(who(r)?', '+who(r):'')+')'; }).join('; '));
     var before = progress(g).filter(function(p){ return !row || normalizeNameKey(p.r.candidate)!==normalizeNameKey(row.candidate); });
     if(before.length) L.push('Earlier / other candidates: '+before.map(function(p){ return p.r.candidate+' — '+roundLbl(p.r.round)+', '+outcome(p.r,today).toLowerCase()+' ('+sd(p.r._date)+(who(p.r)?', '+who(p.r):'')+')'; }).join('; '));
