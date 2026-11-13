@@ -5104,9 +5104,9 @@ window.cdOwnerOf = function(r){
   var hub = null;
   function hubHtml(){
     var hd = heads();
-    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
+    var T = [['paste','📥','Paste a message','WhatsApp / email reschedule or cancel'],['lag','⏱','Lag log','Slow redraws and slow server calls',],['chase','📞','Chase list','Invite · confirmed · no reply'],['resched','🔁','Reschedule helper','Next free slot + client message'],['rules','📌','Client rules','Notes shown on every call'],['insights','📊','Insights','Clients, roles, owners, closures'],['week','📈','Weekly report','Copy or save as PDF'],['quick','🎤','Quick add','Type or speak a call'],['handler','🔗','Handler link','Personal link per person'],['reply','💬','Reply builder','Ready WhatsApp messages'],['wrap','🌙','End-of-day wrap','Summary + still open'],['carry','🗂','Carry-forward','Yesterday’s unfinished calls'],['email','✉️','Paste an email','Clean a forwarded email'],['score','🏷','Client scorecard','Reschedule rate, best handler'],['fair','⚖️','Workload','Fairness + fatigue'],['changes','🕘','Changes & undo','What changed, undo'],['backup','💾','Backup & restore','Download or roll back'],['incent','💰','My incentives','Where I am this month'],['prep','🧭','Prep a call','History, outcomes, rule'],['dtrend','📈','Domain trend','Rising / falling skills'],['learn','🧠','Learned owners','What the app picked up'],['notif','🔕','Quiet alerts','Hours, daily cap, skip confirmed'],['ttop','🛰','TTOP data','Read-only view of the TTOP portal'],['person','👤','Person card','Calls, incentives, record for anyone'],['dcmp','📅','Day compare','This day vs same weekday last week'],['scrum','🗣','Daily scrum','Board + Telugu transcript'],['look','🪟','Look: '+(document.documentElement.getAttribute('data-look')==='glass'?'Glass':'Classic'),'Tap to switch Glass / Classic'],['focus','🎯','Focus modes','My calls, needs-owner view, do-not-disturb timer'],['ics','📆','Calendar file','Add calls to your phone calendar (.ics)'],['dock','🪟','Details dock','Split view: call details follow the row you select (D)'],['clip','📋','Clipboard history','Last 10 things you copied (Alt+V)'],['fsb','💾','Backup folder','Save a daily backup into a folder on this PC'],['fbk','💬','Feedback import','Paste 1st-round feedback — it attaches to each call by name + client'],['xlr','📊','Export to Excel','Pick a date range → date, name, country, company, role'],['fbp','🧭','Prep list','Today’s candidates whose feedback says they need prep — with ready messages'],['fbm','📝','Feedback pending','Calls with no feedback yet — chase each person'],['fbs','📈','Feedback summary','Went well vs needs prep, by tag, client and person']];
     window.d29T = T;
-    var GR = [['Daily work',['paste','chase','resched','quick','reply','email','carry','wrap']],['Before a call',['prep','fbp','rules','learn']],['Feedback',['fbk','fbm','fbs']],['Reports',['insights','week','dtrend','score','fair','dcmp','incent','ttop','xlr','scrum']],['People',['person','handler']],['Safety',['changes','backup','fsb']],['Look & settings',['look','focus','dock','ics','clip','notif']]], used = {};
+    var GR = [['Daily work',['paste','chase','resched','quick','reply','email','carry','wrap']],['Before a call',['prep','fbp','rules','learn']],['Feedback',['fbk','fbm','fbs']],['Reports',['insights','week','dtrend','score','fair','dcmp','incent','ttop','xlr','scrum']],['People',['person','handler']],['Safety',['changes','backup','fsb','lag']],['Look & settings',['look','focus','dock','ics','clip','notif']]], used = {};
     var tile = function(t, g){ return '<button type="button" class="d29-tile" data-d29t="'+t[0]+'" data-d29g="'+esc(g)+'"><span>'+t[1]+'</span><b>'+t[2]+'</b><small>'+t[3]+'</small></button>'; };
     var byK = {}; T.forEach(function(t){ byK[t[0]] = t; });
     var secs = GR.map(function(g){ var L = g[1].filter(function(k){ return byK[k]; }); L.forEach(function(k){ used[k] = 1; }); return L.length ? '<section class="d29-grp"><div class="d29-gh">'+esc(g[0])+'<span>'+L.length+'</span></div><div class="d29-grid">'+L.map(function(k){ return tile(byK[k], g[0]); }).join('')+'</div></section>' : ''; }).join('');
@@ -8817,4 +8817,56 @@ window.cdOwnerOf = function(r){
   }
   install();
   window.d53 = {isOff:function(){ return off; }, set:set};
+})();
+
+
+/* ===== V4.7 (d54): Lag log — records slow redraws, slow/failed server calls and long freezes so a "stuck" moment can be traced ===== */
+(function(){
+  'use strict';
+  var KEY = 'cd.lag', MAX = 60;
+  var esc = function(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  function load(){ try{ return JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ return []; } }
+  function save(a){ try{ localStorage.setItem(KEY, JSON.stringify(a.slice(-MAX))); }catch(e){} }
+  var buf = load(), dirty = false;
+  function add(kind, ms, info){
+    buf.push({t:Date.now(), k:kind, ms:Math.round(ms), i:String(info||'').slice(0,120)}); if(buf.length>MAX) buf = buf.slice(-MAX); dirty = true;
+  }
+  setInterval(function(){ if(dirty){ save(buf); dirty = false; } }, 5000);
+  window.addEventListener('pagehide', function(){ if(dirty){ save(buf); dirty = false; } });
+  function ctx(){ try{ return state.date+' · '+(state.view||'')+' · '+(state.rows||[]).length+' calls'; }catch(e){ return ''; } }
+  function install(){
+    if(typeof window.render!=='function' || typeof window.apiCall!=='function'){ return setTimeout(install,100); }
+    var r0 = window.render;
+    window.render = function(){ var a = performance.now(); var r = r0.apply(this, arguments); var d = performance.now()-a; if(d>250) add('redraw', d, ctx()); return r; };
+    var c0 = window.apiCall;
+    window.apiCall = function(res, opts){
+      var a = performance.now(), m = (opts && opts.method) || 'GET', q = (opts && opts.qs) || '';
+      var p = c0.apply(this, arguments);
+      try{ p.then(function(){ var d = performance.now()-a; if(d>3000) add('slow call', d, m+' '+res+(q?'?'+q:'')); }, function(e){ var d = performance.now()-a; add('failed call', d, m+' '+res+(q?'?'+q:'')+' — '+((e&&e.message)||'error')); }); }catch(e){}
+      return p;
+    };
+    try{ new PerformanceObserver(function(l){ l.getEntries().forEach(function(e){ if(e.duration>300) add('freeze', e.duration, ctx()); }); }).observe({entryTypes:['longtask']}); }catch(e){}
+  }
+  install();
+  function fmt(t){ try{ return new Date(t).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' '+new Date(t).toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }catch(e){ return ''; } }
+  function open(){
+    var o = document.getElementById('d54'); if(o) o.remove();
+    save(buf); var L = buf.slice().reverse(), cnt = {}; L.forEach(function(e){ cnt[e.k] = (cnt[e.k]||0)+1; });
+    var el = document.createElement('div'); el.id = 'd54'; el.className = 'd27-ov';
+    el.innerHTML = '<div class="d27-card"><div class="d27-hd"><div><small>SUPPORT</small><h2>Lag log</h2></div><button type="button" class="d27-x" data-d54="x">✕</button></div><div class="d29-body">'
+      +'<div class="d50-note">Records anything slow on this device: redraws over 0.25 s, server calls over 3 s, failed calls, and freezes over 0.3 s. '+(L.length?Object.keys(cnt).map(function(k){ return cnt[k]+' × '+k; }).join(' · '):'Nothing slow recorded yet.')+'</div>'
+      +L.slice(0,40).map(function(e){ return '<div class="d50-r"><span class="t">'+esc(fmt(e.t))+'</span><span class="n"><b>'+esc(e.k)+' · '+(e.ms>=1000?(e.ms/1000).toFixed(1)+' s':e.ms+' ms')+'</b><small>'+esc(e.i)+'</small></span></div>'; }).join('')
+      +'</div><div class="d50-bar"><button type="button" class="d27-btn" data-d54="copy">Copy log</button><button type="button" class="d27-btn" data-d54="clr">Clear</button></div></div>';
+    document.body.appendChild(el); document.body.classList.add('d27-open');
+    el.addEventListener('click', function(ev){
+      if(ev.target===el){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); return; }
+      var b = ev.target.closest('[data-d54]'); if(!b) return; var k = b.getAttribute('data-d54');
+      if(k==='x'){ el.remove(); if(!document.querySelector('.d27-ov')) document.body.classList.remove('d27-open'); }
+      else if(k==='clr'){ buf = []; save(buf); open(); }
+      else if(k==='copy'){ var t = L.map(function(e){ return fmt(e.t)+'  '+e.k+'  '+e.ms+'ms  '+e.i; }).join('\n'); try{ navigator.clipboard.writeText(t); if(window.d2Toast) window.d2Toast('Copied',{ms:1800}); }catch(x){} }
+    });
+  }
+  var prev = window.d35Open;
+  window.d35Open = function(k){ if(k==='lag'){ open(); return true; } return typeof prev==='function' ? prev(k) : false; };
+  window.d54 = {open:open, add:add};
 })();
