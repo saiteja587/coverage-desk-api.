@@ -2704,6 +2704,7 @@ async function saveRowsToOtherDate(targetDateKey, newRows){
     const existing = await apiCall('calls', {qs:'date='+targetDateKey}).catch(()=>({rows:[]}));
     const existingRows = existing.rows || [];
     try{ await createBackup('pre-import', targetDateKey, existingRows); }catch(e){}
+    _allRowsAcrossDatesCacheAt = 0;
     const routed = await autoRouteRows(newRows, existingRows);
     const merged = existingRows.concat(routed);
     await apiCall('calls', {method:'POST', body:{date: targetDateKey, rows: merged}});
@@ -5166,8 +5167,27 @@ let _closureManualMatchesVersion = 0;
 // company matching checks aliases first) without state.closures or
 // allRows changing at all, so it needs its own cache-busting signal too.
 let _companyAliasesVersion = 0;
+// PERF (2026-11-13): the Lag log showed FOUR identical `all_calls` requests (each ~10 s, each reading the whole history)
+// in flight at once when the app opened — every feature that needs history called this function separately, and
+// the cache only helps AFTER the first one finishes. Now concurrent callers share one request, and the result is
+// reused for 5 minutes (today's rows are always re-read from the live screen state, so edits still show).
+let _allRowsInflight = null;
+function _withLiveToday(rows){
+  if(!Array.isArray(rows) || !state || !state.date) return rows;
+  const out = rows.filter(r => r._date !== state.date);
+  (state.rows || []).forEach(row => out.push(Object.assign({}, row, { _date: state.date })));
+  return out;
+}
 async function fetchAllRowsAcrossDates(forceRefresh){
-  const CACHE_MS = 60000; // 1 minute — long enough to cover both scans running back-to-back, short enough to stay fresh
+  if(!forceRefresh && _allRowsAcrossDatesCache && (Date.now() - _allRowsAcrossDatesCacheAt) < 300000){
+    return _withLiveToday(_allRowsAcrossDatesCache);
+  }
+  if(_allRowsInflight) return _allRowsInflight.then(_withLiveToday);
+  _allRowsInflight = _fetchAllRowsAcrossDatesInner(true);
+  try{ return await _allRowsInflight; } finally{ _allRowsInflight = null; }
+}
+async function _fetchAllRowsAcrossDatesInner(forceRefresh){
+  const CACHE_MS = 60000;
   if(!forceRefresh && _allRowsAcrossDatesCache && (Date.now() - _allRowsAcrossDatesCacheAt) < CACHE_MS){
     return _allRowsAcrossDatesCache;
   }
