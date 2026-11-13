@@ -3446,3 +3446,26 @@ html[data-look="glass"] .d44-cm{border-radius:var(--g-r-md)}
 /* V4.5b: one empty state only — the richer d2 card replaces the plain one */
 .d2-empty ~ .empty-state,.d2-empty + * .empty-state{display:none!important}
 body:has(.d2-empty) .empty-state{display:none!important}
+
+/* ===== V4.6 date filter OFF (search all dates) ===== */
+.search-row{flex-wrap:wrap}
+.d53-tg{margin-left:auto;flex:none;border:1px solid var(--border);background:transparent;color:var(--text-muted);border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap}
+.d53-tg.on{border-color:var(--accent,#2dd4bf);color:var(--accent,#2dd4bf);background:color-mix(in srgb,var(--accent,#2dd4bf) 12%,transparent)}
+body.d53-all .summary,body.d53-all .team-load-strip,body.d53-all .toolbar,body.d53-all .filter-bar,body.d53-all .d4-contents,body.d53-all #tabsWrap,body.d53-all #tableScrollTop,body.d53-all .d2-empty,body.d53-all .empty-state,body.d53-all #d49Hs{display:none!important}
+.d53-res{margin:10px 0 14px;border:1px solid var(--border);border-radius:16px;background:var(--surface);overflow:hidden}
+.d53-hd{padding:12px 14px;font-size:13px;border-bottom:1px solid var(--border)}.d53-hd span{opacity:.65;margin-left:6px;font-size:12px}
+.d53-note{padding:18px 14px;text-align:center;opacity:.7;font-size:13px}
+.d53-r{display:grid;grid-template-columns:92px 74px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
+.d53-r:hover{background:color-mix(in srgb,var(--accent,#2dd4bf) 8%,transparent)}
+.d53-r .d{font-weight:600}.d53-r .d i{font-style:normal;font-size:10px;color:var(--accent,#2dd4bf);margin-left:4px}
+.d53-r .t{font-family:var(--mono,monospace);opacity:.85}
+.d53-r .n{display:flex;flex-direction:column;min-width:0}.d53-r .n small{opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.d53-r .a,.d53-r .g{opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.d53-more{display:block;width:100%;padding:12px;background:transparent;border:0;color:var(--accent,#2dd4bf);cursor:pointer}
+@media(max-width:759px){
+  .d53-r{grid-template-columns:78px 62px minmax(0,1fr);gap:6px 8px}
+  .d53-r .a,.d53-r .g{grid-column:2 / -1;font-size:12px}
+  .d53-tg{margin:6px 0 0 0}
+}
+body.d53-all .search-count{display:none}
+body.d53-all #d22Host,body.d53-all .d43-smart{display:none!important}
