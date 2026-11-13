@@ -447,7 +447,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
     if(state.needsLogin || state.dateSwitching || rows().length) return;
     var anchor = $('#d2Strip') || $('#tabsWrap'); if(!anchor) return;
     var el = document.createElement('div'); el.className='d2-empty';
-    el.innerHTML = '<div class="d2-empty-art"><span></span><span></span><span></span></div><h3>No calls on '+esc(state.date)+' yet</h3><p>Paste the day’s list to get started, or bring a day back if it should already be here.</p><div class="d2-empty-btns"><button class="btn primary" data-d2="e-import">Import calls</button>'+(isAdmin()?'<button class="btn" data-d2="e-backups">Restore from backup / Excel</button>':'')+'<button class="btn ghost" data-d2="e-prev">Previous day</button></div>';
+    el.innerHTML = '<div class="d2-empty-art"><span></span><span></span><span></span></div><h3>No calls on '+esc(state.date)+' yet</h3><p>Paste the day’s list to get started, or bring a day back if it should already be here.</p><div class="d2-empty-btns"><button class="btn primary" data-d2="e-import">Import calls</button>'+(isAdmin()?'<button class="btn" data-d2="e-backups">Restore from backup / Excel</button>':'')+(document.getElementById('emptyStateAddCallBtn')?'<button class="btn ghost" data-d2="e-add">＋ Add call manually</button>':'')+'<button class="btn ghost" data-d2="e-prev">Previous day</button></div>';
     anchor.parentNode.insertBefore(el, anchor.nextSibling);
   }
 
@@ -777,6 +777,7 @@ window.__d17vw = window.innerWidth; window.addEventListener('resize', function()
       case 'e-import': var ib=$('#toggleImportHub'); if(ib) ib.click(); break;
       case 'e-backups': var mm=$('#toggleBackups'); if(mm) mm.click(); else { var mb=$('.more-menu-wrap button'); if(mb){ mb.click(); setTimeout(function(){ var b2=$('#toggleBackups'); if(b2) b2.click(); },60); } } break;
       case 'e-prev': var pb=$('#prevDay'); if(pb) pb.click(); break;
+      case 'e-add': var ab=document.getElementById('emptyStateAddCallBtn'); if(ab) ab.click(); break;
     }
   });
   document.addEventListener('click', function(e){
@@ -8703,4 +8704,40 @@ window.cdOwnerOf = function(r){
     else if(k==='cp'){ var t = document.getElementById('d51Ta'); if(t) copy(t.value); }
   }, false);
   window.d51 = {ai:ai, why:why};
+})();
+
+/* ===== V4.5 (d52): remove a paste from a date — undo calls that an import filed under the wrong date ===== */
+(function(){
+  'use strict';
+  var tk = function(t){ return String(t||'').toLowerCase().replace(/[^0-9apm:]/g,''); };
+  function toast(t){ try{ if(window.d2Toast) window.d2Toast(t,{ms:3000}); }catch(e){} }
+  function inject(){
+    var go = document.getElementById('runImport'); if(!go || document.getElementById('d52Rm')) return;
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'btn ghost'; b.id = 'd52Rm'; b.title = 'Paste the same text, pick the date it went to by mistake, and remove exactly those calls';
+    b.textContent = '🧹 Remove this paste from a date'; go.parentNode.insertBefore(b, go.nextSibling);
+  }
+  new MutationObserver(inject).observe(document.body, {childList:true, subtree:true});
+  async function run(){
+    var ta = document.getElementById('importText'); var text = ta ? ta.value : '';
+    if(!text.trim()){ alert('Paste the same text here first, then press this button.'); return; }
+    var parsed = parseImportText(text, state.date, '1st').filter(function(p){ return p && p.candidate; });
+    if(!parsed.length){ alert('No calls found in this text.'); return; }
+    var cnt = {}; parsed.forEach(function(p){ if(p._targetDate) cnt[p._targetDate] = (cnt[p._targetDate]||0)+1; });
+    var def = Object.keys(cnt).sort(function(a,b){ return cnt[b]-cnt[a]; })[0] || state.date;
+    var d = prompt('Remove these ' + parsed.length + ' pasted call(s) from which date? (YYYY-MM-DD)', def);
+    if(!d) return; d = d.trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ alert('Please type the date like 2026-10-13'); return; }
+    var res = await apiCall('calls', {qs:'date='+d}); var rows = (res && res.rows) || [];
+    var want = {}; parsed.forEach(function(p){ want[normalizeNameKey(p.candidate)+'|'+tk(p.time)] = 1; });
+    var hit = [], keep = [];
+    rows.forEach(function(r){ if(want[normalizeNameKey(r.candidate)+'|'+tk(r.time)]) hit.push(r); else keep.push(r); });
+    if(!hit.length){ alert('None of the pasted calls were found on ' + d + ' (it has ' + rows.length + ' calls).'); return; }
+    var sample = hit.slice(0,6).map(function(r){ return '• ' + r.time + ' ' + r.candidate; }).join('\n');
+    if(!confirm(hit.length + ' of the ' + rows.length + ' calls on ' + d + ' match this paste and will be REMOVED (a backup is saved first):\n\n' + sample + (hit.length>6 ? '\n• …and ' + (hit.length-6) + ' more' : '') + '\n\n' + keep.length + ' other call(s) stay. Continue?')) return;
+    await createBackup('pre-paste-remove', d, rows);
+    await apiCall('calls', {method:'POST', body:{date:d, rows:keep}});
+    toast(hit.length + ' call(s) removed from ' + d);
+    if(d === state.date){ await loadDay(d); render(); }
+  }
+  document.addEventListener('click', function(e){ var b = e.target.closest && e.target.closest('#d52Rm'); if(!b) return; run().catch(function(err){ alert('Could not remove: ' + (err && err.message || err)); }); });
 })();
