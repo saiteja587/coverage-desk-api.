@@ -8736,6 +8736,7 @@ window.cdOwnerOf = function(r){
     if(!confirm(hit.length + ' of the ' + rows.length + ' calls on ' + d + ' match this paste and will be REMOVED (a backup is saved first):\n\n' + sample + (hit.length>6 ? '\n• …and ' + (hit.length-6) + ' more' : '') + '\n\n' + keep.length + ' other call(s) stay. Continue?')) return;
     await createBackup('pre-paste-remove', d, rows);
     await apiCall('calls', {method:'POST', body:{date:d, rows:keep}});
+    try{ _allRowsAcrossDatesCacheAt = 0; }catch(e){}
     toast(hit.length + ' call(s) removed from ' + d);
     if(d === state.date){ await loadDay(d); render(); }
   }
