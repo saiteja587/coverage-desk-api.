@@ -8093,8 +8093,9 @@ window.cdOwnerOf = function(r){
       else if(c) byCo.push(r);
     });
     var ex = byName.filter(function(x){ return x.k==='exact'; });
-    if(ex.length) return {row:pick(ex.map(function(x){ return x.r; })), kind:'exact'};
-    if(byName.length) return {row:pick(byName.map(function(x){ return x.r; })), kind:'name'};
+    var nameRows = byName.map(function(x){ return x.r; });
+    if(ex.length) return {row:pick(ex.map(function(x){ return x.r; })), kind:'exact', cands:nameRows};
+    if(byName.length) return {row:pick(nameRows), kind:'name', cands:nameRows};
     if(byCo.length===1) return {row:byCo[0], kind:'client'};
     if(byCo.length>1){ var f = byCo.filter(firstRound); if(f.length===1) return {row:f[0], kind:'client'}; }
     return null;
@@ -8119,10 +8120,14 @@ window.cdOwnerOf = function(r){
     var fb = getFb();
     if(!R.length){ box.innerHTML = ''; el.querySelector('#d46Go').disabled = true; return; }
     box.innerHTML = R.map(function(x,i){
-      var r = x.m && x.m.row, had = r && fb[r.id];
+      var r = x.row, had = r && fb[r.id], diff = r && x.client && !coMatch(x.client, r.company);
+      var pickSel = (x.m && x.m.cands && x.m.cands.length>1) ? '<select class="d46-sel" data-d46p="'+i+'">'+x.m.cands.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===r.id?' selected':'')+'>'+esc((c.time||'')+' · '+(c.company||'—')+(c.round?' · '+c.round:''))+'</option>'; }).join('')+'</select>' : '';
+      var modeSel = had ? '<select class="d46-sel" data-d46m="'+i+'"><option value="add"'+(x.mode==='add'?' selected':'')+'>Keep earlier feedback and add this below</option><option value="replace"'+(x.mode==='replace'?' selected':'')+'>Replace earlier feedback</option></select><span class="d46-old">Earlier: '+esc(String(fb[r.id].t||'').slice(0,120))+'</span>' : '';
       return '<label class="d46-it'+(r?'':' off')+'"><input type="checkbox" data-d46i="'+i+'"'+(x.on?' checked':'')+(r?'':' disabled')+'><span class="d46-main"><b>'+esc(x.name)+'</b> <small>'+esc(x.client||'—')+'</small>'
         +'<span class="d46-fbt">'+esc(x.fb||'(no feedback text)')+'</span>'
-        +(r ? '<span class="d46-to">→ '+esc(r.time||'')+' · '+esc(r.candidate)+' · '+esc(r.company||'')+(r.round?' · '+esc(r.round):'')+' '+chip(x.m.kind)+(had?' <span class="d46-chip low">replaces earlier feedback</span>':'')+'</span>' : '<span class="d46-to miss">No call found on '+esc(state.date)+' for this name / client</span>')
+        +(r ? '<span class="d46-to">→ '+esc(r.time||'')+' · '+esc(r.candidate)+' · '+esc(r.company||'')+(r.round?' · '+esc(r.round):'')+' '+chip(x.m.kind)+'</span>'
+          +(diff?'<span class="d46-warn">⚠ Client differs: you pasted “'+esc(x.client)+'”, this call is “'+esc(r.company||'')+'”. '+(x.m.cands&&x.m.cands.length>1?'Pick the right call below.':'Tick the box only if it is the same call.')+'</span>':'')
+          +pickSel+modeSel : '<span class="d46-to miss">No call found on '+esc(state.date)+' for this name / client</span>')
         +'</span></label>';
     }).join('');
     var n = R.filter(function(x){ return x.on && x.m && x.fb; }).length;
@@ -8138,16 +8143,18 @@ window.cdOwnerOf = function(r){
     el.addEventListener('click', function(e){
       if(e.target.closest('#d46Match')){
         var recs = parse(el.querySelector('#d46Txt').value);
-        R = recs.map(function(r){ var m = match(r); return {name:r.name, client:r.client, fb:r.fb, m:m, on: !!(m && r.fb && m.kind!=='client')}; });
+        R = recs.map(function(r){ var m = match(r), row = m && m.row, diff = row && r.client && !coMatch(r.client, row.company); return {name:r.name, client:r.client, fb:r.fb, m:m, row:row, mode:'add', on: !!(m && r.fb && m.kind!=='client' && !diff)}; });
         el.querySelector('#d46Sum').textContent = R.length ? (R.filter(function(x){ return x.m; }).length+' of '+R.length+' matched') : 'No "Name:" lines found';
         list(el); return;
       }
       if(e.target.closest('#d46Go')){
-        var n = 0; R.forEach(function(x){ if(x.on && x.m && x.fb){ setFb(x.m.row.id, x.fb); n++; } });
+        var n = 0; R.forEach(function(x){ if(x.on && x.row && x.fb){ var old = getFb()[x.row.id]; setFb(x.row.id, (old && old.t && x.mode!=='replace') ? (old.t + '\n\n' + x.fb) : x.fb); n++; } });
         close(el); try{ render(); }catch(x){} setTimeout(badges, 200); toast('Feedback added to '+n+' call'+(n===1?'':'s')); return;
       }
     });
-    el.addEventListener('change', function(e){ var c = e.target.closest('[data-d46i]'); if(c){ R[+c.getAttribute('data-d46i')].on = c.checked; list(el); } });
+    el.addEventListener('change', function(e){ var c = e.target.closest('[data-d46i]'); if(c){ R[+c.getAttribute('data-d46i')].on = c.checked; list(el); return; }
+      var p = e.target.closest('[data-d46p]'); if(p){ var it = R[+p.getAttribute('data-d46p')]; it.row = it.m.cands.filter(function(c2){ return c2.id===p.value; })[0] || it.row; it.on = !!it.fb; list(el); return; }
+      var m2 = e.target.closest('[data-d46m]'); if(m2){ R[+m2.getAttribute('data-d46m')].mode = m2.value; } });
   }
   window.d46Open = openImport;
 
