@@ -1328,6 +1328,7 @@ function assessCompanyMatch(a, b){
   if(ja === jb) return true;                                     // "vodafonethree" = "Vodafone Three"
   if(ja + 's' === jb || jb + 's' === ja) return true;               // "Barclays" = "Barclay"
   if(companiesAreAliased(a, b)) return true;                     // admin-curated aliases ("TfL" = "Transport for London")
+  if(companyAcronymMatch(a, b)) return true;                     // "UNCSA" = "University of North Carolina School of the Arts"
   const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
   if(short.length < long.length && short.every((t, i) => t === long[i])) return true;   // "Zema Global" ⊂ "Zema Global Data"
   if(ja.length >= 8 && jb.length >= 8 && Math.abs(ja.length - jb.length) <= 2 && levWithin(ja, jb, 2)) return true;  // typo
@@ -4267,8 +4268,8 @@ function parseRescheduleText(text){
     // ("Name (UK) - 7:30 PM"), or a name followed by a possessive time
     // with no dash at all ("Safiya Kamuluru's 8:30 PM IST call...").
     const nameMatch =
-      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/) ||
-      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s+\d{1,2}[:.]\d{2}/);
+      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))*(?:['\u2019]s)?\s*[–\-]/) ||
+      timeLine.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))*(?:['\u2019]s)?\s+\d{1,2}[:.]\d{2}/);
     let candidate = nameMatch ? nameMatch[1].trim() : null;
     // Free-form shapes with no dash after the name:
     //   "@Sashank Bava Sir, Sharon Rentala (3:30 PM) mentioned that ..."  (name + time in parens)
@@ -4311,13 +4312,13 @@ function parseRescheduleText(text){
     else if(TECH_ISSUE_RE.test(full)) status = 'rescheduled';
 
     let side = null;
-    if(/candidate\s*(?:side|end)/i.test(full)) side = 'candidate side';
-    else if(/interviewer\s*side/i.test(full)) side = 'interviewer side';
-    else if(/client\s*side/i.test(full)) side = 'client side';
-    else if(/recruiter\s*(?:'s)?\s*side/i.test(full)) side = 'recruiter side';
+    if(/candidate(?:['\u2019]?s)?\s*(?:side|end)/i.test(full)) side = 'candidate side';
+    else if(/interviewer(?:['\u2019]?s)?\s*(?:side|end)/i.test(full)) side = 'interviewer side';
+    else if(/client(?:['\u2019]?s)?\s*(?:side|end)/i.test(full)) side = 'client side';
+    else if(/recruiter(?:['\u2019]?s)?\s*(?:side|end)/i.test(full) || /(?:by|from)\s+(?:the\s+)?recruiter\b/i.test(full)) side = 'recruiter side';
 
     let reason = null;
-    const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir\.?)?$/i);
+    const reasonMatch = full.match(/due to\s+([^.]+?)(?:\s+sir)?\s*\.?\s*$/i);
     const becauseMatch = full.match(/\b(?:because|as|since)\s+((?:the\s+)?(?:position|role|job|vacancy|requirement|opening)\b[^.]*?|[^.]*?\b(?:filled|closed|on\s+hold|put\s+on\s+hold|withdrawn|no\s+longer\s+(?:required|needed|available))[^.]*?)(?:\s+sir)?\s*\.?\s*$/i);
     const toNew = full.match(/reschedul\w*\s+to\s+(\d{1,2}(?:[:.]\d{2})?\s*[AaPp][Mm]?(?:\s*IST)?(?:\s+(?:today|tomorrow))?)/i);
     if(TECH_ISSUE_RE.test(full) && !/reschedul|cancel/i.test(full)) reason = 'Network/audio issue' + (/candidate\s*(?:side|end)/i.test(full) ? ' at the candidate’s end' : '') + ' — call could not be held' + (/no\s+transcript/i.test(full) ? ' (no transcript)' : '');
@@ -4333,6 +4334,7 @@ function parseRescheduleText(text){
       else if(toMatch) reason = 'Rescheduled to ' + toMatch[1].trim();
     }
 
+    if(!reason && side && (status === 'rescheduled' || status === 'cancelled')) reason = (status === 'cancelled' ? 'Cancelled' : 'Rescheduled') + ' from the ' + side;
     if(status === 'not_responded' && !reason){ const nr = full.match(/(?:not|no)\s+(?:\w+\s+){0,2}respon\w*\s+(?:to|on)\s+([^.@]+?)(?:\s+sir)?\s*\.?\s*(?:@.*)?$/i); if(nr) reason = 'Not responding to ' + nr[1].trim(); }
     if(!candidate || !status) return;
 
@@ -4439,7 +4441,7 @@ function parseRescheduleText(text){
 
     const lineForName = (blockLines.find(l=>timeRe.test(l)) || blockFull).replace(/^\s*\d{1,3}(?:[\.\)](?!\d)\s*|\s+)(?=\S)/, '');
     let candidate = null;
-    let nm = lineForName.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))?(?:['\u2019]s)?\s*[–\-]/);
+    let nm = lineForName.match(/^(?:@[\w\s]+?[,:]?\s*(?:sir)?[,:]?\s*)?([A-Za-z][A-Za-z .]+?)(?:\s*\([^)]*\))*(?:['\u2019]s)?\s*[–\-]/);
     if(nm) candidate = nm[1].trim();
     if(!candidate){
       // Also handle the reverse order — "6:30 PM – Pinky Sachdev", time
@@ -11394,10 +11396,37 @@ function sameCandidateFuzzyMatch(nameA, nameB){
 // not matching — the root cause was that every closure-matching path
 // required an EXACT normalized company key, with no tolerance at all for
 // this very ordinary kind of variation.
+// "UNCA" / "UNCSA" vs "University of North Carolina School of the Arts": a short one-word name
+// that is the initials of a longer multi-word name (one letter out allowed for the dropped
+// "School"/"College"-type word). Short side must be 3–7 letters and the long side 3+ real words.
+const _ACR_STOP = new Set(['of','the','and','for','at','in','a','an','&']);
+const _ACR_SOFT = new Set(['school','college','department','dept','institute','faculty']);
+const _acrCache = new Map();
+function _acrInitials(name){
+  let v = _acrCache.get(name);
+  if(v === undefined){
+    const w = String(name||'').toLowerCase().replace(/[\u2019'`]/g,'').split(/[^a-z0-9]+/).filter(t => t && !_ACR_STOP.has(t));
+    v = w.length >= 3 ? { all: w.map(t=>t[0]).join(''), hard: w.filter(t=>!_ACR_SOFT.has(t)).map(t=>t[0]).join('') } : null;
+    if(_acrCache.size > 5000) _acrCache.clear();
+    _acrCache.set(name, v);
+  }
+  return v;
+}
+function companyAcronymMatch(x, y){
+  const sx = String(x||'').trim(), sy = String(y||'').trim();
+  if(!sx || !sy) return false;
+  const one = (s)=> /^[A-Za-z0-9.]{3,7}$/.test(s) ? s.toLowerCase().replace(/[^a-z0-9]/g,'') : null;
+  let short = one(sx), long = sy;
+  if(!short){ short = one(sy); long = sx; }
+  if(!short || short.length < 3) return false;
+  const ini = _acrInitials(long); if(!ini) return false;
+  return [ini.all, ini.hard].some(i => i && (i === short || (short.length >= 4 && i.length >= 4 && levWithin(i, short, 1))));
+}
 function fuzzyCompanyKeyMatch(companyA, companyB){
   const a = normalizeCompanyKey(companyA), b = normalizeCompanyKey(companyB);
   if(!a || !b) return false;
   if(a === b) return true;
+  if(Math.min(a.length, b.length) <= 7 && Math.max(a.length, b.length) >= 12 && companyAcronymMatch(companyA, companyB)) return true;
   // An explicit admin-curated alias ("LSUHSC-Shreveport" = "LSU Health
   // Science" — see getCompanyAliasPairs() above) — checked before the
   // generic spelling-drift heuristics below since it's a known, confirmed

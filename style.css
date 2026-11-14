@@ -3482,3 +3482,8 @@ html[data-look] tbody tr,html[data-look] tr.m-card,html[data-look] .d22-card,htm
 .d56-g{margin:10px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border,#8883)}
 .d56-gh{font-size:14px;margin-bottom:4px}
 .d56-more{margin-top:6px}
+
+/* V5.1 feedback import: client-differs warning, call picker, replace/add */
+.d46-warn{display:block;margin-top:4px;font-size:12px;color:var(--amber,#d9a400)}
+.d46-sel{display:block;margin-top:6px;max-width:100%;font-size:12px;padding:4px 6px;border-radius:8px;border:1px solid var(--border,#8884);background:transparent;color:inherit}
+.d46-old{display:block;margin-top:4px;font-size:11px;opacity:.7}
