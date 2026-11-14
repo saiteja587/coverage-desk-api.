@@ -7,12 +7,14 @@
 //   task "digest" : one-to-three line summary of the current alerts
 //   task "prep"   : brief suggestions for a candidate, from their saved feedback history
 //   task "sort"   : split pasted scrum / chat notes into Name / Client / Feedback blocks
+//   task "match"  : suggest which Portal record a Desk call is when the exact name match failed (shown for confirmation, never auto-applied)
 // ---------------------------------------------------------------------------
 const TASKS = {
   chase: { max: 700, sys: 'You write short WhatsApp-style messages for a recruitment scheduling desk. For EACH person in the input, write one friendly, professional message asking them to share the interview feedback for the listed calls (use a numbered list of date, time, candidate, company). Start each message with a line "To: <person name>". Plain text only, no markdown, no emojis, under 90 words per message. Use only the names and calls given.' },
   digest: { max: 220, sys: 'You summarise alerts for a recruitment scheduling coordinator. Given a list of alerts, reply with 1 to 3 short plain-text lines: what needs attention first and why. Mention counts and candidate or company names only if they appear in the input. No markdown, no greetings, no invented facts.' },
   prep: { max: 380, sys: 'You help a recruitment coordinator prepare a candidate for an interview. Using ONLY the saved feedback notes provided, give 2 to 4 short, concrete bullet points ("- ...") of what to brief or practise with the candidate before the next call, then one line starting "Watch:" for the main risk. If the notes say nothing useful, say so in one line. Plain text, no invented facts.' },
   brief: { max: 380, sys: 'You help a recruitment coordinator handle several candidates going to the same client for the same role. Using ONLY the facts provided, write 3 to 5 short bullet points ("- ...") covering: who is in parallel and who should own which call, what earlier candidates reached or how they ended, and one thing to watch. Plain text, no invented facts, no greetings.' },
+  match: { max: 900, sys: 'You match interview calls from a recruitment scheduling desk (lines starting C<n>) to records in an interview portal (lines starting P<m>), all on the same date. Candidate names may differ by spelling, spacing, initials, word order, a missing surname or a country tag like (UK); company names may be abbreviated or misspelled. A call and a record are the SAME interview only if the candidate is clearly the same person; time and company should agree whenever both are given. Prefer a record on the same team, but a different team is allowed when everything else clearly agrees. Never match two different people whose names are merely similar (for example Karthik and Karthikeya). Never use one P line for two calls. Reply with exactly one line per call and nothing else, in this format: C<n> = P<m> | <reason in under 12 words>   or   C<n> = NONE' },
   sort: { max: 1400, sys: 'You turn pasted team-scrum or chat notes about interview calls into feedback blocks. Output ONLY blocks in exactly this format, separated by a blank line:\nName: <candidate full name>\nClient: <company, or empty>\nFeedback: <what was said about the call, in one or two sentences, keeping the original meaning>\nInclude only candidates for whom feedback about a call is actually given. Never invent names, companies or feedback. If nothing qualifies, output exactly: NONE' },
 };
 function clip(v, n) { return String(v == null ? '' : v).slice(0, n); }
@@ -29,6 +31,13 @@ function buildUser(task, input) {
     return 'Candidate: ' + clip(i.candidate, 80) + '\nNext call: ' + clip(i.next, 160) + '\nSaved feedback (newest first):\n' + (Array.isArray(i.history) ? i.history.slice(0, 6) : []).map(h => '- ' + clip(h && h.date, 12) + (h && h.company ? ' (' + clip(h.company, 60) + ')' : '') + ': ' + clip(h && h.text, 500)).join('\n');
   }
   if (task === 'brief') return clip(i.text, 3000);
+  if (task === 'match') {
+    const team = t => clip(t, 30) || 'unknown team';
+    const calls = (Array.isArray(i.calls) ? i.calls.slice(0, 40) : []).map((c, k) => 'C' + k + ': ' + clip(c && c.candidate, 80) + ' | company: ' + clip(c && c.company, 80) + ' | time: ' + clip(c && c.time, 12) + ' | team: ' + team(c && c.team));
+    const portal = (Array.isArray(i.portal) ? i.portal.slice(0, 200) : []).map((p, k) => 'P' + k + ': ' + clip(p && p.candidate, 80) + ' | company: ' + clip(p && p.client, 80) + ' | time: ' + clip(p && p.time, 12) + ' | team: ' + team(p && p.team));
+    if (!calls.length || !portal.length) return '';
+    return 'Desk calls:\n' + calls.join('\n') + '\n\nPortal records:\n' + portal.join('\n');
+  }
   if (task === 'sort') {
     if (!clip(i.text, 10).trim()) return '';
     const names = Array.isArray(i.names) ? i.names.slice(0, 120).map(n => clip(n, 60)).join('; ') : '';

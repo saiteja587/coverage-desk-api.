@@ -566,6 +566,133 @@ function fillDrivingPersonFromPortal(){
   });
   return filled;
 }
+// Explains WHY Driving Person is still empty on the open date's calls after
+// a sync. Every rule fillDrivingPersonFromPortal() applies skips a row
+// silently, so "most of them are empty" had no visible cause. This sorts
+// each empty, non-WOI call into the first rule that stopped it, using the
+// exact same helpers the fill itself uses, so the two can never disagree.
+function diagnoseEmptyDrivingPersons(){
+  const buckets = { advanced:[], noTeam:[], notInPortal:[], otherDate:[], noHandler:[], fillable:[], aiCandidates:[] };
+  if(!state.portalAssignments || !state.portalAssignments.length) return null;
+  state.rows.forEach(row=>{
+    if(row.woi || row.drivingPerson || !row.candidate) return;
+    const label = row.candidate + (row.assignee ? ' (' + row.assignee + ')' : ' (no assignee)');
+    if(isAdvancedRound(row.round)){ buckets.advanced.push(label); return; }
+    if(!assigneeToPortalTeamCode(row.assignee)){ buckets.noTeam.push(label); buckets.aiCandidates.push(row); return; }
+    const match = findPortalMatch(row);
+    if(!match){
+      const suppressed = portalMatchSuppressedInfo(row);
+      if(suppressed) buckets.otherDate.push(label + ' — Portal has it on ' + suppressed.dates.join(', '));
+      else { buckets.notInPortal.push(label); buckets.aiCandidates.push(row); }
+      return;
+    }
+    if(!match.handler){ buckets.noHandler.push(label); return; }
+    buckets.fillable.push(label + ' → ' + match.handler);
+  });
+  return buckets;
+}
+function renderDrivingPersonDiagnosisHtml(){
+  const b = diagnoseEmptyDrivingPersons();
+  if(!b) return '';
+  const groups = [
+    ['fillable', 'Portal has a name ready — not filled yet', CURRENT_ROLE==='admin'||CURRENT_ROLE==='team_lead' ? 'Click Sync Today again (the fill only runs on a fresh sync, not when the panel shows saved data).' : 'Only an admin or team lead can fill Driving Person — ask one of them to run Sync Today.'],
+    ['advanced', '2nd round or later', 'Never auto-filled on purpose — set these by hand.'],
+    ['noTeam', '"Assigned to" is blank or not a HYD / Pradeep Anna / Dev team member', 'Only those teams exist in the Portal. Set Assigned to (or add the person to the roster with their team) and sync again.'],
+    ['notInPortal', 'No Portal record with this candidate name under that team', 'Usually a spelling difference between Coverage Desk and the Portal, or the call is filed under the other team there.'],
+    ['otherDate', 'Portal has this candidate, but on a different date', 'Check the call date on either side.'],
+    ['noHandler', 'Found in the Portal, but no one is assigned there yet', 'Will fill once the Portal shows an assignee.'],
+  ];
+  const total = groups.reduce((n,[k])=>n+b[k].length, 0);
+  if(!total) return `<div class="hint" style="color:var(--teal);margin-bottom:10px">✓ Every call on ${escapeHtml(state.date)} has a Driving Person (or is WOI).</div>`;
+  return `<details style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+    <summary style="cursor:pointer;font-weight:600;font-size:13px">Why are ${total} Driving Person field${total===1?'':'s'} still empty on ${escapeHtml(state.date)}?</summary>
+    ${groups.filter(([k])=>b[k].length).map(([k,title,fix])=>`<div style="margin-top:10px">
+      <div style="font-weight:600;font-size:12.5px">${escapeHtml(title)} — ${b[k].length}</div>
+      <div class="hint" style="font-size:11.5px">${escapeHtml(fix)}</div>
+      <div style="font-size:12px;color:var(--text-faint);margin-top:2px">${b[k].slice(0,8).map(escapeHtml).join(' · ')}${b[k].length>8?' · +'+(b[k].length-8)+' more':''}</div>
+    </div>`).join('')}
+    ${renderDrivingPersonAiMatchHtml(b.aiCandidates)}
+  </details>`;
+}
+// ---------------------------------------------------------------------------
+// AI-suggested Portal matches (added 2026-11-14) for calls the exact matcher
+// couldn't place: "No Portal record under that team" (spelling differences,
+// or filed under the other team) and "Assigned to is blank / not a Portal
+// team" (team unknown, so the exact matcher refuses to guess). Groq only
+// SUGGESTS — every suggestion needs a click to apply, for the same reason
+// fillDrivingPersonFromPortal() refuses to guess across teams: a wrong name
+// silently credited to the wrong person is worse than an empty field.
+// Only same-date (or undated) Portal records are ever sent or accepted.
+// ---------------------------------------------------------------------------
+const PORTAL_TEAM_LABELS = { HYD:'HYD Team', PRADEEP:'Pradeep Anna Team', DEV:'Dev' };
+function portalRecordsForOpenDate(){
+  return (state.portalAssignments||[]).filter(p => p && p.candidate && (!p.dateKey || p.dateKey === state.date));
+}
+function parseDrivingPersonAiMatches(text, calls, portal){
+  const picks = [];
+  String(text || '').split(/\r?\n/).forEach(line=>{
+    const m = line.match(/^\s*C(\d+)\s*=\s*P(\d+)\s*(?:\|\s*(.*))?$/i);
+    if(!m) return;
+    const call = calls[Number(m[1])], rec = portal[Number(m[2])];
+    if(!call || !rec) return; // model referenced a line that doesn't exist — ignore it
+    picks.push({ call, rec, pIdx:Number(m[2]), reason:(m[3]||'').trim() });
+  });
+  // Two calls claiming the same Portal record (or one call answered twice)
+  // means the model wasn't sure — drop every pick involved rather than guess.
+  const countBy = key => picks.reduce((acc,p)=>{ const k = key(p); acc[k]=(acc[k]||0)+1; return acc; }, {});
+  const pCount = countBy(p => p.pIdx), cCount = countBy(p => p.call.id);
+  return picks
+    .filter(p => pCount[p.pIdx] === 1 && cCount[p.call.id] === 1)
+    .map(p => {
+      const callTeam = assigneeToPortalTeamCode(p.call.assignee);
+      return { callId:p.call.id, candidate:p.call.candidate, company:p.call.company, time:p.call.time, assignee:p.call.assignee,
+        portalCandidate:p.rec.candidate, portalClient:p.rec.client, portalTime:p.rec.time,
+        portalTeam: PORTAL_TEAM_LABELS[p.rec.teamCode] || p.rec.team || '',
+        handler: p.rec.handler || p.rec.assignee || '', reason:p.reason,
+        teamDiffers: !!(callTeam && p.rec.teamCode && callTeam !== p.rec.teamCode) };
+    });
+}
+async function runDrivingPersonAiMatch(rows){
+  const calls = rows.slice(0, 40);
+  const portal = portalRecordsForOpenDate().slice(0, 200);
+  state.dpAiMatch = { loading:true, error:'', suggestions:[], date:state.date, checked:0 };
+  render();
+  try{
+    if(!calls.length || !portal.length) throw new Error(portal.length ? 'No unmatched calls to check.' : 'No Portal records for ' + state.date + ' — run Sync Today first.');
+    const r = await apiCall('ai_assist', {method:'POST', timeoutMs:20000, body:{task:'match', input:{
+      calls: calls.map(c => ({ candidate:c.candidate, company:c.company, time:c.time, team: PORTAL_TEAM_LABELS[assigneeToPortalTeamCode(c.assignee)] || '' })),
+      portal: portal.map(p => ({ candidate:p.candidate, client:p.client, time:p.time, team: PORTAL_TEAM_LABELS[p.teamCode] || p.team || '' }))
+    }}});
+    state.dpAiMatch.suggestions = parseDrivingPersonAiMatches(r && r.text, calls, portal);
+    state.dpAiMatch.checked = calls.length;
+  }catch(e){
+    const c = e && e.code, msg = (e && e.message) || '';
+    state.dpAiMatch.error = (c==='not_configured' || /not configured|GROQ_API_KEY|not installed/i.test(msg)) ? 'AI is not set up on the server yet (needs api/_lib/ai-assist.js deployed and GROQ_API_KEY in Vercel).'
+      : (c==='daily_limit' || /daily ai limit/i.test(msg)) ? 'Daily AI limit reached.' : (c==='busy' || /AI is busy/i.test(msg)) ? 'AI is busy — try again in a minute.' : (msg || 'AI is unavailable right now.');
+  }
+  state.dpAiMatch.loading = false;
+  render();
+}
+function renderDrivingPersonAiMatchHtml(candidates){
+  const canEdit = CURRENT_ROLE === 'admin' || CURRENT_ROLE === 'team_lead';
+  if(!canEdit || !candidates || !candidates.length) return '';
+  const st = (state.dpAiMatch && state.dpAiMatch.date === state.date) ? state.dpAiMatch : null;
+  const visible = st ? st.suggestions.filter(s => { const r = state.rows.find(x => String(x.id) === String(s.callId)); return r && !r.drivingPerson; }) : [];
+  return `<div style="margin-top:12px;border-top:1px solid var(--border-soft);padding-top:10px">
+    <button class="btn ghost" id="dpAiMatchBtn" ${st && st.loading ? 'disabled' : ''}>${st && st.loading ? '<span class="spinner"></span>Asking AI…' : `🤖 Suggest matches with AI (${Math.min(candidates.length,40)} call${candidates.length===1?'':'s'})`}</button>
+    <div class="hint" style="font-size:11.5px;margin-top:4px">Looks for spelling differences and calls filed under another team. Nothing is applied until you click Apply.</div>
+    ${st && st.error ? `<div class="hint" style="color:var(--coral);margin-top:6px">⚠ ${escapeHtml(st.error)}</div>` : ''}
+    ${st && !st.loading && !st.error ? (visible.length ? visible.map(s=>`<div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <div><b>${escapeHtml(s.candidate)}</b> ${s.company?'· '+escapeHtml(s.company):''} ${s.time?'· '+escapeHtml(s.time):''} <span style="color:var(--text-faint)">(${escapeHtml(s.assignee||'no assignee')})</span></div>
+        <div style="color:var(--text-faint)">↔ Portal: ${escapeHtml(s.portalCandidate)} ${s.portalClient?'· '+escapeHtml(s.portalClient):''} ${s.portalTime?'· '+escapeHtml(s.portalTime):''} · ${escapeHtml(s.portalTeam||'?')}${s.reason?' — '+escapeHtml(s.reason):''}</div>
+        ${s.teamDiffers ? `<div style="color:var(--amber);font-size:11.5px">⚠ Different team: Coverage Desk has this under ${escapeHtml(s.assignee)}, the Portal has it under ${escapeHtml(s.portalTeam)}. Double-check before applying.</div>` : ''}
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${s.handler ? `<button class="btn" data-dp-ai-apply="${escapeHtml(String(s.callId))}">Apply ${escapeHtml(s.handler)} as Driving Person</button>` : `<span class="hint" style="font-size:11.5px">Same call, but nobody is assigned in the Portal yet.</span>`}
+          <button class="btn ghost" data-dp-ai-dismiss="${escapeHtml(String(s.callId))}">Not a match</button>
+        </div>
+      </div>`).join('') : `<div class="hint" style="margin-top:6px">AI checked ${st.checked||0} call${st.checked===1?'':'s'} and found no confident matches.</div>`) : ''}
+  </div>`;
+}
 async function fetchPortalSync(mode){
   if(!API_BASE_URL){ state.portalSyncError = 'Portal sync requires the app to be connected to the database backend.'; render(); return; }
   if((mode || state.portalSyncMode) === 'today' && !isViewingToday()){
@@ -10745,6 +10872,7 @@ function renderPortalSyncPanel(){
   }
   return `<div class="import-panel">
     <div class="hint" style="margin-bottom:10px">Read-only pull from the Interview Portal (Pradeep Anna Team + Hyderabad Team combined). "Sync Today" is fast and covers just this date; "Full Sync" pulls the entire call history (~20 seconds) — use it sparingly. Every successful sync is saved to Coverage Desk's database so it's still here after a refresh. This never writes anything back to the Portal.</div>
+    ${renderDrivingPersonDiagnosisHtml()}
     ${state.portalDrivingPersonSaveError ? `<div class="hint" style="color:var(--coral);margin-bottom:10px">⚠ ${escapeHtml(state.portalDrivingPersonSaveError)}</div>` : (state.portalDrivingPersonFillCount ? `<div class="hint" style="color:var(--teal);margin-bottom:10px">✓ Filled and saved Driving Person for ${state.portalDrivingPersonFillCount} 1st Round call${state.portalDrivingPersonFillCount===1?'':'s'} from this sync (existing values left untouched).</div>` : '')}
     <div class="row" style="margin-bottom:12px">
       <div class="hint">${state.portalSyncFromCache && !state.portalSyncLoading ? 'Showing last saved data · ' : ''}Last updated: ${updatedLabel}</div>
@@ -12141,6 +12269,29 @@ function attachHandlers(conflictIds){
   };
   const exportExcelBtn = document.getElementById('exportExcelBtn');
   if(exportExcelBtn) exportExcelBtn.onclick = ()=>{ state.showMoreMenu = false; exportDayToExcel(); render(); };
+  const dpAiMatchBtn = document.getElementById('dpAiMatchBtn');
+  if(dpAiMatchBtn) dpAiMatchBtn.onclick = ()=>{ const b = diagnoseEmptyDrivingPersons(); if(b) runDrivingPersonAiMatch(b.aiCandidates); };
+  document.querySelectorAll('[data-dp-ai-dismiss]').forEach(btn=>{ btn.onclick = ()=>{
+    if(state.dpAiMatch) state.dpAiMatch.suggestions = state.dpAiMatch.suggestions.filter(s => String(s.callId) !== btn.dataset.dpAiDismiss);
+    render();
+  };});
+  document.querySelectorAll('[data-dp-ai-apply]').forEach(btn=>{ btn.onclick = async ()=>{
+    const s = state.dpAiMatch && state.dpAiMatch.suggestions.find(x => String(x.callId) === btn.dataset.dpAiApply);
+    const row = s && state.rows.find(r => String(r.id) === String(s.callId));
+    if(!s || !row || !s.handler) return;
+    btn.disabled = true;
+    const before = row.drivingPerson || '';
+    row.drivingPerson = s.handler;
+    try{
+      await saveDrivingPersons();
+      state.dpAiMatch.suggestions = state.dpAiMatch.suggestions.filter(x => x !== s);
+      state.dpAiMatch.error = '';
+    }catch(err){
+      row.drivingPerson = before; // never leave an unsaved value on screen
+      state.dpAiMatch.error = 'Could not save ' + s.handler + ' for ' + s.candidate + ': ' + (err && err.message ? err.message : err);
+    }
+    render();
+  };});
   const closePortalSyncBtn = document.getElementById('closePortalSync');
   if(closePortalSyncBtn) closePortalSyncBtn.onclick = ()=>{ closeAllPanels(); render(); };
   const syncPortalTodayBtn = document.getElementById('syncPortalToday');
